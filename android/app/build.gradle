@@ -1,0 +1,44 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.casabatik.recorder'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.casabatik.recorder'
+        minSdk 26
+        targetSdk 36
+        versionCode 16
+        versionName '0.5.10'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging { resources { excludes += ['META-INF/DEPENDENCIES', 'META-INF/INDEX.LIST', 'META-INF/native-image/**'] }; jniLibs { useLegacyPackaging = true } }
+}
+configurations { nativeBundles }
+dependencies {
+    implementation 'androidx.activity:activity:1.10.1'
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation('org.bytedeco:javacv:1.5.12') { transitive = false }
+    implementation 'org.bytedeco:javacpp:1.5.12'
+    implementation 'org.bytedeco:ffmpeg:7.1.1-1.5.12'
+    nativeBundles 'org.bytedeco:javacpp:1.5.12:android-arm64'
+    nativeBundles 'org.bytedeco:javacpp:1.5.12:android-x86_64'
+    nativeBundles 'org.bytedeco:ffmpeg:7.1.1-1.5.12:android-arm64'
+    nativeBundles 'org.bytedeco:ffmpeg:7.1.1-1.5.12:android-x86_64'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+def extracted = layout.buildDirectory.dir('native-libraries')
+tasks.register('extractNative', Copy) {
+    from { configurations.nativeBundles.collect { zipTree(it) } }
+    include '**/*.so'
+    eachFile { f ->
+        def abi = f.path.contains('arm64-v8a') ? 'arm64-v8a' : 'x86_64'
+        f.path = abi + '/' + f.name
+    }
+    includeEmptyDirs = false
+    into extracted
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+android.sourceSets.main.jniLibs.srcDir(extracted)
+tasks.named('preBuild').configure { dependsOn 'extractNative' }
