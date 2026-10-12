@@ -51,7 +51,7 @@ export const driveMessages: Record<string,string> = {
   drive_storage_full:"Google Drive storage is full. Free space or upgrade storage before starting a new recording.",
   drive_file_missing:"The recording folder could not be found. Check the configured Drive folder.",
   google_configuration_missing:"Google credentials must be configured on the server.",
-  google_redirect_invalid:"Google OAuth must use the permanent dinkvision.vercel.app callback address.",
+  google_redirect_invalid:"Configure APP_ORIGIN as the hosted HTTPS application origin.",
   google_not_connected:"Connect the owner's Google account in Admin Settings.",
   google_reconnect_required:"Reconnect the owner's Google account.",
   wrong_google_account:"Use the configured owner's Google account.",

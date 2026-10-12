@@ -1,5 +1,5 @@
 // Local development scheduler. Production uses the authenticated Vercel cron endpoint.
-const origin=process.env.NEXT_PUBLIC_APP_URL || 'http://127.0.0.1:3000';
+const origin=process.env.APP_ORIGIN || 'http://127.0.0.1:3000';
 if(!process.env.CRON_SECRET)throw Error('Configure CRON_SECRET in .env.');
 console.log('Browser recording background worker started.');
 while(true){

@@ -1,4 +1,10 @@
 plugins { id 'com.android.application' }
+def environment = new Properties()
+def environmentFile = rootProject.file('../.env')
+if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
+def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
+if (!appOrigin || !(appOrigin ==~ /^https:\/\/[^\/?#]+$/))
+    throw new GradleException('Set APP_ORIGIN to the hosted HTTPS origin in the repository .env or build environment.')
 android {
     namespace 'com.casabatik.recorder'
     compileSdk 36
@@ -8,9 +14,11 @@ android {
         targetSdk 36
         versionCode 16
         versionName '0.5.10'
+        buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
     }
+    buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     packaging { resources { excludes += ['META-INF/DEPENDENCIES', 'META-INF/INDEX.LIST', 'META-INF/native-image/**'] }; jniLibs { useLegacyPackaging = true } }
 }

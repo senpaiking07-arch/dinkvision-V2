@@ -79,7 +79,8 @@ video. Recovering that video later places it at the end of the queue.
   stay in app-private storage until the backend confirms upload; backups and
   device transfer are disabled. Camera RTSP uses the local network; it is not
   encrypted TLS. Internet API and Drive traffic use HTTPS.
-- The backend remains `https://dinkvision.vercel.app` in `Api.java`. No service
+- The backend origin is injected from `APP_ORIGIN` in the repository `.env` or
+  the Android build environment. No service
   role key, Google secret, camera password, or admin password is bundled.
 - The backend models both APK camera choices as managed Android recorder sources.
   Apply `202610060015_admin_rtsp_setup.sql` and
