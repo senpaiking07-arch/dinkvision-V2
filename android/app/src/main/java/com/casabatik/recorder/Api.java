@@ -7,7 +7,7 @@ import java.util.*;
 import org.json.JSONObject;
 
 final class Api {
-  static final String ORIGIN = "https://picklecamera.vercel.app";
+  static final String ORIGIN = "https://dinkvision.vercel.app";
   private final Vault vault;
 
   interface Connections {

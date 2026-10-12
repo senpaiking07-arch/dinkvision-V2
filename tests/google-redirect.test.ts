@@ -42,9 +42,9 @@ test("Google OAuth accepts exact stable production and localhost callbacks", () 
 test("Google OAuth rejects generated deployment domains and incorrect callback paths", () => {
   for (const GOOGLE_REDIRECT_URI of [
     "https://picklecamera-7olo1kmbl-renrenpedrajetas-projects.vercel.app/api/integrations/google/callback",
-    "https://picklecamera.vercel.app/",
-    "https://picklecamera.vercel.app/api/integrations/google/callback/",
-    "https://picklecamera.vercel.app/api/integrations/google/callback?source=preview",
+    "https://dinkvision.vercel.app/",
+    "https://dinkvision.vercel.app/api/integrations/google/callback/",
+    "https://dinkvision.vercel.app/api/integrations/google/callback?source=preview",
   ])
     assert.throws(
       () => googleRedirectUri({ VERCEL: "1", GOOGLE_REDIRECT_URI }),

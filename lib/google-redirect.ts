@@ -1,6 +1,6 @@
 export const GOOGLE_CALLBACK_PATH = "/api/integrations/google/callback";
 export const PRODUCTION_GOOGLE_REDIRECT_URI =
-  `https://picklecamera.vercel.app${GOOGLE_CALLBACK_PATH}`;
+  `https://dinkvision.vercel.app${GOOGLE_CALLBACK_PATH}`;
 export const LOCAL_GOOGLE_REDIRECT_URI =
   `http://127.0.0.1:3000${GOOGLE_CALLBACK_PATH}`;
 
