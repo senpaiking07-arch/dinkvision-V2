@@ -50,7 +50,7 @@ Organization defaults to Wrenlabs Pickleball Camera. Enrollment creates a revoca
 
 `/api/jobs/browser` requires `Authorization: Bearer <CRON_SECRET>` and handles email retries, completed-upload reconciliation, stale capture status, and expired Drive deletion. Upload completion also attempts email immediately. Ambiguous Gmail sends are never automatically repeated. Drive links stop working after actual deletion, which scheduling delays or outages can postpone.
 
-Set a random server-only `CRON_SECRET` in `.env.local`. For local development, run alongside the web app:
+Set a random server-only `CRON_SECRET` in `.env`. For local development, run alongside the web app:
 
 ```sh
 npm run jobs:browser
@@ -80,7 +80,7 @@ The supplied original logo is preserved in `public/wpc-logo.png`. Court artwork 
 
 ## Foundation and configuration
 
-Copy `.env.example` to `.env.local` and enter credentials locally. No secrets are committed. Rotate previously exposed credentials before configuring live services.
+Copy `.env.example` to `.env` and enter credentials locally. No secrets are committed. Rotate previously exposed credentials before configuring live services.
 
 The application uses Supabase's HTTPS API; direct PostgreSQL access is only needed for migrations. Set `MIGRATION_DATABASE_URL` to the session pooler URI (port 5432) from your project's Connect panel, replacing the password placeholder without brackets. Download the server CA certificate from Supabase Database Settings and set `DATABASE_CA_CERT_PATH` to its local path. TLS certificate verification stays enabled. The transaction pooler `DATABASE_URL` is reserved for future direct server queries.
 
@@ -135,14 +135,14 @@ An active capture lock is deliberately not released merely because its heartbeat
 With the local web app running, explicitly run this integration check:
 
 ```sh
-node --env-file=.env.local scripts/test-live.mjs
+node --env-file=.env scripts/test-live.mjs
 ```
 
 It creates three temporary test identities and its own court/recorder/camera/session fixtures, verifies live login, cookies, roles, CRUD, isolation, recorder pairing/commands/revocation and logout, then removes its fixtures. Camera results are explicitly simulated protocol fixtures. It sends no emails, opens no cameras, and does not change venue settings. Do not use it as a load test. Check its cleanup result if it fails.
 
-`node --env-file=.env.local scripts/test-recorder-agent.mjs` additionally launches the actual local service with a disposable recorder and verifies pairing, heartbeats, discovery and result delivery. It enumerates devices on the local computer/network but never opens a feed. It cleans up its own cloud records and temporary configuration directory. Run it only on the intended test computer.
+`node --env-file=.env scripts/test-recorder-agent.mjs` additionally launches the actual local service with a disposable recorder and verifies pairing, heartbeats, discovery and result delivery. It enumerates devices on the local computer/network but never opens a feed. It cleans up its own cloud records and temporary configuration directory. Run it only on the intended test computer.
 
-`node --env-file=.env.local scripts/test-capture-live.mjs <local-player-credentials.json> "Court 1"` explicitly records from that configured court, tests idempotency and a second player's isolation, restarts the control process during capture, stops and fully decodes the MP4. It keeps the recording under the supplied player's account and removes its temporary second player. Run only when recording from that camera is intended. Unit tests use generated test patterns for accelerated automatic-stop and early-source-failure checks; no camera is opened by `npm test`.
+`node --env-file=.env scripts/test-capture-live.mjs <local-player-credentials.json> "Court 1"` explicitly records from that configured court, tests idempotency and a second player's isolation, restarts the control process during capture, stops and fully decodes the MP4. It keeps the recording under the supplied player's account and removes its temporary second player. Run only when recording from that camera is intended. Unit tests use generated test patterns for accelerated automatic-stop and early-source-failure checks; no camera is opened by `npm test`.
 
 ## Agreed next stages
 

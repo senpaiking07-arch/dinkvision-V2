@@ -7,10 +7,10 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
-    "account:create": "node --env-file=.env.local scripts/provision-account.mjs",
+    "db:migrate": "node --env-file=.env scripts/migrate.mjs",
+    "account:create": "node --env-file=.env scripts/provision-account.mjs",
     "recorder": "node recorder/cli.mjs",
-    "jobs:browser": "node --env-file=.env.local scripts/browser-jobs.mjs",
+    "jobs:browser": "node --env-file=.env scripts/browser-jobs.mjs",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts recorder/*.test.mjs"
   },
   "dependencies": {

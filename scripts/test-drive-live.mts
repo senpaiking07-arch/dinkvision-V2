@@ -1,5 +1,5 @@
 // Explicit live camera/Drive verification. Requires owner OAuth and a real seeded player.
-// node --env-file=.env.local --import tsx scripts/test-drive-live.mts <player-credentials.json>
+// node --env-file=.env --import tsx scripts/test-drive-live.mts <player-credentials.json>
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
