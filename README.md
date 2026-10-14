@@ -208,4 +208,3 @@ Validation: 32 automated tests, production build, API authorization/origin/sessi
 ## Unified camera setup
 
 Admin → Camera setup now keeps the venue computer selector, pairing/discovery controls, camera list, and court/audio form together. The connected computer is selected initially; switching computers scopes the devices and camera list and clears the previous edit. Camera forms inherit this selected computer. Add/edit computer remains inline, and saving a new computer selects it for pairing. No advanced-settings area is introduced in this phase.
-.
