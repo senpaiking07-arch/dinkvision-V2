@@ -24,7 +24,7 @@ test("concurrent metadata updates preserve completion, UI dismissal and retry fi
       await Promise.all([
         patchMeta(id,{status:"uploaded",progress:100}),
         patchMeta(id,{dismissedFromPlayer:true}),
-        patchMeta(id,{failureReportPending:false,failureServerUpdatedAt:"2026-10-13T12:00:00Z"}),
+        patchMeta(id,{failureReportPending:false,failureServerUpdatedAt:Date.parse("2026-10-13T12:00:00Z")}),
       ]);
       const result = (await getMeta(id))!;
       assert.equal(result.status,"uploaded","dismissing a result must not resurrect an uploading job");
