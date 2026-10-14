@@ -40,7 +40,7 @@ export default async function LoginPage({
         {admin ? "Player sign-in" : "Venue administrator? Sign in here"}
       </a>
       <a className="auth-switch" href="/">
-        ← Back to Dink Vision
+        ← Back to Venue
       </a>
     </main>
   );

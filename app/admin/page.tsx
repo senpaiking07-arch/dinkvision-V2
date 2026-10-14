@@ -95,7 +95,7 @@ export default async function AdminPage() {
         <a href="/" className="brand">
           <img src="/dink-vision-logo.png" alt="Dink Vision" />
           <span>
-            Dink Vision
+            Venue Management
           </span>
         </a>
         <AccountControls account={account} />
