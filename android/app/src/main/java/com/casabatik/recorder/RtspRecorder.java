@@ -193,14 +193,16 @@ final class RtspRecorder {
     return longest;
   }
 
-  static void validate(File file, long expectedMillis, boolean expectAudio) throws Exception {
+  static long validate(File file, long expectedMillis, boolean expectAudio) throws Exception {
     if (!file.isFile() || file.length() < 1024)
       throw new Exception("No recoverable video was saved.");
+    long validatedDurationMicros;
     try (FFmpegFrameGrabber g = new FFmpegFrameGrabber(file)) {
       g.start();
       long durationMicros = g.getLengthInTime();
       long videoMicros = streamDurationMicros(g, AVMEDIA_TYPE_VIDEO);
       long audioMicros = streamDurationMicros(g, AVMEDIA_TYPE_AUDIO);
+      validatedDurationMicros = videoMicros > 0 ? videoMicros : durationMicros;
       Frame f;
       int count = 0;
       while ((f = g.grabImage()) != null && count < 2) count++;
@@ -218,6 +220,7 @@ final class RtspRecorder {
           videoMicros > 0 ? videoMicros : durationMicros, "Audio/video");
     }
     validatePackets(file, expectedMillis, expectAudio);
+    return Math.round(validatedDurationMicros / 1_000d);
   }
 
   private static void validatePackets(File file, long expectedMillis, boolean expectAudio) throws Exception {
