@@ -7,7 +7,12 @@ export type Account = {
   email: string;
   displayName: string;
   role: "player" | "admin";
+  tenantId?: string;
+  tenants?: {id: string; name: string; role: string}[];
+  isSuperAdmin?: boolean;
+  tenantName?: string;
 };
+
 export const getAccount = cache(
   async (): Promise<{ account: Account | null; problem?: string }> => {
     if (!isConfigured())

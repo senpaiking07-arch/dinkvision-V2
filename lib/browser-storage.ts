@@ -24,6 +24,12 @@ export type LocalRecording = {
   serverRetryRequired?: boolean;
   serverUploadReference?: string;
   localAvailable?: boolean;
+  sourceSessionId?: string;
+  validationFailed?: boolean;
+  dismissedFromPlayer?: boolean;
+  failureReportPending?: boolean;
+  failureServerUpdatedAt?: number;
+  clipStartMs?: number;
 };
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {

@@ -87,7 +87,7 @@ export class BrowserCapture {
             if (!lock) {
               reject(
                 Error(
-                  "Another WPC tab is using this device. Close the old tab or reload it, then retry.",
+                  "Another Dink Vision tab is using this device. Close the old tab or reload it, then retry.",
                 ),
               );
               return;
@@ -438,12 +438,20 @@ export class BrowserCapture {
         if (
           !(lastError instanceof UploadCancelledError) &&
           !(lastError instanceof LocalOnlyRecordingError)
-        )
+        ) {
           await tabletRequest("upload-failed", {
             id,
             validation_failed: lastError instanceof RecordingIntegrityError,
             last_error: lastError instanceof Error ? lastError.message : "Upload paused on this device.",
           }).catch(() => {});
+          // Clear recording state after upload failure to prevent interruption on next recording
+          await patchMeta(id, {
+            status: "failed",
+            lastError: lastError instanceof Error ? lastError.message : "Upload paused on this device.",
+            serverRetryRequired: false,
+            nextRetryAt: undefined,
+          }).catch(() => {});
+        }
         throw lastError;
       },
     );

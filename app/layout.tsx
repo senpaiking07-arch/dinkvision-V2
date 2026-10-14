@@ -3,9 +3,9 @@ import "./globals.css";
 import "./admin.css";
 
 export const metadata: Metadata = {
-  title: "Wrenlabs Pickleball Camera | Your court. Your moment.",
+  title: "Dink Vision | Your court. Your moment.",
   description:
-    "Record your pickleball match at Wrenlabs Pickleball Camera and keep your favorite moments.",
+    "Record your Dink Vision match and keep your favorite moments.",
 };
 
 export default function RootLayout({

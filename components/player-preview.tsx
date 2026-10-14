@@ -177,13 +177,13 @@ export default function PlayerPreview({
         </div>
       )}
       <header className="site-header shell">
-        <a href="#" className="brand" aria-label="Wrenlabs Pickleball Camera home">
+        <a href="#" className="brand" aria-label="Dink Vision home">
           <img
-            src="/wpc-logo.png"
-            alt="Wrenlabs Pickleball Camera"
+            src="/dink-vision-logo.png"
+            alt="Dink Vision"
           />
           <span>
-            WPC<small>Wrenlabs Pickleball Camera</small>
+            Dink Vision
           </span>
         </a>
         <nav aria-label="Main navigation">
@@ -226,7 +226,7 @@ export default function PlayerPreview({
           <div className="hero-visual">
             <div className="visual-top">
               <span>
-                <span className="small-dot" /> THE WPC EXPERIENCE
+                <span className="small-dot" /> THE Dink Vision EXPERIENCE
               </span>
               <Leaf size={22} strokeWidth={1.2} />
             </div>
@@ -491,7 +491,7 @@ export default function PlayerPreview({
       </main>
       <footer className="shell">
         <span>
-          © {new Date().getFullYear()} Wrenlabs Pickleball Camera{" "}
+          © {new Date().getFullYear()} Dink Vision{" "}
           <span className="footer-divider">/</span> House of Rare Bougainvillea
         </span>
         <button onClick={() => setModal("help")}>
@@ -518,7 +518,7 @@ export default function PlayerPreview({
             <X size={21} />
           </button>
           <div className="eyebrow">
-            WPC · {livePanel ? "COURTSIDE HELP" : "INTERFACE PREVIEW"}
+            Dink Vision · {livePanel ? "COURTSIDE HELP" : "INTERFACE PREVIEW"}
           </div>
           <h2>
             {modal === "signin"
@@ -561,7 +561,7 @@ export default function PlayerPreview({
                 className="primary"
                 onClick={() =>
                   setNotice(
-                    "For venue assistance, please speak to the Wrenlabs Pickleball Camera court staff.",
+                    "For venue assistance, please speak to the Dink Vision court staff.",
                   )
                 }
               >

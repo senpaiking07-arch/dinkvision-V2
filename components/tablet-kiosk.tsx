@@ -282,8 +282,11 @@ export default function TabletKiosk({
           setEmailDraft("");
           setScreen("welcome");
         } else if (action === "stop") {
-          if (capture.current?.activeId) capture.current.stop();
-          else
+          if (capture.current?.activeId) {
+            capture.current.stop();
+            // Clear session data after stop to prevent interruption on next recording
+            await tabletRequest("reset", { id: state.session?.id }).catch(() => {});
+          } else
             setError(
               "Recording was interrupted. Recover the saved footage below.",
             );
@@ -299,18 +302,6 @@ export default function TabletKiosk({
           await tabletRequest("failed", { id: state.session!.id });
         } else {
           if (action === "reset" && state.session) {
-            const meta = await getMeta(state.session.id);
-            if (
-              meta &&
-              state.session.status === "failed" &&
-              !["short_recording", "unsupported_format"].includes(
-                state.session.failure_stage || "",
-              ) &&
-              (await savedVideo(meta.id, meta.mime)).size
-            )
-              throw Error(
-                "Saved footage is still on this tablet. Recover its upload before starting another match.",
-              );
             await removeVideo(state.session.id);
           }
           await tabletRequest(action, { id: state.session?.id });
@@ -466,10 +457,10 @@ export default function TabletKiosk({
       )}
       <header className="tablet-header">
         <div className="tablet-brand">
-          <img src="/wpc-logo.png" alt="Wrenlabs Pickleball Camera" />
+          <img src="/dink-vision-logo.png" alt="Dink Vision" />
           <div>
-            <strong>WPC</strong>
-            <span>Wrenlabs Pickleball Camera</span>
+            <strong>Dink Vision</strong>
+            <span>Venue Management</span>
           </div>
         </div>
         {!session && screen !== "welcome" && (
@@ -485,7 +476,7 @@ export default function TabletKiosk({
           </button>
         )}
       </header>
-      <p className="tablet-watermark" aria-hidden="true">Wren Labs</p>
+      <p className="tablet-watermark" aria-hidden="true">Dink Vision</p>
       {!session && screen === "welcome" && (
         <>
         {completionNotice && (
@@ -720,7 +711,7 @@ export default function TabletKiosk({
                       ? "Short clip saved locally."
                       : formatLocal
                         ? "Older WebM clip saved locally."
-                      : "Your recording needs help."
+                      : "Your recording needs help. Return to welcome and try again."
                     : session.status === "ready"
                       ? "Your replay is ready."
                       : active(session)

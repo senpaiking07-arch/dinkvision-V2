@@ -14,9 +14,9 @@ export default async function LoginPage({
   return (
     <main className="auth-page">
       <a className="brand" href="/">
-        <img src="/wpc-logo.png" alt="Wrenlabs Pickleball Camera" />
+        <img src="/dink-vision-logo.png" alt="Dink Vision" />
         <span>
-          WPC<small>Wrenlabs Pickleball Camera</small>
+          Dink Vision
         </span>
       </a>
       <section className="auth-card">
@@ -40,7 +40,7 @@ export default async function LoginPage({
         {admin ? "Player sign-in" : "Venue administrator? Sign in here"}
       </a>
       <a className="auth-switch" href="/">
-        ← Back to Wrenlabs Pickleball Camera
+        ← Back to Dink Vision
       </a>
     </main>
   );

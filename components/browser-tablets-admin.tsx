@@ -140,7 +140,7 @@ export default function BrowserTabletsAdmin() {
       <div className="section-heading">
         <div>
           <h2>Devices & cameras</h2>
-          <p>Wrenlabs Pickleball Camera · Manage browser and Android camera devices.</p>
+          <p>Dink Vision · Manage browser and Android camera devices.</p>
         </div>
         <button
           className="secondary"
@@ -503,7 +503,7 @@ export default function BrowserTabletsAdmin() {
                 <details className="tapo-guide">
                   <summary>Android device camera setup guide</summary>
                   <ol>
-                    <li>Install and open the WPC Recorder APK on the Android device.</li>
+                    <li>Install and open the Dink Vision Recorder APK on the Android device.</li>
                     <li>Open Device setup and enter the one-time enrollment code.</li>
                     <li>Allow camera, microphone, and notification permissions when asked.</li>
                     <li>Keep the Android device mounted, charging, awake, and aimed at its assigned court.</li>

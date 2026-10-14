@@ -205,7 +205,7 @@ export default function BrowserTabletSetup() {
       <section className="admin-card tablet-enrollment">
         <a href="/">← Player screen</a>
         <h1>Set up this tablet</h1>
-        <p>Wrenlabs Pickleball Camera · Browser recording</p>
+        <p>Dink Vision · Browser recording</p>
         {!state ? (
           <p>Loading registration…</p>
         ) : !state.enabled || reenrolling ? (

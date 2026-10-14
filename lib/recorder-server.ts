@@ -9,6 +9,14 @@ export function recorderDatabase() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+export function systemDatabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!url || !key) throw new Error("System service is not configured.");
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
 export async function authenticateRecorder(request: Request) {
   const bearer = request.headers.get("authorization") || "";
   if (!/^Bearer cbrec_[A-Za-z0-9_-]{43}$/.test(bearer)) return null;

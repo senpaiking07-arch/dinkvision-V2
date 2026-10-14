@@ -93,9 +93,9 @@ export default async function AdminPage() {
     <>
       <header className="site-header shell">
         <a href="/" className="brand">
-          <img src="/wpc-logo.png" alt="Wrenlabs Pickleball Camera" />
+          <img src="/dink-vision-logo.png" alt="Dink Vision" />
           <span>
-            WPC<small>VENUE MANAGEMENT</small>
+            Dink Vision
           </span>
         </a>
         <AccountControls account={account} />

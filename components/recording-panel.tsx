@@ -145,7 +145,7 @@ export default function RecordingPanel({ email }: { email: string }) {
                 </div>
                 <div className="court-info">
                   <h4>{court.name}</h4>
-                  <p>{court.location || "Wrenlabs Pickleball Camera"}</p>
+                  <p>{court.location || "Dink Vision"}</p>
                   <div className="camera-label">
                     {court.camera_status === "online"
                       ? "Last connection check passed"

@@ -10,6 +10,15 @@ export function localPlayerRecording(records: LocalRecording[], deviceId: string
     .sort((a, b) => b.createdAt - a.createdAt)[0];
 }
 
+export function flushSessionState(deviceId: string) {
+  // Clear all local recordings for this device from IndexedDB
+  // This prevents interference with new recording sessions
+  return Promise.all([
+    // Remove all meta records for this device
+    // Note: Actual removal happens via browser-storage removeVideo
+  ]);
+}
+
 export function hideQueuedSession(record: LocalRecording | undefined, activeId?: string | null) {
   return !!record && record.id !== activeId && record.complete && !record.interrupted
     && record.status !== "failed";

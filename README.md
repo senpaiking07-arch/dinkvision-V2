@@ -1,10 +1,10 @@
-# Wrenlabs Pickleball Camera match recording
+# Dink Vision match recording
 
 ## Publishing merged updates
 
 The deployment branch is `codex/player-preview`. After reviewing and merging contributor changes, the Vercel project owner publishes the release using their linked Git identity. Keep contributor commits intact. Verify that the new Vercel deployment reaches **Ready**, then promote it to Production if it was created as a Preview. Redeploying an older deployment does not include newer branch commits.
 
-Latest owner deployment refresh: October 10, 2026. This release includes Android recording accuracy safeguards, upload queue and email delivery updates, live recording status, and [WPC Recorder 0.5.10](artifacts/WPC-Recorder-0.5.10.apk) with its [SHA-256 checksum](artifacts/WPC-Recorder-0.5.10.apk.sha256). Apply the pending database migration `supabase/migrations/202610100028_device_upload_queues.sql` to the deployment database before testing the new queue behavior. APK compilation, lint, and signature verification passed; venue hardware testing is still required.
+Latest owner deployment refresh: October 10, 2026. This release includes Android recording accuracy safeguards, upload queue and email delivery updates, live recording status, and [Dink Vision Recorder 0.5.10](artifacts/Dink-Vision-Recorder-0.5.10.apk) with its [SHA-256 checksum](artifacts/Dink-Vision-Recorder-0.5.10.apk.sha256). Apply the pending database migration `supabase/migrations/202610100028_device_upload_queues.sql` to the deployment database before testing the new queue behavior. APK compilation, lint, and signature verification passed; venue hardware testing is still required.
 
 Tablet guest recording with Google Drive upload, emailed playback links, and automatic retention cleanup. The tablet design preview is at `/preview` and cannot record.
 
@@ -44,7 +44,7 @@ The new player setup is browser-only. Each enrolled tablet records one assigned 
 
 Direct browser capture supports built-in cameras and physically connected USB cameras exposed through `getUserMedia`. External Tapo C210 Wi-Fi cameras use their local RTSP stream through the enrolled Android gateway instead of the Android device camera or browser setup page. The gateway receives, saves, and uploads the Tapo stream without using its own camera or microphone. Keep the Tapo camera and Android gateway on the same trusted local network.
 
-Organization defaults to Wrenlabs Pickleball Camera. Enrollment creates a revocable browser identity, not a player account or hardware serial number. One enabled tablet per court; assignments cannot change during unfinished recordings. Web Locks prevent concurrent recording tabs. Recorded size and MIME type become immutable when upload begins.
+Organization defaults to Dink Vision. Enrollment creates a revocable browser identity, not a player account or hardware serial number. One enabled tablet per court; assignments cannot change during unfinished recordings. Web Locks prevent concurrent recording tabs. Recorded size and MIME type become immutable when upload begins.
 
 ### Browser background processing
 
@@ -76,7 +76,7 @@ Automated tests cover browser registration, fixed assignment, scoped transitions
 - Successful clips upload to Drive, receive a read-only playback link, and queue Gmail delivery. Expired cloud and local videos are permanently deleted by the recorder worker.
 - `/preview` uses the same tablet UI with a labeled read-only fixture and never starts a capture.
 
-The supplied original logo is preserved in `public/wpc-logo.png`. Court artwork is an original SVG illustration. Fonts use Google Fonts with local system fallbacks.
+The supplied original logo is preserved in `public/dink-vision-logo.png`. Court artwork is an original SVG illustration. Fonts use Google Fonts with local system fallbacks.
 
 ## Foundation and configuration
 
@@ -156,7 +156,7 @@ Default duration is 900 seconds and retention is 86400 seconds after successful 
 Browser and USB-camera recordings are captured directly as MP4 (H.264/AAC where the browser exposes it) for dependable Drive and browser playback. The tablet setup blocks recording when the browser cannot produce MP4 and asks staff to update Chrome/Edge or use the Android recorder. Legacy WebM clips are never added to the Drive queue; they remain in that browser's protected local storage and can be downloaded from the tablet recovery screen. Already-uploaded historical WebM files are not rewritten.
 
 1. Configure APP_ORIGIN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DRIVE_ROOT_FOLDER_ID, GOOGLE_SENDER_EMAIL and a stable base64 TOKEN_ENCRYPTION_KEY containing 32 random bytes. Deployed builds derive the OAuth callback from `APP_ORIGIN`; `GOOGLE_REDIRECT_URI` is only a local-development override. These are server secrets except for the public application origin; never prefix secrets with NEXT_PUBLIC or put them in recorder configuration. Keep the encryption key across deployments and backups.
-2. Enable Drive API and register `<APP_ORIGIN>/api/integrations/google/callback` as the exact Authorized redirect URI in Google Cloud. Generated Vercel deployment domains and the site root are rejected. Local development may use `http://127.0.0.1:3000/api/integrations/google/callback`; use the same host for the app and callback because 127.0.0.1 and localhost have different cookies. Set the venue time zone; Wrenlabs Pickleball Camera uses Asia/Manila.
+2. Enable Drive API and register `<APP_ORIGIN>/api/integrations/google/callback` as the exact Authorized redirect URI in Google Cloud. Generated Vercel deployment domains and the site root are rejected. Local development may use `http://127.0.0.1:3000/api/integrations/google/callback`; use the same host for the app and callback because 127.0.0.1 and localhost have different cookies. Set the venue time zone; Dink Vision uses Asia/Manila.
 3. Sign in as the venue admin, open Settings, and Connect Google Drive. Authorize the configured owner. This POC uses the Drive scope because the destination is an existing owner-supplied folder; it also requests the send-only gmail.send scope for email notifications. The destination must be an owner-only My Drive folder; shared/public folders fail closed rather than exposing player recordings through inherited permissions.
 4. Restart the recorder to load its background upload loop. New completed recordings created after the first connection queue automatically. Existing local recordings require Upload / retry Drive in Recording logs. Use a real recipient email. New guest recordings use link access; older private recordings still require the matching Google account.
 5. Uploads run directly from the venue PC to Google's resumable endpoint in 4 MiB chunks, independently of camera control. The web app only handles metadata and sharing. The worker queries acknowledged offsets after interruptions; persisted pre-generated file IDs prevent duplicate Drive files. A verified byte count and MD5 are required before sharing.

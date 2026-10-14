@@ -27,19 +27,19 @@ export function recordingMessage(sender:string,recipient:string|string[],file:st
   // be unavailable briefly while Drive prepares the file, so the email also has
   // a branded fallback and keeps the normal replay link prominent.
   const thumbnailUrl=`https://drive.google.com/thumbnail?id=${encodeURIComponent(replayId)}&sz=w1200`;
-  const body = `Your Wrenlabs Pickleball Camera match recording is ready.\n\nWatch your recording:\n${replayUrl}\n\n${accessNote}\nGoogle may need a little time to prepare video playback.\n\nPlease save a copy before ${deadline} (${zone}), the scheduled retention deadline.\n\nEnjoy your replay!\nWrenlabs Pickleball Camera`;
+  const body = `Your Dink Vision match recording is ready.\n\nWatch your recording:\n${replayUrl}\n\n${accessNote}\nGoogle may need a little time to prepare video playback.\n\nPlease save a copy before ${deadline} (${zone}), the scheduled retention deadline.\n\nEnjoy your replay!\nDink Vision`;
   const escapeHtml=(value:string)=>value.replace(/[&<>"']/g,(character)=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[character]!));
   const html=`<!doctype html><html><body style="margin:0;background:#f4f2ea;color:#173f43;font-family:Arial,Helvetica,sans-serif;">
 <div style="padding:30px 14px;background:#f4f2ea;"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px;margin:0 auto;background:#fffef9;border:1px solid #dbe3d6;border-radius:18px;overflow:hidden;">
-<tr><td style="padding:26px 30px 20px;background:#0b6467;color:#fffef9;"><div style="font-family:Georgia,serif;font-size:15px;letter-spacing:3px;font-weight:bold;">WPC</div><div style="margin-top:6px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#cfe5d9;">Wrenlabs Pickleball Camera</div></td></tr>
-<tr><td style="padding:30px;"><div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6d8275;font-weight:bold;">Match replay ready</div><h1 style="margin:10px 0 12px;font-family:Georgia,serif;font-size:31px;line-height:1.15;font-weight:normal;color:#123f43;">Your recording is ready.</h1><p style="margin:0 0 20px;color:#526b69;font-size:15px;line-height:1.55;">Your Wrenlabs Pickleball Camera replay has finished processing.</p>
+<tr><td style="padding:26px 30px 20px;background:#0b6467;color:#fffef9;"><div style="font-family:Georgia,serif;font-size:15px;letter-spacing:3px;font-weight:bold;">Dink Vision</div><div style="margin-top:6px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#cfe5d9;">Dink Vision</div></td></tr>
+<tr><td style="padding:30px;"><div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6d8275;font-weight:bold;">Match replay ready</div><h1 style="margin:10px 0 12px;font-family:Georgia,serif;font-size:31px;line-height:1.15;font-weight:normal;color:#123f43;">Your recording is ready.</h1><p style="margin:0 0 20px;color:#526b69;font-size:15px;line-height:1.55;">Your Dink Vision replay has finished processing.</p>
 <a href="${escapeHtml(replayOpenUrl)}" style="display:block;text-decoration:none;"><img src="${escapeHtml(thumbnailUrl)}" alt="Match replay thumbnail" width="560" style="display:block;width:100%;max-width:560px;height:auto;min-height:190px;object-fit:cover;border-radius:12px;background:#e8efe5;border:1px solid #dbe3d6;"></a>
 <p style="margin:20px 0 0;text-align:center;"><a href="${escapeHtml(replayOpenUrl)}" style="display:inline-block;padding:13px 23px;border-radius:8px;background:#0b6467;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;">Watch your recording&nbsp; →</a></p>
 <div style="margin-top:24px;padding:15px 16px;border-radius:10px;background:#eef4ea;color:#526b69;font-size:13px;line-height:1.55;">${escapeHtml(accessNote)}<br>Google may need a little time to prepare video playback.</div>
 <p style="margin:20px 0 0;color:#526b69;font-size:13px;line-height:1.55;">Please save a copy before <strong style="color:#173f43;">${escapeHtml(deadline)} (${escapeHtml(zone)})</strong>, the scheduled retention deadline.</p></td></tr>
-<tr><td style="padding:18px 30px;border-top:1px solid #e3e8df;color:#82918a;font-size:12px;line-height:1.5;">Enjoy your replay!<br><strong style="color:#52706c;">Wrenlabs Pickleball Camera</strong><br><span>Powered by Wren Labs PH</span></td></tr>
+<tr><td style="padding:18px 30px;border-top:1px solid #e3e8df;color:#82918a;font-size:12px;line-height:1.5;">Enjoy your replay!<br><strong style="color:#52706c;">Dink Vision</strong><br><span>Powered by Dink Vision PH</span></td></tr>
 </table></div></body></html>`;
-  const boundary=`----=_WPC_${file.replace(/[^a-z0-9]/gi,"")}`;
+  const boundary=`----=_DinkVision_${file.replace(/[^a-z0-9]/gi,"")}`;
   // Gmail rejects the empty RFC group form ("undisclosed-recipients:;") for
   // some API messages. A Bcc-only message is valid, reaches every submitted
   // address once, and keeps players' email addresses private from each other.
@@ -52,8 +52,8 @@ export function recordingMessage(sender:string,recipient:string|string[],file:st
     `--${boundary}--`,
   ].join("\r\n");
   return Buffer.from([
-    `From: Wrenlabs Pickleball Camera <${sender}>`,...destination,"Subject: Your Wrenlabs Pickleball Camera match recording is ready",
-    `Message-ID: <wpc-${file}@${sender.split("@")[1]}>`,
+    `From: Dink Vision <${sender}>`,...destination,"Subject: Your Dink Vision match recording is ready",
+    `Message-ID: <dinkvision-${file}@${sender.split("@")[1]}>`,
     "MIME-Version: 1.0",`Content-Type: multipart/alternative; boundary="${boundary}"`,"",multipart,
   ].join("\r\n")).toString("base64url");
 }

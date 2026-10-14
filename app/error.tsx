@@ -12,7 +12,7 @@ export default function ErrorPage({ reset }: { reset: () => void }) {
           Try again
         </button>
         <a className="auth-switch" href="/">
-          Back to Wrenlabs Pickleball Camera
+          Back to Dink Vision
         </a>
       </section>
     </main>

@@ -1,4 +1,4 @@
-# Wrenlabs Pickleball Camera Android recorder
+# Dink Vision Android recorder
 
 This is an installable Android camera and RTSP recorder, using the existing hosted admin,
 tablet enrollment, Drive upload, email delivery, and retention APIs. It does not
@@ -8,7 +8,7 @@ camera on the same local network.
 
 ## Install and configure
 
-1. Transfer `WPC-Recorder-0.5.10.apk` to a **64-bit Android 8 or newer** device.
+1. Transfer `Dink-Vision-Recorder-0.5.10.apk` to a **64-bit Android 8 or newer** device.
    Open it and allow installation from that file source when Android asks.
    This is a debug-signed testing build, not a Play Store release.
 2. In the hosted admin's **Devices & cameras**, add/edit the device, assign its

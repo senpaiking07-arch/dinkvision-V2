@@ -170,7 +170,7 @@ export async function openCamera(
       timedOut = true;
       reject(
         Error(
-          "Camera access did not open. Close old WPC tabs, check the browser permission, and retry.",
+          "Camera access did not open. Close old Dink Vision tabs, check the browser permission, and retry.",
         ),
       );
     }, CAMERA_OPEN_TIMEOUT_MS);
