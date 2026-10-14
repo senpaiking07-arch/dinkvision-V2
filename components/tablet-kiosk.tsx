@@ -458,10 +458,6 @@ export default function TabletKiosk({
       <header className="tablet-header">
         <div className="tablet-brand">
           <img src="/dink-vision-logo.png" alt="Dink Vision" />
-          <div>
-            <strong>Dink Vision</strong>
-            <span>Venue Management</span>
-          </div>
         </div>
         {!session && screen !== "welcome" && (
           <button
