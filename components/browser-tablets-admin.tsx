@@ -316,7 +316,7 @@ export default function BrowserTabletsAdmin() {
                     })}
                     {queueItems.length > visibleQueue.length && (
                       <span className="device-queue-more">
-                        +{queueItems.length - visibleQueue.length} more in this device queue
+                        +{queueItems.length - visibleQueue.length} more in the court queue
                       </span>
                     )}
                   </span>
@@ -687,8 +687,9 @@ export default function BrowserTabletsAdmin() {
               <div>
                 <strong>Pending video upload</strong>
                 <p>
-                  Release the venue queue without deleting the video saved on
-                  this device. It can be retried later from the original device.
+                  Release the court upload queue without deleting the video
+                  saved on this device. It can be retried later from the
+                  original device.
                 </p>
               </div>
               <div className="save-row">
@@ -797,9 +798,9 @@ export default function BrowserTabletsAdmin() {
               Cancel upload for {cancellingUpload.device.name}?
             </h2>
             <p id="cancel-upload-description">
-              This releases the queue so the next video can upload. The video
-              is not deleted: it stays on the original device and can rejoin
-              the end of the queue with Recover / retry upload.
+              This releases the court upload queue so the next video can
+              upload. The video is not deleted: it stays on the original device
+              and can rejoin the end of the queue with Recover / retry upload.
             </p>
             {error && (
               <p className="form-error" role="alert">
@@ -830,7 +831,7 @@ export default function BrowserTabletsAdmin() {
                   });
                 }}
               >
-                {busy ? "Cancelling…" : "Cancel upload & release queue"}
+                {busy ? "Cancelling…" : "Cancel upload & release court queue"}
               </button>
             </div>
           </section>

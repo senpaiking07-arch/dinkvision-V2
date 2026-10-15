@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 
-test("each device owns an independent FIFO upload queue on the same court", async () => {
+test("cameras on the same court share one FIFO upload queue", async () => {
   const db = new PGlite();
   try {
     await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;
@@ -89,21 +89,88 @@ test("each device owns an independent FIFO upload queue on the same court", asyn
         )
       ).rows[0].ok;
 
-    assert.equal((await turn(0)).allowed, true);
-    const otherDevice = await turn(1);
-    assert.equal(otherDevice.allowed, true, "another device uploads concurrently");
-    assert.equal(otherDevice.queue_position, 1);
-    const waiting = await turn(2);
-    assert.equal(waiting.allowed, false);
-    assert.equal(waiting.queue_position, 2);
-    assert.equal(waiting.active_device_name, "Tablet 1");
+    // Every camera on the court shares one FIFO queue, ordered by queue time.
+    const first = await turn(0);
+    assert.equal(first.allowed, true);
+    assert.equal(first.queue_position, 1);
+    assert.equal(first.queue_total, 3);
+    assert.equal(first.active_device_name, "Tablet 1");
+
+    const second = await turn(1);
+    assert.equal(second.allowed, false, "cameras on the same court share one queue");
+    assert.equal(second.queue_position, 2);
+    assert.equal(second.queue_total, 3);
+    assert.equal(second.active_device_name, "Tablet 1");
+
+    const third = await turn(2);
+    assert.equal(third.allowed, false);
+    assert.equal(third.queue_position, 3);
+    assert.equal(third.queue_total, 3);
+    assert.equal(third.active_device_name, "Tablet 1");
+
     assert.equal(await report(0, "uploading", 400), true);
     assert.equal((await turn(2, false)).active_percent, 40);
 
+    // A camera on another court uploads without waiting for this court.
+    const otherCourt = courts[1];
+    const otherKiosk = randomUUID();
+    const otherDevice = randomUUID();
+    const otherSession = randomUUID();
+    await db.query(
+      "insert into kiosk_devices(id,token_hash,created_by) values($1,'queue-token-3',$2)",
+      [otherKiosk, admin],
+    );
+    await db.query(
+      "insert into browser_devices(id,name,court_id,kiosk_id) values($1,'Tablet 3',$2,$3)",
+      [otherDevice, otherCourt, otherKiosk],
+    );
+    await db.query(
+      `insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email,stopped_at)
+       values($1,$2,$3,gen_random_uuid(),'uploading','{}','other@gmail.com',now())`,
+      [otherSession, otherKiosk, otherCourt],
+    );
+    const otherFile = await db.query<{ id: string }>(
+      "insert into recording_files(session_id,status,bytes) values($1,'local_ready',1000) returning id",
+      [otherSession],
+    );
+    await db.query(
+      `insert into browser_recordings(session_id,device_id,file_id,mime_type,bytes,upload_state,upload_queued_at,upload_updated_at)
+       values($1,$2,$3,'video/mp4',1000,'pending',now(),now())`,
+      [otherSession, otherDevice, otherFile.rows[0].id],
+    );
+    const independent = (
+      await db.query<any>("select * from browser_upload_turn($1,$2,true)", [
+        otherSession,
+        otherDevice,
+      ])
+    ).rows[0];
+    assert.equal(independent.allowed, true, "a different court uploads independently");
+    assert.equal(independent.queue_position, 1);
+    assert.equal(independent.queue_total, 1);
+    assert.equal(independent.active_device_name, "Tablet 3");
+
+    // When the court head fails, the next camera on that court takes over.
     assert.equal(await report(0, "failed", 400), true);
-    const next = await turn(2);
+    const next = await turn(1);
     assert.equal(next.allowed, true, "a failed item does not block later videos");
+    assert.equal(next.queue_position, 1);
+    assert.equal(next.queue_total, 2);
+    assert.equal(next.active_device_name, "Tablet 2");
     assert.equal(next.blocked_by_failure, false);
+
+    assert.equal(await report(1, "complete", 1000), true);
+    await db.query("update recording_sessions set status='ready' where id=$1", [
+      sessions[1],
+    ]);
+    const last = await turn(2);
+    assert.equal(last.allowed, true);
+    assert.equal(last.queue_position, 1);
+    assert.equal(last.queue_total, 1);
+    assert.equal(last.active_device_name, "Tablet 1");
+    assert.equal(await report(2, "complete", 1000), true);
+    await db.query("update recording_sessions set status='ready' where id=$1", [
+      sessions[2],
+    ]);
 
     await db.query(
       "update kiosk_devices set current_session_id=$1 where id=$2",
@@ -161,15 +228,12 @@ test("each device owns an independent FIFO upload queue on the same court", asyn
       "retry is safe when local recovery already reopened the server queue",
     );
     const requeued = await turn(0, false);
-    assert.equal(requeued.allowed, false);
+    assert.equal(requeued.allowed, true);
     assert.equal(requeued.upload_state, "retrying");
-    assert.equal(requeued.queue_position, 2);
+    assert.equal(requeued.queue_position, 1);
+    assert.equal(requeued.queue_total, 1);
     assert.equal(requeued.active_device_name, "Tablet 1");
 
-    assert.equal(await report(2, "complete", 1000), true);
-    await db.query("update recording_sessions set status='ready' where id=$1", [
-      sessions[2],
-    ]);
     const retried = await turn(0);
     assert.equal(retried.allowed, true);
     assert.equal(retried.queue_position, 1);
