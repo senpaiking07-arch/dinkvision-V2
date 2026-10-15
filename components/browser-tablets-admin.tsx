@@ -30,7 +30,8 @@ export default function BrowserTabletsAdmin() {
     [notice, setNotice] = useState(""),
     [selected, setSelected] = useState<any>(null),
     [removing, setRemoving] = useState<any>(null),
-    [cancellingUpload, setCancellingUpload] = useState<any>(null);
+    [cancellingUpload, setCancellingUpload] = useState<any>(null),
+    [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
   const [mode, setMode] = useState("browser");
   const [newTabletVersion, setNewTabletVersion] = useState(0);
   const tabletEditor = useRef<HTMLFormElement>(null);
@@ -74,7 +75,10 @@ export default function BrowserTabletsAdmin() {
       });
       const d = await r.json();
       if (!r.ok) throw Error(d.error);
-      setCode(d.code || "");
+      if (d.code) {
+        setCode(d.code);
+        setShowEnrollmentModal(true);
+      }
       const password = tabletEditor.current?.querySelector<HTMLInputElement>(
         'input[name="rtsp_password"]',
       );
@@ -884,20 +888,53 @@ export default function BrowserTabletsAdmin() {
           </section>
         </div>
       )}
-      {code && (
-        <div className="empty-panel" role="status">
-          <strong>Enroll your device</strong>
-          <p>
-            {mode !== "browser"
-              ? "Open Device setup in the Android app and enter this code. The selected camera will be tested automatically."
-              : "Open this website on the tablet, visit /tablet/setup, and enter this code."}{" "}
-            Single use · expires in 10 minutes.
-          </p>
-          <code className="enrollment-code">{code}</code>
-          <p>
-            Replacing enrollment disconnects the old device after the code is
-            used.
-          </p>
+      {code && showEnrollmentModal && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowEnrollmentModal(false);
+          }}
+        >
+          <section
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="enroll-title"
+            aria-describedby="enroll-desc"
+          >
+            <h2 id="enroll-title">Enroll your device</h2>
+            <p id="enroll-desc">
+              {mode !== "browser"
+                ? "Open Device setup in the Android app and enter this code. The selected camera will be tested automatically."
+                : "Open this website on the tablet, visit /tablet/setup, and enter this code."}{" "}
+              Single use · expires in 10 minutes.
+            </p>
+            <code className="enrollment-code">{code}</code>
+            <p>
+              Replacing enrollment disconnects the old device after the code is
+              used.
+            </p>
+            <div className="confirm-modal-actions">
+              <button
+                type="button"
+                className="sign-in"
+                onClick={() => {
+                  navigator.clipboard.writeText(code).catch(() => {});
+                  setShowEnrollmentModal(false);
+                }}
+              >
+                Copy code
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => setShowEnrollmentModal(false)}
+              >
+                Done
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {error && (

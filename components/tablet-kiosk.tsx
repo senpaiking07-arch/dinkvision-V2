@@ -70,6 +70,7 @@ export default function TabletKiosk({
     lastTouch = useRef(Date.now()),
     operation = useRef(false),
     refreshing = useRef(false),
+    connectionError = useRef<string | null>(null),
     browserMode = useRef(false);
   const capture = useRef<BrowserCapture | null>(null);
   const [progress, setProgress] = useState("");
@@ -95,9 +96,10 @@ export default function TabletKiosk({
     try {
       const r = await fetch(browserMode.current ? "/api/tablet" : "/api/kiosk", {
         cache: "no-store",
+        signal: AbortSignal.timeout(15000),
       });
-      const d = await r.json();
-      if (!r.ok) throw Error(d.error);
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d) throw Error(d?.error || "Cannot reach the venue. Please retry.");
       if (d.browser) browserMode.current = true;
       if (d.browser && d.device?.id) {
         const records = await listMeta();
@@ -121,11 +123,15 @@ export default function TabletKiosk({
         }
       }
       setState(d);
+      const recoveredError = connectionError.current;
+      if (recoveredError) setError(current => current === recoveredError ? "" : current);
+      connectionError.current = null;
       if (d.courts?.length) setCourt(d.courts[0].id);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : "Connection lost. Please retry.",
-      );
+      const message = e instanceof Error && e.name !== "TimeoutError"
+        ? e.message : "Cannot reach the venue. Please retry.";
+      connectionError.current = message;
+      setError(message);
     } finally {
       refreshing.current = false;
     }
@@ -548,14 +554,16 @@ export default function TabletKiosk({
                   <a href="/tablet/setup">Open tablet setup</a>.
                 </p>
               )}
-              <label>Assigned court</label>
-              <div className="tablet-assigned-court">
-                {selected?.name || "Court assignment needed"}
-                {selected?.camera_status !== "online" && (
-                  <small>
-                    Ask the administrator to check this tablet and camera.
-                  </small>
-                )}
+              <div className="tablet-assigned-entry">
+                <label>Assigned court</label>
+                <div className="tablet-assigned-court">
+                  {selected?.name || "Court assignment needed"}
+                  {selected?.camera_status !== "online" && (
+                    <small>
+                      Ask the administrator to check this tablet and camera.
+                    </small>
+                  )}
+                </div>
               </div>
               <div className="tablet-email-entry">
                 <label htmlFor="player-email">Player Gmail</label>

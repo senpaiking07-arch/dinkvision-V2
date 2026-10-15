@@ -4,5 +4,7 @@ export function venueStateError(error: unknown, fallback: string) {
   if (value && ["PGRST205", "PGRST200", "42703"].includes(value.code || "")
       && /\btenants\b|\btenant_id\b/.test(value.message || ""))
     return "Venue configuration needs a database update. Ask the administrator to finish the update. A connected tablet is not required to browse these pages.";
+  if (value && ["PGRST205", "PGRST200", "PGRST202", "42703", "42P01"].includes(value.code || ""))
+    return "Venue configuration needs a database update. Ask the administrator to check the database setup.";
   return fallback;
 }

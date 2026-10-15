@@ -177,7 +177,7 @@ export default function PlayerPreview({
         </div>
       )}
       <header className="site-header shell">
-        <a href="#" className="brand" aria-label=" home">
+        <a href="#" className="brand" aria-label="Dink Vision home">
           <img
             src="/dink-vision-logo.png"
             alt="DinkVision"

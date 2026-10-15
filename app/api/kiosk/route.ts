@@ -6,10 +6,11 @@ import { checkDriveHealth } from "@/lib/google-server";
 import { browserTablet } from "@/lib/browser-tablets";
 import { browserTabletState, POST as browserAction } from "../tablet/route";
 import { normalizeRecipients } from "@/lib/team-recipients";
+import { venueStateError } from "@/lib/venue-errors";
 export async function GET() {
   try {
     const tablet = await browserTablet();
-    if (tablet) return browserTabletState(tablet);
+    if (tablet) return await browserTabletState(tablet);
     const kiosk = await kioskDevice();
     if (!kiosk) return json({ enabled: false });
     const db = recorderDatabase();
@@ -31,7 +32,8 @@ export async function GET() {
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     ]);
-    if (courts.error || settings.error || session.error) throw new Error();
+    if (courts.error || settings.error || session.error)
+      throw courts.error || settings.error || session.error;
     const file = session.data?.recording_files?.[0];
     const mail = file
       ? await db
@@ -52,8 +54,9 @@ export async function GET() {
           }
         : null,
     });
-  } catch {
-    return json({ error: "Cannot reach the venue. Please retry." }, 503);
+  } catch (error) {
+    console.error("Venue state unavailable", { code: (error as {code?: string})?.code || "unexpected" });
+    return json({ error: venueStateError(error, "Cannot reach the venue. Please retry.") }, 503);
   }
 }
 export async function POST(request: Request) {

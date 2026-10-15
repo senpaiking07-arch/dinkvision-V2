@@ -14,6 +14,7 @@ import {
   validCameraTransform,
 } from "@/lib/camera-transform";
 import { normalizeRecipients } from "@/lib/team-recipients";
+import { venueStateError } from "@/lib/venue-errors";
 export const maxDuration = 60;
 const activeCaptureStatuses = [
   "requested",
@@ -57,7 +58,8 @@ export async function browserTabletState(
         .order("client_created_at", { ascending: false })
         .limit(100),
     ]);
-    if (court.error || settings.error || session.error || queue.error) throw new Error();
+    if (court.error || settings.error || session.error || queue.error)
+      throw court.error || settings.error || session.error || queue.error;
     const s = session.data as any;
     const mail = s?.recording_files?.[0]?.email_jobs;
     const uploadQueue =
@@ -97,12 +99,13 @@ export async function GET(request: Request) {
   try {
     const t = await browserTablet();
     if (!t) return json({ enabled: false });
-    return browserTabletState(
+    return await browserTabletState(
       t,
       new URL(request.url).searchParams.get("setup") === "1",
     );
-  } catch {
-    return json({ error: "Tablet connection unavailable." }, 503);
+  } catch (error) {
+    console.error("Tablet state unavailable", { code: (error as {code?: string})?.code || "unexpected" });
+    return json({ error: venueStateError(error, "Tablet connection unavailable. Please retry.") }, 503);
   }
 }
 export async function POST(request: Request) {

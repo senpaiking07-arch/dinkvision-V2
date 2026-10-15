@@ -30,9 +30,10 @@ export default function BrowserTabletSetup() {
   const video = useRef<HTMLVideoElement>(null);
   const previewClose = useRef<(() => void) | null>(null);
   async function refresh() {
-    const r = await fetch("/api/tablet?setup=1");
-    const d = await r.json();
-    if (!r.ok) throw Error(d.error);
+    const r = await fetch("/api/tablet?setup=1", { cache: "no-store", signal: AbortSignal.timeout(15000) })
+      .catch(() => { throw Error("Tablet connection unavailable. Please retry."); });
+    const d = await r.json().catch(() => null);
+    if (!r.ok || !d) throw Error(d?.error || "Tablet connection unavailable. Please retry.");
     setState(d);
     if (d.device)
       setConfig({
@@ -207,7 +208,9 @@ export default function BrowserTabletSetup() {
         <h1>Set up this tablet</h1>
         <p>Dink Vision · Browser recording</p>
         {!state ? (
-          <p>Loading registration…</p>
+          error && !busy ? (
+            <button type="button" onClick={() => void run(refresh)}>Retry connection</button>
+          ) : <p role="status">Loading registration…</p>
         ) : !state.enabled || reenrolling ? (
           <form
             className="stack-form"
