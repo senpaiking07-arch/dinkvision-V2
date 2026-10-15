@@ -15,9 +15,6 @@ export default async function LoginPage({
     <main className="auth-page">
       <a className="brand" href="/">
         <img src="/dink-vision-logo.png" alt="Dink Vision" />
-        <span>
-          Dink Vision
-        </span>
       </a>
       <section className="auth-card">
         <div className="eyebrow">
