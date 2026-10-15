@@ -22,6 +22,8 @@ final class RtspRecorder {
 
     void frame(int seconds);
 
+    default void camera(String label) {}
+
     default void finalizing() {}
   }
 

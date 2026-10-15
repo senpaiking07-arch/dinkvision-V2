@@ -5,6 +5,10 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.hardware.camera2.*;
+import android.hardware.usb.UsbConstants;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbInterface;
+import android.hardware.usb.UsbManager;
 import android.media.MediaRecorder;
 import android.os.*;
 import android.util.Size;
@@ -38,16 +42,32 @@ final class DeviceCameraRecorder {
         .orElse(sizes[0]);
   }
 
-  private static String rearCamera(CameraManager manager) throws Exception {
-    String fallback = null;
+  private static String[] selectCamera(CameraManager manager) throws Exception {
+    String fallback = null, external = null, back = null;
     for (String id : manager.getCameraIdList()) {
       CameraCharacteristics details = manager.getCameraCharacteristics(id);
       Integer facing = details.get(CameraCharacteristics.LENS_FACING);
       if (fallback == null) fallback = id;
-      if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) return id;
+      if (facing == null) continue;
+      if (facing == CameraCharacteristics.LENS_FACING_EXTERNAL && external == null) external = id;
+      else if (facing == CameraCharacteristics.LENS_FACING_BACK && back == null) back = id;
     }
-    if (fallback == null) throw new Exception("This Android device has no camera.");
-    return fallback;
+    if (external != null) return new String[] {external, "USB camera"};
+    if (back != null) return new String[] {back, "Built-in camera"};
+    if (fallback != null) return new String[] {fallback, "Built-in camera"};
+    throw new Exception("This Android device has no camera.");
+  }
+
+  private static boolean usbCameraAttached(Context context) {
+    UsbManager manager = context.getSystemService(UsbManager.class);
+    if (manager == null) return false;
+    for (UsbDevice device : manager.getDeviceList().values())
+      for (int index = 0; index < device.getInterfaceCount(); index++) {
+        UsbInterface face = device.getInterface(index);
+        if (face.getInterfaceClass() == UsbConstants.USB_CLASS_VIDEO
+            && face.getInterfaceSubclass() == 2) return true;
+      }
+    return false;
   }
 
   static android.util.Range<Integer> recordingRate(android.util.Range<Integer>[] ranges, long minFrameNs) throws Exception {
@@ -77,7 +97,13 @@ final class DeviceCameraRecorder {
       throw new Exception("Allow camera and microphone permissions in the Android app.");
 
     CameraManager manager = context.getSystemService(CameraManager.class);
-    String cameraId = rearCamera(manager);
+    String[] selection = selectCamera(manager);
+    String cameraId = selection[0];
+    if (!"USB camera".equals(selection[1]) && usbCameraAttached(context))
+      throw new RecordingAccuracy.Failure(
+          "A USB camera is connected, but this Android device cannot use it. Use a device"
+              + " that supports external USB cameras, or disconnect the USB camera.");
+    listener.camera(selection[1]);
     CameraCharacteristics details = manager.getCameraCharacteristics(cameraId);
     Size size = recordingSize(details);
     var map = details.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
@@ -145,9 +171,13 @@ final class DeviceCameraRecorder {
       request.addTarget(surface);
       request.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
       request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, rate);
-      request.set(
-          CaptureRequest.CONTROL_AF_MODE,
-          CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+      int[] focusModes = details.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES);
+      if (focusModes != null)
+        for (int mode : focusModes)
+          if (mode == CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO) {
+            request.set(CaptureRequest.CONTROL_AF_MODE, mode);
+            break;
+          }
       CountDownLatch configured = new CountDownLatch(1);
       AtomicReference<CameraCaptureSession> openedSession = new AtomicReference<>();
       camera.createCaptureSession(

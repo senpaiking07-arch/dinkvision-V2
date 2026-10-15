@@ -434,6 +434,7 @@ final class Engine {
           String revision = "";
           boolean reported = false;
           boolean passed = false;
+          final String[] testedCamera = {""};
           try {
             server = api.call("/api/tablet", null);
             JSONObject session = server.optJSONObject("session");
@@ -463,15 +464,22 @@ final class Engine {
 
                     public void started() {}
 
+                    public void camera(String label) {
+                      testedCamera[0] = label;
+                    }
+
                     public void frame(int seconds) {
                       elapsed = seconds;
                     }
                   });
               RtspRecorder.validate(test, capturedMillis, expectsAudio(camera));
             } catch (Exception e) {
+              String reason = e.getMessage();
               if ("device".equals(camera.optString("type")))
                 throw new Exception(
-                    "Camera test failed. Allow camera and microphone permissions, then retry.");
+                    reason != null && reason.contains("USB camera")
+                        ? reason
+                        : "Camera test failed. Allow camera and microphone permissions, then retry.");
               throw new Exception(
                   "External Wi-Fi camera test failed. Check the Tapo Camera Account, IP address,"
                       + " and local network, then retry.");
@@ -486,7 +494,10 @@ final class Engine {
             vault.put("camera", camera.toString());
             vault.put("camera-revision", revision);
             passed = true;
-            message = "Camera test passed. Ready to record.";
+            message =
+                testedCamera[0].isEmpty()
+                    ? "Camera test passed. Ready to record."
+                    : "Camera test passed (" + testedCamera[0] + "). Ready to record.";
           } catch (Exception e) {
             error = e.getMessage();
             message = "Camera setup needs attention.";
