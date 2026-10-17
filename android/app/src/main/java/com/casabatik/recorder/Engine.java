@@ -891,13 +891,17 @@ final class Engine {
                 .put("nextRetryAt", 0);
             saveQueueItem(queued);
             latestSavedSession = sid;
-            try {
-              // Make the locally safe video visible to venue staff before the
-              // potentially long Google Drive transfer begins.
-              reportQueueItem(queued);
-            } catch (Exception ignored) {
-              // The durable local queue remains authoritative while offline.
-            }
+            JSONObject queueReport = new JSONObject(queued.toString());
+            heartbeat.execute(
+                () -> {
+                  try {
+                    // Make the locally safe video visible to venue staff without
+                    // delaying the tablet's return to the welcome screen.
+                    reportQueueItem(queueReport);
+                  } catch (Exception ignored) {
+                    // The durable local queue remains authoritative while offline.
+                  }
+                });
             phase = "complete";
             message =
                 capturedMillis < 60_000
