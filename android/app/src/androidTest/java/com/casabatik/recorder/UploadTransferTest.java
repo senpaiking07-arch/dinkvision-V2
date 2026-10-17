@@ -11,10 +11,20 @@ import org.junit.runner.RunWith;
 public class UploadTransferTest {
   @Test
   public void chunkTransportUsesPairedEndpointAndExactFileRange() throws Exception {
-    android.content.Context context =
+    android.content.Context base =
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().getTargetContext();
+    String preferenceName = "upload-transfer-test-" + java.util.UUID.randomUUID();
+    android.content.Context context =
+        new android.content.ContextWrapper(base) {
+          public android.content.Context getApplicationContext() {
+            return this;
+          }
+
+          public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+            return base.getSharedPreferences(preferenceName, mode);
+          }
+        };
     Vault vault = new Vault(context);
-    String original = vault.get("cookies");
     java.io.File file = new java.io.File(context.getCacheDir(), "upload-fixture.bin");
     try {
       vault.put("cookies", "{\"cb-kiosk\":\"fixture-device-token\"}");
@@ -62,8 +72,8 @@ public class UploadTransferTest {
       assertEquals("video/mp4", request[0].getRequestProperty("Content-Type"));
       assertArrayEquals(new byte[] {3, 4, 5}, sent.toByteArray());
     } finally {
-      vault.put("cookies", original);
       file.delete();
+      base.getSharedPreferences(preferenceName, 0).edit().clear().commit();
     }
   }
 

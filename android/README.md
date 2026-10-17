@@ -8,29 +8,29 @@ camera on the same local network.
 
 ## Install and configure
 
-1. Transfer `Dink-Vision-Recorder-0.5.11.apk` to a **64-bit Android 8 or newer** device.
+1. Transfer `Dink-Vision-Recorder-0.5.16.apk` to a **64-bit Android 8 or newer** device.
    Open it and allow installation from that file source when Android asks.
    This is a debug-signed testing build, not a Play Store release.
 2. In the hosted admin's **Devices & cameras**, add/edit the device, assign its
-   court, and choose one Android mode:
-   - **Android device's own camera · APK** uses the device's rear camera and built-in
-     microphone. No camera IP address is required.
-   - **External Wi-Fi camera · Tapo via Android gateway** uses a Tapo C210 or
-     compatible RTSP camera. The APK receives, saves, and uploads the external
-     camera stream; it does not use the Android camera or microphone. Enter a
-     camera name, IP address, and Camera Account username/password.
+   court, and generate an enrollment code. Camera mode is selected on the
+   enrolled tablet:
+   - **Wired USB / built-in Android camera** uses an Android-compatible external
+     camera when the device exposes it through Camera2, otherwise it uses the
+     rear camera. The tablet microphone supplies audio.
+   - **Tapo Wi-Fi camera** uses a Tapo C210 or compatible RTSP camera. The APK
+     receives, saves, and uploads the external camera stream; it does not use
+     the Android camera or microphone.
 3. For Tapo mode, create a **Camera Account** in the C210's advanced settings. Use
-   the C210's Network Settings or your router to find its IP. The admin page
+   the C210's Network Settings or your router to find its IP. Device setup
    automatically builds `rtsp://CAMERA_IP:554/stream1`. Keep the tablet and camera
    on the same LAN without guest-network isolation. Camera audio is included
    automatically when the RTSP stream provides a microphone track.
-4. Generate an enrollment code in the dashboard. Open the APK, tap **Device
-   setup**, and enter the code. Camera settings are downloaded securely and a
-   short video/audio test runs automatically. For the Android device camera,
-   allow camera and microphone permissions. No admin login is needed in the APK.
-5. On failure, correct the settings in the dashboard or check tablet Wi-Fi, then
-   use **Device setup → Refresh camera**. Dashboard edits trigger another check when
-   the app is open and idle. Configuration changes are blocked during active
+4. Open the APK, tap **Device setup**, and enter the code once. Choose the camera
+   mode on the tablet. Tapo mode asks for its Camera Account details; USB or
+   built-in mode asks for camera and microphone permissions. The saved setup is
+   tested automatically and does not require another enrollment code.
+5. On failure, open **Device setup** to test or change the saved camera. Camera
+   configuration changes are blocked during active
    recording/upload; pending local footage must be recovered before retesting.
 6. Tap to start, enter at least one player email on either team, add any optional recipients, confirm them, and record a short match.
    Stop, wait for upload confirmation, and check playback and email. Test a
@@ -137,8 +137,9 @@ to those libraries. Preserve the included license notices when distributing.
 
 ## Upgrade from 0.1.0
 
-Install over the existing APK to keep enrollment and pending footage. Configure
-its RTSP camera in the admin dashboard first. Existing locally saved passwords
-are not uploaded automatically; the administrator enters them in the dashboard.
-Version 0.2.0 removes the local camera editor and administrator sign-in. The
+Install over the existing APK to keep enrollment and pending footage. After the
+device is enrolled, open **Device setup** in the APK to choose either the wired
+USB / built-in Android camera or a Tapo Wi-Fi camera, then run its camera test.
+Existing locally saved passwords are not uploaded automatically; enter the Tapo
+Camera Account credentials on the tablet when configuring that camera. The
 browser camera workflow remains available for browser-based tablets.

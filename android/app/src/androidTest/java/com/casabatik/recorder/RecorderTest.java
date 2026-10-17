@@ -99,6 +99,8 @@ public class RecorderTest {
             i.startActivitySync(
                 new android.content.Intent(i.getTargetContext(), MainActivity.class)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+    Engine engine = Engine.get(activity);
+    engine.busy = true;
     try {
       i.runOnMainSync(
           () ->
@@ -144,6 +146,9 @@ public class RecorderTest {
       i.runOnMainSync(
           () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));
     } finally {
+      engine.busy = false;
+      i.runOnMainSync(
+          () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));
       i.runOnMainSync(activity::finish);
     }
   }
@@ -238,12 +243,26 @@ public class RecorderTest {
 
   @Test
   public void vaultPersistsEncryptedData() throws Exception {
-    android.content.Context c = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    android.content.Context base = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    String preferenceName = "vault-test-" + java.util.UUID.randomUUID();
+    android.content.Context c =
+        new android.content.ContextWrapper(base) {
+          public android.content.Context getApplicationContext() {
+            return this;
+          }
+
+          public android.content.SharedPreferences getSharedPreferences(String name, int mode) {
+            return base.getSharedPreferences(preferenceName, mode);
+          }
+        };
     Vault v = new Vault(c);
-    v.put("test-secret", "fixture-password");
-    assertEquals("fixture-password", new Vault(c).get("test-secret"));
-    assertFalse(
-        c.getSharedPreferences("vault", 0).getAll().toString().contains("fixture-password"));
-    v.put("test-secret", "");
+    try {
+      v.put("test-secret", "fixture-password");
+      assertEquals("fixture-password", new Vault(c).get("test-secret"));
+      assertFalse(
+          c.getSharedPreferences("vault", 0).getAll().toString().contains("fixture-password"));
+    } finally {
+      base.getSharedPreferences(preferenceName, 0).edit().clear().commit();
+    }
   }
 }

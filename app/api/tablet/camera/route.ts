@@ -1,29 +1,73 @@
-import { browserTablet } from "@/lib/browser-tablets";
+import { browserTablet, publicTablet } from "@/lib/browser-tablets";
 import { decryptSecret } from "@/lib/google-crypto";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { json, readBody, sameOrigin } from "@/lib/http";
-import { uuid } from "@/lib/validation";
+import { nativeTabletCameraFields } from "@/lib/tablet-camera-config";
+import { InputError, uuid } from "@/lib/validation";
+
+const activeCaptureStatuses = ["requested", "starting", "recording", "finalizing"];
+
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: "Invalid origin." }, 403);
   try {
     const t = await browserTablet();
     if (!t) return json({ error: "Enroll this tablet first." }, 401);
+    const b = await readBody(request);
+    if (b.action === "configure") {
+      const expectedRevision = uuid(b.expected_revision);
+      if (t.kiosk.current_session_id) {
+        const current = await recorderDatabase()
+          .from("recording_sessions")
+          .select("status")
+          .eq("id", t.kiosk.current_session_id)
+          .eq("kiosk_id", t.kiosk.id)
+          .maybeSingle();
+        if (current.error) throw current.error;
+        if (current.data && activeCaptureStatuses.includes(current.data.status))
+          return json(
+            { error: "Finish the current recording before changing camera settings." },
+            409,
+          );
+      }
+      const fields = nativeTabletCameraFields(b, t.device);
+      const updated = await recorderDatabase()
+        .from("browser_devices")
+        .update(fields)
+        .eq("id", t.device.id)
+        .eq("kiosk_id", t.kiosk.id)
+        .eq("config_revision", expectedRevision)
+        .select("*")
+        .maybeSingle();
+      if (updated.error) {
+        if (updated.error.code === "P0001")
+          return json(
+            { error: "Finish or recover the current recording before changing camera settings." },
+            409,
+          );
+        throw updated.error;
+      }
+      if (!updated.data)
+        return json(
+          { error: "Camera settings changed elsewhere. Reopen Device setup and try again." },
+          409,
+        );
+      return json({ ok: true, device: publicTablet(updated.data) });
+    }
     if (t.device.recorder_mode !== "android_rtsp")
       return json(
         {
           error:
-            "Select an Android camera mode for this device in the admin dashboard.",
+            "Open Device setup and choose this tablet camera or a Tapo Wi-Fi camera.",
         },
         409,
       );
-    const b = await readBody(request);
     if (b.action === "configuration") {
       if (t.device.video_device === "android-camera-v1")
         return json({
           revision: t.device.config_revision,
           camera: {
             type: "device",
-            name: "Android built-in camera",
+            name: "Android USB / built-in camera",
             audio: true,
           },
         });
@@ -31,7 +75,7 @@ export async function POST(request: Request) {
         return json(
           {
             error:
-              "Choose Android camera or Tapo Wi-Fi camera in the admin dashboard.",
+              "Open Device setup and choose this tablet camera or a Tapo Wi-Fi camera.",
           },
           409,
         );
@@ -43,7 +87,7 @@ export async function POST(request: Request) {
         return json(
           {
             error:
-              "Complete the Tapo IP address and Camera Account details in the admin dashboard.",
+              "Complete the Tapo IP address and Camera Account details in Device setup.",
           },
           409,
         );
@@ -76,13 +120,15 @@ export async function POST(request: Request) {
       return json({ ok: true });
     }
     return json({ error: "Unknown camera action." }, 400);
-  } catch {
+  } catch (error) {
     return json(
       {
         error:
-          "Camera configuration unavailable. Ask the administrator to check setup.",
+          error instanceof InputError
+            ? error.message
+            : "Camera configuration unavailable. Check the connection and try again.",
       },
-      503,
+      error instanceof InputError ? 400 : 503,
     );
   }
 }

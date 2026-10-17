@@ -52,7 +52,7 @@ export function tabletCameraFields(
       rtsp_url: "",
       rtsp_username: "",
       rtsp_password_encrypted: null,
-      camera_name: "Android built-in camera",
+      camera_name: "Android USB / built-in camera",
       source_type: "local",
       video_device: "android-camera-v1",
       audio_device: "device-microphone",
@@ -96,4 +96,14 @@ export function tabletCameraFields(
     audio_device: "camera-audio",
     stream_url: "",
   };
+}
+
+export function nativeTabletCameraFields(
+  body: Record<string, unknown>,
+  previous: Record<string, any> = {},
+) {
+  const mode = String(body.recorder_mode || "");
+  if (!["android_camera", "android_rtsp"].includes(mode))
+    throw new InputError("Choose this tablet camera or a Tapo Wi-Fi camera.");
+  return tabletCameraFields(body, previous);
 }

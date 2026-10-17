@@ -148,7 +148,7 @@ export async function POST(request: Request) {
     if (b.action === "configure" || b.action === "tested") {
       if (t.device.recorder_mode === "android_rtsp")
         return json(
-          { error: "Camera settings are managed in the admin dashboard." },
+          { error: "Camera settings are managed in Device setup in the Android recorder." },
           403,
         );
       if (!(await canSetup(t.device)))

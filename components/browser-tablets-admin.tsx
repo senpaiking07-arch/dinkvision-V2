@@ -2,15 +2,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 
-function cameraIp(address: string | undefined) {
-  if (!address) return "";
-  try {
-    return new URL(address).hostname;
-  } catch {
-    return "";
-  }
-}
-
 function canContinueUpload(recording: any) {
   return (
     recording?.upload_state === "failed" &&
@@ -32,7 +23,6 @@ export default function BrowserTabletsAdmin() {
     [removing, setRemoving] = useState<any>(null),
     [cancellingUpload, setCancellingUpload] = useState<any>(null),
     [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
-  const [mode, setMode] = useState("browser");
   const [newTabletVersion, setNewTabletVersion] = useState(0);
   const tabletEditor = useRef<HTMLFormElement>(null);
   useEffect(() => {
@@ -79,10 +69,6 @@ export default function BrowserTabletsAdmin() {
         setCode(d.code);
         setShowEnrollmentModal(true);
       }
-      const password = tabletEditor.current?.querySelector<HTMLInputElement>(
-        'input[name="rtsp_password"]',
-      );
-      if (password) password.value = "";
       const updated = await refresh();
       const selectedId = d.id || selected?.id;
       if (selectedId && updated)
@@ -152,7 +138,6 @@ export default function BrowserTabletsAdmin() {
           disabled={busy || loading}
           onClick={() => {
             setSelected(null);
-            setMode("browser");
             setCode("");
             setError("");
             setNewTabletVersion((v) => v + 1);
@@ -242,12 +227,6 @@ export default function BrowserTabletsAdmin() {
             const emailStatus = readyFile?.email_jobs?.status;
             const selectDevice = () => {
               setSelected(d);
-              setMode(
-                d.recorder_mode === "android_rtsp" &&
-                  d.video_device === "android-camera-v1"
-                  ? "android_camera"
-                  : d.recorder_mode || "browser",
-              );
               setCode("");
             };
             return (
@@ -406,8 +385,8 @@ export default function BrowserTabletsAdmin() {
             <div className="tablet-empty-state">
               <strong>No devices registered yet</strong>
               <p>
-                Use Add device to choose a directly connected camera, the
-                Android device camera, or an external Wi-Fi camera.
+                Use Add device to name the recorder and assign its court. The
+                camera is selected and tested on the enrolled physical device.
               </p>
             </div>
           )}
@@ -426,11 +405,6 @@ export default function BrowserTabletsAdmin() {
               id: selected?.id,
               name: f.get("name"),
               court_id: f.get("court_id"),
-              recorder_mode: mode,
-              camera_name: f.get("camera_name"),
-              rtsp_host: f.get("rtsp_host"),
-              rtsp_username: f.get("rtsp_username"),
-              rtsp_password: f.get("rtsp_password"),
             });
           }}
         >
@@ -439,8 +413,8 @@ export default function BrowserTabletsAdmin() {
               <h3>{selected ? "Edit device" : "Add device"}</h3>
               <p>
                 {selected
-                  ? "Update its type, name, court, and camera connection."
-                  : "Choose a tablet or camera, assign its court, then enroll the physical device."}
+                  ? "Update its name or court. Camera selection stays on the physical device."
+                  : "Name the device, assign its court, then enroll and select its camera on the physical device."}
               </p>
             </div>
             <span className="status-tag">
@@ -449,32 +423,13 @@ export default function BrowserTabletsAdmin() {
           </div>
           <fieldset className="tablet-fields" disabled={busy || loading}>
             <label>
-              <span>Recording setup</span>
-              <select value={mode} onChange={(e) => setMode(e.target.value)}>
-                <option value="browser">
-                  Wired USB / built-in camera · Browser
-                </option>
-                <option value="android_camera">
-                  Android camera only · APK (no Tapo)
-                </option>
-                <option value="android_rtsp">
-                  Wi-Fi Tapo camera · Android gateway
-                </option>
-              </select>
-              <small>
-                Direct mode records a wired USB camera or the browser device’s built-in camera.
-                Wi-Fi mode records the external Tapo/RTSP camera; the Android
-                APK acts only as its network recorder and uploader.
-              </small>
-            </label>
-            <label>
               <span>Device name</span>
               <input
                 name="name"
                 required
                 maxLength={100}
                 defaultValue={selected?.name || ""}
-                placeholder={mode === "browser" ? "Example: Court 1 Tablet" : "Example: Court 1 Android"}
+                placeholder="Example: Court 1 Tablet"
               />
               <small>A clear name helps staff identify the physical device.</small>
             </label>
@@ -494,110 +449,14 @@ export default function BrowserTabletsAdmin() {
                   : "Only active, available courts are shown."}
               </small>
             </label>
-            {mode === "android_camera" && (
-              <>
-                <h3>Android camera</h3>
-                <div className="automatic-audio-note">
-                  <strong>Uses this Android device</strong>
-                  <span>
-                    The APK records with the rear camera and built-in microphone.
-                    No external camera or camera IP address is required.
-                  </span>
-                </div>
-                <details className="tapo-guide">
-                  <summary>Android device camera setup guide</summary>
-                  <ol>
-                    <li>Install and open the Dink Vision Recorder APK on the Android device.</li>
-                    <li>Open Device setup and enter the one-time enrollment code.</li>
-                    <li>Allow camera, microphone, and notification permissions when asked.</li>
-                    <li>Keep the Android device mounted, charging, awake, and aimed at its assigned court.</li>
-                  </ol>
-                </details>
-              </>
-            )}
-            {mode === "android_rtsp" && (
-              <>
-                <h3>External Wi-Fi camera</h3>
-                <div className="automatic-audio-note">
-                  <strong>Uses the Tapo camera—not the Android camera</strong>
-                  <span>
-                    The Android APK is the gateway: it receives the Tapo RTSP
-                    stream over the local network, saves it, and uploads it.
-                    The Android camera and microphone are not used in this mode.
-                  </span>
-                </div>
-                <label>
-                  Camera name
-                  <input
-                    name="camera_name"
-                    required
-                    maxLength={100}
-                    defaultValue={selected?.camera_name || ""}
-                    placeholder="Tapo C210"
-                  />
-                </label>
-                <label>
-                  RTSP address
-                  <span className="rtsp-address-field">
-                    <span>rtsp://</span>
-                    <input
-                      name="rtsp_host"
-                      required
-                      maxLength={15}
-                      inputMode="decimal"
-                      defaultValue={cameraIp(selected?.rtsp_url)}
-                      placeholder="192.168.100.210"
-                      autoComplete="off"
-                      aria-label="Camera IP address"
-                    />
-                    <span>:554/stream1</span>
-                  </span>
-                  <small>Enter only the camera IP address. The RTSP address is completed automatically.</small>
-                </label>
-                <label>
-                  Camera Account username
-                  <input
-                    name="rtsp_username"
-                    required
-                    maxLength={100}
-                    defaultValue={selected?.rtsp_username || ""}
-                    autoComplete="off"
-                  />
-                </label>
-                <label>
-                  Camera Account password
-                  <input
-                    name="rtsp_password"
-                    type="password"
-                    required={!selected?.has_camera_password}
-                    maxLength={256}
-                    autoComplete="new-password"
-                    placeholder={
-                      selected?.has_camera_password
-                        ? "Saved — leave blank to keep it"
-                        : "Camera Account password"
-                    }
-                  />
-                </label>
-                <div className="automatic-audio-note">
-                  <strong>Camera audio is automatic</strong>
-                  <span>If the Wi-Fi camera provides a microphone track, it is included in every recording.</span>
-                </div>
-                <p className="form-note">
-                  The enrolled Android gateway connects to and tests the
-                  external camera on the same local network.
-                </p>
-                <details className="tapo-guide">
-                  <summary>Tapo C210 setup guide</summary>
-                  <ol>
-                    <li>In the Tapo app, open the C210 and go to Device Settings → Advanced Settings → Camera Account. Create a camera username and password.</li>
-                    <li>Open Network Settings in the Tapo app or your router and copy the camera’s IP address, such as <code>192.168.1.100</code>.</li>
-                    <li>Use a clear camera name such as <strong>Court 1 Tapo C210</strong>. Enter only the IP above; this page builds <code>rtsp://IP:554/stream1</code>.</li>
-                    <li>Keep the Android gateway and Tapo camera on the same Wi-Fi. The Android device does not need to face the court; after enrollment, it checks the Tapo video and available Tapo microphone audio automatically.</li>
-                  </ol>
-                </details>
-              </>
-            )}
+            <div className="automatic-audio-note">
+              <strong>Camera setup happens on this device</strong>
+              <span>
+                After enrollment, open the website’s tablet setup for browser
+                recording or Device setup in the Android APK. The device will
+                choose and test its own camera without another enrollment code.
+              </span>
+            </div>
           </fieldset>
           {selected && (
             <div className="tablet-device-details">
@@ -605,9 +464,7 @@ export default function BrowserTabletsAdmin() {
               <code>{selected.id}</code>
               <p>
                 {selected.diagnostic ||
-                  (mode !== "browser"
-                    ? "Settings are sent securely to the enrolled Android tablet."
-                    : "Camera settings and permissions are configured on the physical tablet.")}
+                  "Camera settings and permissions are configured on the physical tablet."}
               </p>
             </div>
           )}
@@ -757,8 +614,8 @@ export default function BrowserTabletsAdmin() {
             <div>
               <strong>Create and assign</strong>
               <p>
-                Choose a direct wired/built-in camera, the Android device’s own
-                camera, or an external Tapo/Wi-Fi camera; then assign a court.
+                Name the recording device and assign its court. Camera selection
+                happens after enrollment on the physical device.
               </p>
             </div>
           </li>
@@ -773,7 +630,7 @@ export default function BrowserTabletsAdmin() {
             <span>3</span>
             <div>
               <strong>Confirm camera readiness</strong>
-              <p>Direct browser cameras review a short test clip. For external Wi-Fi mode, the Android gateway tests the saved Tapo/RTSP stream without using its own camera.</p>
+              <p>The browser setup page or Android APK selects the camera, records a short test clip, and saves the tested configuration.</p>
             </div>
           </li>
         </ol>
@@ -906,9 +763,9 @@ export default function BrowserTabletsAdmin() {
           >
             <h2 id="enroll-title">Enroll your device</h2>
             <p id="enroll-desc">
-              {mode !== "browser"
-                ? "Open Device setup in the Android app and enter this code. The selected camera will be tested automatically."
-                : "Open this website on the tablet, visit /tablet/setup, and enter this code."}{" "}
+              Open this website’s <code>/tablet/setup</code> page or Device setup
+              in the Android APK and enter this code. Choose and test the camera
+              on that physical device. {" "}
               Single use · expires in 10 minutes.
             </p>
             <code className="enrollment-code">{code}</code>

@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let view = 'welcome', state = {}, emails = [], formError = '';
+let view = 'welcome', state = {}, emails = [], formError = '', enrollmentPrompted = false;
 const native = window.CasaNative;
 const call = (action, value = '') => {
   if (native) native.action(action, value);
@@ -14,7 +14,7 @@ function show(name) {
     $(section).hidden = section !== name;
 }
 $('setup').onclick = () => call('setup');
-$('reenroll').onclick = () => call('setup');
+$('reenroll').onclick = () => call('reenroll');
 $('begin').onclick = () => {
   if (!state.enabled || !state.tested) {
     call('setup');
@@ -129,11 +129,15 @@ function tick() {
     return;
   }
   $('court').textContent = state.court || 'Not assigned';
+  $('app-version').textContent = `Android recorder · ${state.version || 'preview'}`;
   const limitMinutes = Math.max(1, Math.round(Number(state.maxSeconds || 900) / 60));
   $('limit').textContent = `At least one Gmail address is required · Recording limit: ${limitMinutes} minutes`;
   $('setup').disabled = !!state.busy;
   $('record').disabled = !!state.busy;
-  const currentError = state.error || formError;
+  const savedError = state.error === 'Select an Android camera mode for this device in the admin dashboard.'
+    ? 'Open Device setup and choose this tablet’s camera.'
+    : state.error;
+  const currentError = savedError || formError;
   $('error').hidden = !currentError;
   $('error').textContent = currentError;
   const count = state.countdown || 0;
@@ -164,10 +168,18 @@ function tick() {
   const completion = state.phase === 'complete' && view === 'welcome';
   $('notice').classList.toggle('complete', completion);
   $('notice').textContent = !state.enabled
-    ? 'Register this tablet using Device setup.'
+    ? state.enrolled
+      ? 'Enrollment is saved. Open Device setup to retry the connection.'
+      : 'Open Device setup and enter your enrollment code.'
+    : !state.cameraMode
+      ? 'This tablet is enrolled. Open Device setup to choose and test its camera.'
     : !state.tested
-      ? 'Waiting for the assigned camera test. Check Device setup or the admin dashboard.'
+      ? 'Open Device setup and test the assigned camera before recording.'
       : view === 'welcome' ? (state.message || '') : '';
+  if (state.initialized && !state.enabled && !state.enrolled && !enrollmentPrompted) {
+    enrollmentPrompted = true;
+    call('setup');
+  }
 }
 tick();
 renderEmails();

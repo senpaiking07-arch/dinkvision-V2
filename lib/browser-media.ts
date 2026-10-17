@@ -207,6 +207,7 @@ export async function openCamera(
 
 export async function testCamera(c: BrowserCamera, preview?: HTMLVideoElement) {
   assertCaptureVisible();
+  const mimeType = recordingMime();
   const camera = await openCamera(c);
   try {
     if (preview) {
@@ -214,13 +215,14 @@ export async function testCamera(c: BrowserCamera, preview?: HTMLVideoElement) {
       await preview.play();
     }
     const recorder = new MediaRecorder(camera.stream, {
-      mimeType: recordingMime(),
+      mimeType,
     });
     let startedAt = 0, endedAt = 0;
     const clip = await new Promise<Blob>((resolve, reject) => {
       const chunks: Blob[] = [];
       let stopTimer: ReturnType<typeof setTimeout> | undefined;
       let startTimeout: ReturnType<typeof setTimeout> | undefined;
+      let finalizationTimeout: ReturnType<typeof setTimeout> | undefined;
       const unwatchVisibility = watchCaptureVisibility(() => {
         clearTimers();
         if (recorder.state !== "inactive") recorder.stop();
@@ -230,6 +232,7 @@ export async function testCamera(c: BrowserCamera, preview?: HTMLVideoElement) {
         unwatchVisibility();
         if (stopTimer) clearTimeout(stopTimer);
         if (startTimeout) clearTimeout(startTimeout);
+        if (finalizationTimeout) clearTimeout(finalizationTimeout);
       };
       recorder.ondataavailable = (e) => {
         if (e.data.size) chunks.push(e.data);
@@ -243,6 +246,14 @@ export async function testCamera(c: BrowserCamera, preview?: HTMLVideoElement) {
         stopTimer = setTimeout(() => {
           if (recorder.state !== "inactive") {
             endedAt = performance.now();
+            finalizationTimeout = setTimeout(() => {
+              clearTimers();
+              reject(
+                Error(
+                  "Camera recording finalization timed out. Reconnect the camera and repeat the test.",
+                ),
+              );
+            }, 5000);
             recorder.stop();
           }
         }, Math.max(0, TEST_CLIP_DURATION_MS + ENCODER_FINAL_FRAME_MS - (performance.now() - startedAt)));

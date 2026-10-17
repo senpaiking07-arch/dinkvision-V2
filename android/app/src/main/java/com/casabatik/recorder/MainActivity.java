@@ -9,11 +9,14 @@ import android.view.*;
 import android.webkit.*;
 import android.widget.*;
 import androidx.webkit.WebViewAssetLoader;
+import java.net.URI;
 import java.util.ArrayList;
+import org.json.JSONObject;
 
 public final class MainActivity extends androidx.activity.ComponentActivity {
   private Engine engine;
   private WebView web;
+  private boolean configureDeviceCameraAfterPermission;
 
   @Override
   public void onCreate(Bundle b) {
@@ -103,6 +106,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         case "setup":
           runOnUiThread(() -> setup());
           break;
+        case "reenroll":
+          runOnUiThread(() -> enrollment(true));
+          break;
         case "start":
           engine.start(value.trim());
           break;
@@ -154,29 +160,41 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     return input;
   }
 
+  private JSONObject cameraConfiguration(Object... entries) {
+    JSONObject result = new JSONObject();
+    try {
+      for (int index = 0; index < entries.length; index += 2)
+        result.put(String.valueOf(entries[index]), entries[index + 1]);
+      return result;
+    } catch (Exception impossible) {
+      throw new IllegalStateException("Could not prepare camera settings.", impossible);
+    }
+  }
+
   private void setup() {
     if (engine.busy) {
       Toast.makeText(this, "Finish the current operation first.", Toast.LENGTH_SHORT).show();
       return;
     }
     if (!engine.server.optBoolean("enabled")) {
-      LinearLayout p = panel();
-      TextView help = new TextView(this);
-      help.setText(
-          "Use a code created for the Android device’s own camera or an external Wi-Fi camera"
-              + " in Admin / Devices & cameras.");
-      p.addView(help);
-      EditText code = field(p, "Enrollment code from Admin / Devices & cameras", "", false);
-      new AlertDialog.Builder(this)
-          .setTitle("Register this tablet")
-          .setView(p)
-          .setPositiveButton("Enroll", (d, w) -> engine.enroll(code.getText().toString()))
-          .setNegativeButton("Cancel", null)
-          .show();
+      if (engine.hasStoredEnrollment()) {
+        new AlertDialog.Builder(this)
+            .setTitle("Enrollment saved")
+            .setMessage(
+                "This tablet already has a saved enrollment, but its assignment could not be retrieved. Check the connection and try again. Re-enroll only when you intentionally want to replace the saved device.")
+            .setPositiveButton("Check again", (d, w) -> engine.refreshConfiguration())
+            .setNeutralButton("Re-enroll", (d, w) -> enrollment(true))
+            .setNegativeButton("Close", null)
+            .show();
+      } else enrollment(false);
       return;
     }
     boolean deviceCamera = engine.usesDeviceCamera();
     boolean wifiCamera = engine.usesWifiCamera();
+    if (!deviceCamera && !wifiCamera) {
+      chooseCameraMode();
+      return;
+    }
     if (deviceCamera && !DeviceCameraRecorder.hasPermissions(this))
       requestPermissions(
           new String[] {
@@ -186,18 +204,155 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     new AlertDialog.Builder(this)
         .setTitle(
             deviceCamera
-                ? "Android camera mode"
+                ? "USB / built-in camera"
                 : wifiCamera ? "Tapo Wi-Fi camera mode" : "Camera setup incomplete")
         .setMessage(
             deviceCamera
-                ? "Uses this Android device’s rear camera and microphone. Allow both permissions, then test the camera."
+                ? "Uses an attached Android-compatible USB camera when available, otherwise this tablet’s rear camera. Allow camera and microphone access, then run the test."
                 : wifiCamera
                     ? "Uses the external Tapo stream on the same Wi-Fi. This Android camera and microphone are not used."
-                    : "Choose Android camera or Tapo Wi-Fi camera in Admin / Devices & cameras, then return here.")
+                    : "Choose this tablet camera or a Tapo Wi-Fi camera.")
         .setPositiveButton(
-            wifiCamera ? "Test Tapo camera" : deviceCamera ? "Test Android camera" : "Check again",
+            wifiCamera ? "Test Tapo camera" : deviceCamera ? "Test camera" : "Check again",
             (d, w) -> engine.syncCamera())
+        .setNeutralButton("Change camera", (d, w) -> chooseCameraMode())
         .setNegativeButton("Close", null)
+        .show();
+  }
+
+  private void chooseCameraMode() {
+    new AlertDialog.Builder(this)
+        .setTitle("Set up this tablet camera")
+        .setItems(
+            new String[] {
+              "Wired USB / built-in Android camera\nUses this tablet and its microphone",
+              "Tapo Wi-Fi camera\nUses a Camera Account on the same network"
+            },
+            (dialog, which) -> {
+              if (which == 0) configureDeviceCamera();
+              else configureTapoCamera();
+            })
+        .setNeutralButton("Re-enroll", (dialog, which) -> enrollment(true))
+        .setNegativeButton("Close", null)
+        .show();
+  }
+
+  private void configureDeviceCamera() {
+    if (!DeviceCameraRecorder.hasPermissions(this)) {
+      configureDeviceCameraAfterPermission = true;
+      requestPermissions(
+          new String[] {
+            android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO
+          },
+          2);
+      return;
+    }
+    engine.configureCamera(cameraConfiguration("recorder_mode", "android_camera"));
+  }
+
+  private String rtspHost(JSONObject device) {
+    try {
+      String value = device.optString("rtsp_url");
+      return value.isEmpty() ? "" : new URI(value).getHost();
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
+  private void configureTapoCamera() {
+    JSONObject currentDevice = engine.server.optJSONObject("device");
+    final JSONObject device = currentDevice == null ? new JSONObject() : currentDevice;
+    final boolean savedTapo = engine.usesWifiCamera();
+    LinearLayout p = panel();
+    TextView help = new TextView(this);
+    help.setText(
+        "Use the Tapo Camera Account credentials, not the Tapo app or Wi-Fi password. The camera and tablet must be on the same network.");
+    p.addView(help);
+    EditText name = field(p, "Camera name", savedTapo ? device.optString("camera_name") : "", false);
+    EditText host = field(p, "Camera IP address", savedTapo ? rtspHost(device) : "", false);
+    EditText user =
+        field(p, "Camera Account username", savedTapo ? device.optString("rtsp_username") : "", false);
+    EditText password = field(p, "Camera Account password", "", true);
+    if (savedTapo && device.optBoolean("has_camera_password"))
+      password.setHint("Leave blank to keep the saved password");
+    AlertDialog dialog =
+        new AlertDialog.Builder(this)
+            .setTitle("Set up Tapo Wi-Fi camera")
+            .setView(p)
+            .setPositiveButton("Save and test", null)
+            .setNegativeButton("Cancel", null)
+            .create();
+    dialog.setOnShowListener(
+        ignored ->
+            dialog
+                .getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(
+                    view -> {
+                      if (name.getText().toString().trim().isEmpty()
+                          || host.getText().toString().trim().isEmpty()
+                          || user.getText().toString().trim().isEmpty()
+                          || (password.getText().toString().isEmpty()
+                              && !(savedTapo && device.optBoolean("has_camera_password")))) {
+                        Toast.makeText(
+                                this,
+                                "Enter the camera name, IP address, username, and password.",
+                                Toast.LENGTH_LONG)
+                            .show();
+                        return;
+                      }
+                      engine.configureCamera(
+                          cameraConfiguration(
+                              "recorder_mode",
+                              "android_rtsp",
+                              "camera_name",
+                              name.getText().toString().trim(),
+                              "rtsp_host",
+                              host.getText().toString().trim(),
+                              "rtsp_username",
+                              user.getText().toString().trim(),
+                              "rtsp_password",
+                              password.getText().toString()));
+                      dialog.dismiss();
+                    }));
+    dialog.show();
+  }
+
+  @Override
+  public void onRequestPermissionsResult(
+      int requestCode, String[] permissions, int[] grantResults) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    if (requestCode != 2 || !configureDeviceCameraAfterPermission) return;
+    configureDeviceCameraAfterPermission = false;
+    if (DeviceCameraRecorder.hasPermissions(this)) configureDeviceCamera();
+    else
+      new AlertDialog.Builder(this)
+          .setTitle("Camera access required")
+          .setMessage(
+              "Allow camera and microphone access to configure and test the USB or built-in camera.")
+          .setPositiveButton("Close", null)
+          .show();
+  }
+
+  private void enrollment(boolean replace) {
+    if (engine.busy) {
+      Toast.makeText(this, "Finish the current operation first.", Toast.LENGTH_SHORT).show();
+      return;
+    }
+    LinearLayout p = panel();
+    TextView help = new TextView(this);
+    help.setText(
+        replace
+            ? "Enter a new enrollment code created for an Android camera device in Admin / Devices & cameras."
+            : "Enter the enrollment code from Admin / Devices & cameras before using the recorder.");
+    p.addView(help);
+    EditText code = field(p, "Enrollment code", "", false);
+    new AlertDialog.Builder(this)
+        .setTitle(replace ? "Complete device setup" : "Register this tablet")
+        .setView(p)
+        .setPositiveButton(
+            replace ? "Enroll again" : "Enroll",
+            (d, w) -> engine.enroll(code.getText().toString(), replace))
+        .setNegativeButton("Cancel", null)
         .show();
   }
 

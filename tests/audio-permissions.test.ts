@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 
 test("signed-in admins can create and edit camera audio; players and forged health remain blocked", async () => {
   const db = new PGlite();
@@ -18,6 +19,7 @@ test("signed-in admins can create and edit camera audio; players and forged heal
     const admin = randomUUID(), player = randomUUID(), recorder = randomUUID();
     await db.query("insert into auth.users(id) values($1),($2)", [admin, player]);
     await db.query("update public.profiles set role='admin' where id=$1", [admin]);
+    await provisionLegacyFixtureMemberships(db);
     await db.query("insert into public.recorders(id,name) values($1,'Recorder')", [recorder]);
     await db.exec("set role authenticated");
     await db.query("select set_config('request.jwt.claim.sub',$1,false)", [admin]);

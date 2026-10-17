@@ -4,7 +4,6 @@ import { recorderDatabase } from "@/lib/recorder-server";
 import { hashKiosk } from "@/lib/kiosk";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { uuid, InputError } from "@/lib/validation";
-import { tabletCameraFields } from "@/lib/tablet-camera-config";
 import { publicTablet } from "@/lib/browser-tablets";
 export async function GET() {
   if ((await getAccount()).account?.role !== "admin")
@@ -158,17 +157,8 @@ export async function POST(request: Request) {
     if (!name || name.length > 100)
       throw new InputError("Enter a tablet name (up to 100 characters).");
     const court = b.court_id ? uuid(b.court_id) : null;
-    const previous = id
-      ? await db.from("browser_devices").select("*").eq("id", id).single()
-      : null;
-    if (previous?.error) throw previous.error;
-    const cameraFields =
-      b.action === "save" || !id
-        ? tabletCameraFields(b, previous?.data || {})
-        : {};
     const code = randomBytes(18).toString("base64url");
     const fields = {
-      ...cameraFields,
       name,
       court_id: court,
       ...(b.action === "enroll" || !id

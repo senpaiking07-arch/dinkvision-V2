@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { tabletCameraFields } from "../lib/tablet-camera-config";
+import {
+  nativeTabletCameraFields,
+  tabletCameraFields,
+} from "../lib/tablet-camera-config";
 import { decryptSecret } from "../lib/google-crypto";
-test("admin RTSP configuration encrypts credentials and preserves saved passwords", () => {
+test("shared RTSP configuration encrypts credentials and preserves saved passwords", () => {
   process.env.TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
   const body = {
     recorder_mode: "android_rtsp",
@@ -39,11 +42,18 @@ test("admin RTSP configuration encrypts credentials and preserves saved password
 });
 
 test("Android device camera uses the native recorder without RTSP credentials", () => {
-  const fields = tabletCameraFields({ recorder_mode: "android_camera" });
+  const fields = nativeTabletCameraFields({ recorder_mode: "android_camera" });
   assert.equal(fields.recorder_mode, "android_rtsp");
   assert.equal(fields.video_device, "android-camera-v1");
   assert.equal(fields.audio_device, "device-microphone");
-  assert.equal(fields.camera_name, "Android built-in camera");
+  assert.equal(fields.camera_name, "Android USB / built-in camera");
   assert.equal(fields.rtsp_url, "");
   assert.equal(fields.rtsp_password_encrypted, null);
+});
+
+test("an enrolled native recorder cannot switch itself to browser recording", () => {
+  assert.throws(
+    () => nativeTabletCameraFields({ recorder_mode: "browser" }),
+    /Choose this tablet camera or a Tapo Wi-Fi camera/,
+  );
 });

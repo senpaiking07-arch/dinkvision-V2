@@ -348,18 +348,19 @@ export default function BrowserTabletSetup() {
                 </article>
                 <article>
                   <span className="status-tag connected">Android APK</span>
-                  <h4>Android device camera only</h4>
+                  <h4>Wired USB / built-in Android camera</h4>
                   <ol>
                     <li>
-                      In Admin → Devices & cameras, add an{" "}
-                      <strong>Android device camera · APK</strong>.
+                      In Admin → Devices & cameras, create the device, assign
+                      its court, and generate an enrollment code.
                     </li>
                     <li>
-                      Install the APK, open Device setup, and enter its code.
+                      Install the APK, open Device setup, enter the code, then
+                      choose <strong>Wired USB / built-in Android camera</strong>.
                     </li>
                     <li>
-                      Allow camera and microphone access. The APK uses the rear
-                      camera without an external camera.
+                      Allow camera and microphone access. The APK prefers an
+                      Android-compatible USB camera and otherwise uses the rear camera.
                     </li>
                   </ol>
                 </article>
@@ -368,15 +369,16 @@ export default function BrowserTabletSetup() {
                   <h4>Tapo C210 through Android gateway</h4>
                   <ol>
                     <li>
-                      In Admin → Devices & cameras, add a{" "}
-                      <strong>Wi-Fi Tapo camera · Android gateway</strong>.
+                      In Admin → Devices & cameras, create the device, assign
+                      its court, and generate an enrollment code.
                     </li>
                     <li>
-                      Enter its IP address and Tapo Camera Account details there.
+                      In the Android APK, open Device setup, enter the code, and
+                      choose <strong>Tapo Wi-Fi camera</strong>.
                     </li>
                     <li>
-                      Enroll it through Device setup in the Android app. Keep the
-                      camera and Android device on the same local network.
+                      Enter the camera IP and Tapo Camera Account details on the
+                      tablet. Keep both devices on the same local network.
                     </li>
                     <li>
                       The APK records the Tapo RTSP stream. It does not use the

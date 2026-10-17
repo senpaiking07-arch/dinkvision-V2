@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 
 test("browser enrollment, fixed assignments, session ownership, recovery and cloud email leases", async () => {
   const db = new PGlite();
@@ -46,6 +47,7 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     );
     await db.query("insert into auth.users(id) values($1)", [admin]);
     await db.query("update profiles set role='admin' where id=$1", [admin]);
+    await provisionLegacyFixtureMemberships(db);
     await db.query("insert into courts(id,name) values($1,'Court 1')", [court]);
     await db.query(
       "insert into browser_devices(id,name,court_id,enrollment_hash,enrollment_expires_at) values($1,'Tablet 1',$2,'enroll',now()+interval '10 minutes')",

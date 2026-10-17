@@ -42,6 +42,7 @@ final class Engine {
   volatile long recordingStartedNanos = 0;
   volatile String activeSession = "";
   volatile boolean visible = false;
+  volatile boolean initialized = false;
   volatile String attemptedRevision = "";
   volatile JSONObject server = new JSONObject();
 
@@ -72,7 +73,6 @@ final class Engine {
             if (!busy) {
               refresh();
               reportFailedCaptureIfNeeded();
-              syncIfNeeded();
             }
             kickUploads();
           } catch (Exception ignored) {
@@ -126,10 +126,20 @@ final class Engine {
         } else if (!item.optBoolean("localAvailable", true)) {
           item.put("localAvailable", true).put("status", "pending").put("bytes", file.length());
           saveQueueItem(item);
+        } else if ("uploading".equals(item.optString("status"))) {
+          int retries = item.optInt("retryCount", 0) + 1;
+          item
+              .put("status", retries >= 8 ? "failed" : "retrying")
+              .put("retryCount", retries)
+              .put("lastError", "Upload was interrupted when the app stopped.")
+              .put("nextRetryAt", retries >= 8 ? 0 : System.currentTimeMillis() + 5_000L)
+              .put("bytes", file.length());
+          saveQueueItem(item);
         } else if ("recording".equals(item.optString("status"))) {
           item
-              .put("status", "failed")
-              .put("lastError", "Recording was interrupted when the app stopped.")
+              .put("status", "pending")
+              .put("lastError", "Recording was interrupted and will be validated before upload.")
+              .put("nextRetryAt", 0)
               .put("bytes", file.length());
           saveQueueItem(item);
         }
@@ -221,10 +231,38 @@ final class Engine {
   void refresh() {
     try {
       server = api.call("/api/tablet", null);
+      initialized = true;
       reconcileServerUploadRequests();
     } catch (Exception e) {
       if (!busy) error = e.getMessage();
     }
+  }
+
+  void refreshConfiguration() {
+    if (!claim()) return;
+    message = "Checking this tablet’s saved assignment…";
+    work.execute(
+        () -> {
+          try {
+            server = api.call("/api/tablet", null);
+            initialized = true;
+            reconcileServerUploadRequests();
+            error = "";
+            if (server.optBoolean("enabled") && cameraMode().isEmpty()) {
+              message =
+                  "This tablet is enrolled. Open Device setup and choose its camera without entering another code.";
+            }
+          } catch (Exception e) {
+            error = e.getMessage();
+            message = "The saved enrollment is unchanged. Check the connection and try again.";
+          } finally {
+            busy = false;
+          }
+        });
+  }
+
+  boolean hasStoredEnrollment() {
+    return !vault.object("cookies").optString("cb-kiosk").isEmpty();
   }
 
   private void reconcileServerUploadRequests() {
@@ -238,10 +276,14 @@ final class Engine {
       String id = remote.optString("session_id");
       JSONObject local = queueItem(id);
       File file = new File(new File(context.getFilesDir(), "recordings"), id + ".mp4");
+      String localFailureUpdate = local.optString("failureServerUpdatedAt");
+      String remoteUpdate = remote.optString("upload_updated_at");
       if (!"failed".equals(local.optString("status"))
           || !local.optBoolean("localAvailable", true)
           || !file.isFile()
-          || file.length() < 1024) continue;
+          || file.length() < 1024
+          || (!localFailureUpdate.isEmpty()
+              && (remoteUpdate.isEmpty() || remoteUpdate.compareTo(localFailureUpdate) <= 0))) continue;
       try {
         local
             .put("status", "pending")
@@ -283,10 +325,13 @@ final class Engine {
       JSONObject s =
           new JSONObject()
               .put("enabled", server.optBoolean("enabled"))
+              .put("enrolled", hasStoredEnrollment())
+              .put("initialized", initialized)
               .put("busy", busy)
               .put("phase", phase)
               .put("message", message)
               .put("error", error)
+              .put("version", BuildConfig.VERSION_NAME)
               .put("elapsed", Math.max(0, currentElapsed))
               .put("uploadPercent", uploadPercent)
               .put("countdown", countdown)
@@ -306,8 +351,14 @@ final class Engine {
     }
   }
 
-  void startService() {
-    context.startForegroundService(new Intent(context, RecorderService.class));
+  void startService(boolean cameraActive, boolean uploadActive) {
+    if (cameraActive && !DeviceCameraRecorder.hasPermissions(context))
+      throw new IllegalStateException(
+          "Open Device setup and allow camera and microphone access first.");
+    context.startForegroundService(
+        new Intent(context, RecorderService.class)
+            .putExtra(RecorderService.EXTRA_CAMERA_ACTIVE, cameraActive)
+            .putExtra(RecorderService.EXTRA_UPLOAD_ACTIVE, uploadActive));
   }
 
   boolean usesDeviceCamera() {
@@ -332,6 +383,46 @@ final class Engine {
       vault.put("camera-revision", "");
     } catch (Exception ignored) {
     }
+  }
+
+  void configureCamera(JSONObject configuration) {
+    if (!server.optBoolean("enabled")) {
+      error = "Enroll this tablet before choosing its camera.";
+      return;
+    }
+    if (!visible || !claim()) return;
+    phase = "configuring";
+    message = "Saving this tablet’s camera setup…";
+    work.execute(
+        () -> {
+          boolean saved = false;
+          try {
+            JSONObject request = new JSONObject(configuration.toString());
+            JSONObject currentDevice = server.optJSONObject("device");
+            if (currentDevice == null || currentDevice.optString("config_revision").isEmpty())
+              throw new Exception("Refresh this tablet before changing its camera settings.");
+            request
+                .put("action", "configure")
+                .put("expected_revision", currentDevice.getString("config_revision"));
+            api.call("/api/tablet/camera", request);
+            clearCameraCache();
+            attemptedRevision = "";
+            server = api.call("/api/tablet", null);
+            initialized = true;
+            reconcileServerUploadRequests();
+            error = "";
+            phase = "idle";
+            message = "Camera setup saved. Starting the required camera test…";
+            saved = true;
+          } catch (Exception e) {
+            error = e.getMessage();
+            phase = "error";
+            message = "Camera setup could not be saved.";
+          } finally {
+            busy = false;
+          }
+          if (saved && visible) syncCamera();
+        });
   }
 
   long captureCamera(
@@ -364,17 +455,20 @@ final class Engine {
 
   void finishWork() {
     busy = false;
-    if (!uploadWorkerRunning.get())
-      context.stopService(new Intent(context, RecorderService.class));
+    if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
     refresh();
   }
 
-  void enroll(String code) {
+  void enroll(String code, boolean replace) {
     if (!claim()) return;
     work.execute(
         () -> {
           try {
-            api.call("/api/tablet/enroll", new JSONObject().put("code", code.trim()));
+            api.call(
+                "/api/tablet/enroll",
+                new JSONObject().put("code", code.trim()).put("replace", replace));
+            clearCameraCache();
+            error = "";
             message = "Tablet enrolled. Retrieving its assigned camera settings…";
             refresh();
           } catch (Exception e) {
@@ -382,9 +476,13 @@ final class Engine {
           } finally {
             busy = false;
             if (server.optBoolean("enabled")) {
-              if (usesDeviceCamera() && !DeviceCameraRecorder.hasPermissions(context))
+              if (cameraMode().isEmpty())
+                message = "Open Device setup and choose this tablet’s camera.";
+              else if (usesDeviceCamera() && !DeviceCameraRecorder.hasPermissions(context))
                 message = "Open Device setup and allow camera and microphone access.";
-              else syncCamera();
+              else
+                message =
+                    "Open Device setup and test the assigned camera before recording.";
             }
           }
         });
@@ -401,23 +499,19 @@ final class Engine {
         && vault.get("camera-revision").equals(d.optString("tested_revision"));
   }
 
-  void syncIfNeeded() {
-    JSONObject d = server.optJSONObject("device"), session = server.optJSONObject("session");
-    if (!visible
-        || busy
-        || d == null
-        || !"android_rtsp".equals(d.optString("recorder_mode"))) return;
-    if (session != null && activeCaptureStatus(session.optString("status"))) return;
-    String revision = d.optString("config_revision");
-    if (!revision.isEmpty()
-        && !revision.equals(attemptedRevision)
-        && (!cameraReady(d) || d.optBoolean("test_requested"))) syncCamera();
-  }
-
   void syncCamera() {
+    if (!usesDeviceCamera() && !usesWifiCamera()) {
+      error = "";
+      message =
+          server.optBoolean("enabled")
+              ? "This tablet is enrolled. Open Device setup and choose its camera."
+              : "Open Device setup and enter an enrollment code before testing the camera.";
+      phase = "idle";
+      return;
+    }
     if (!visible || !claim()) return;
     try {
-      startService();
+      startService(usesDeviceCamera(), false);
     } catch (Exception e) {
       busy = false;
       error = "Open the app and retry the camera test.";
@@ -499,8 +593,15 @@ final class Engine {
                     ? "Camera test passed. Ready to record."
                     : "Camera test passed (" + testedCamera[0] + "). Ready to record.";
           } catch (Exception e) {
-            error = e.getMessage();
-            message = "Camera setup needs attention.";
+            String problem = e.getMessage() == null ? "" : e.getMessage();
+            boolean setupRequired =
+                problem.contains("Open Device setup and choose")
+                    || problem.contains("Choose this tablet camera or a Tapo Wi-Fi camera");
+            error = setupRequired ? "" : problem;
+            message =
+                setupRequired
+                    ? "Open Device setup and choose this tablet’s camera."
+                    : "Camera setup needs attention.";
             if (!revision.isEmpty()) clearCameraCache();
             if (!revision.isEmpty() && !reported)
               try {
@@ -560,12 +661,12 @@ final class Engine {
             "The Android camera test has not passed. Open Device setup, allow camera and microphone access, then test again.";
       else
         error =
-            "Choose a supported camera mode in Admin / Devices & cameras, then test it in Device setup.";
+            "Open Device setup, choose a supported camera mode, and run the camera test.";
       return;
     }
     if (!claim()) return;
     try {
-      startService();
+      startService(usesDeviceCamera(), false);
     } catch (Exception e) {
       busy = false;
       phase = "error";
@@ -750,7 +851,9 @@ final class Engine {
     try {
       UUID.fromString(sid);
       JSONObject item = queueItem(sid);
-      if (item.length() == 0 || !item.optBoolean("localAvailable", true)) return;
+      if (item.length() == 0
+          || !item.optBoolean("localAvailable", true)
+          || !belongsToCurrentDevice(item)) return;
       item
           .put("status", "pending")
           .put("retryCount", 0)
@@ -764,13 +867,34 @@ final class Engine {
     }
   }
 
+  private boolean belongsToCurrentDevice(JSONObject item) {
+    JSONObject device = server.optJSONObject("device");
+    String currentDevice = device == null ? "" : device.optString("id");
+    return !currentDevice.isEmpty() && currentDevice.equals(item.optString("device"));
+  }
+
+  File localPlaybackFile(String sid) throws Exception {
+    UUID.fromString(sid);
+    JSONObject item = queueItem(sid);
+    if (item.length() == 0
+        || !item.optBoolean("localAvailable", true)
+        || !belongsToCurrentDevice(item))
+      throw new Exception("This saved video is not playable for the currently enrolled device.");
+    File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
+    if (!file.isFile() || file.length() < 1)
+      throw new Exception("This saved video is not playable because its local file is missing.");
+    return file;
+  }
+
   private JSONObject nextUpload() {
     long now = System.currentTimeMillis();
     JSONArray current = queue();
     JSONObject selected = null;
     for (int index = 0; index < current.length(); index++) {
       JSONObject item = current.optJSONObject(index);
-      if (item == null || !item.optBoolean("localAvailable", true)) continue;
+      if (item == null
+          || !item.optBoolean("localAvailable", true)
+          || !belongsToCurrentDevice(item)) continue;
       String status = item.optString("status", "saved_locally");
       if (!java.util.Arrays.asList("saved_locally", "pending", "retrying").contains(status)
           || item.optLong("nextRetryAt", 0) > now) continue;
@@ -787,8 +911,13 @@ final class Engine {
 
   void kickUploads() {
     if (!server.optBoolean("enabled") || !uploadWorkerRunning.compareAndSet(false, true)) return;
+    JSONObject first = nextUpload();
+    if (first == null) {
+      uploadWorkerRunning.set(false);
+      return;
+    }
     try {
-      startService();
+      startService(false, true);
     } catch (Exception e) {
       uploadWorkerRunning.set(false);
       return;
@@ -796,11 +925,12 @@ final class Engine {
     uploads.execute(
         () -> {
           try {
-            JSONObject item;
+            JSONObject item = first;
+            upload(item);
             while ((item = nextUpload()) != null) upload(item);
           } finally {
             uploadWorkerRunning.set(false);
-            if (!busy) context.stopService(new Intent(context, RecorderService.class));
+            if (!busy) RecorderService.stopWhenIdle();
           }
         });
   }
