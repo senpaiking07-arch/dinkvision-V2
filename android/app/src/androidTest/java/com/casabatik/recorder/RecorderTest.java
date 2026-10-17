@@ -118,7 +118,10 @@ public class RecorderTest {
                         .getChildAt(0);
             w.evaluateJavascript(
                 "document.getElementById('begin').textContent.includes('Tap to start') &&"
-                    + " document.querySelector('.court').naturalWidth>0",
+                    + " document.querySelector('.court').naturalWidth>0 &&"
+                    + " document.getElementById('camera-test-video') !== null &&"
+                    + " document.getElementById('camera-test-confirm').textContent.includes('see and hear') &&"
+                    + " document.getElementById('camera-test-retry').textContent.includes('another test')",
                 v -> {
                   result.set(v);
                   loaded.countDown();
@@ -126,6 +129,33 @@ public class RecorderTest {
           });
       assertTrue(loaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
       assertEquals("true", result.get());
+
+      engine.cameraTestReady = true;
+      engine.cameraTestHasAudio = true;
+      engine.cameraTestRevision = "test-revision";
+      engine.cameraTestCamera = "{\"type\":\"device\"}";
+      engine.cameraTestToken = "test-token";
+      Thread.sleep(1000);
+      java.util.concurrent.CountDownLatch reviewLoaded = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> reviewResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "!document.getElementById('camera-test').hidden &&"
+                    + " document.getElementById('camera-test-video').src.includes('/camera-test/clip.mp4') &&"
+                    + " document.getElementById('camera-test-confirm').textContent.includes('see and hear')",
+                v -> {
+                  reviewResult.set(v);
+                  reviewLoaded.countDown();
+                });
+          });
+      assertTrue(reviewLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", reviewResult.get());
       android.graphics.Bitmap image = i.getUiAutomation().takeScreenshot();
       if (image != null)
         try (java.io.FileOutputStream out =
@@ -146,6 +176,11 @@ public class RecorderTest {
       i.runOnMainSync(
           () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));
     } finally {
+      engine.cameraTestReady = false;
+      engine.cameraTestHasAudio = false;
+      engine.cameraTestRevision = "";
+      engine.cameraTestCamera = "";
+      engine.cameraTestToken = "";
       engine.busy = false;
       i.runOnMainSync(
           () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));

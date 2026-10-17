@@ -66,6 +66,10 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     WebViewAssetLoader loader =
         new WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+            .addPathHandler(
+                "/camera-test/",
+                new WebViewAssetLoader.InternalStoragePathHandler(
+                    this, engine.cameraTestDirectory()))
             .build();
     web.setWebViewClient(
         new WebViewClient() {
@@ -120,6 +124,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
           break;
         case "retry-upload":
           engine.retryUpload(value.trim());
+          break;
+        case "confirm-camera-test":
+          engine.confirmCameraTest(true, false);
+          break;
+        case "retry-camera-test":
+          engine.confirmCameraTest(false, true);
           break;
         case "reset":
           engine.reset();
@@ -213,7 +223,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
                     ? "Uses the external Tapo stream on the same Wi-Fi. This Android camera and microphone are not used."
                     : "Choose this tablet camera or a Tapo Wi-Fi camera.")
         .setPositiveButton(
-            wifiCamera ? "Test Tapo camera" : deviceCamera ? "Test camera" : "Check again",
+            (wifiCamera || deviceCamera) ? "Record a 3-second test clip" : "Check again",
             (d, w) -> engine.syncCamera())
         .setNeutralButton("Change camera", (d, w) -> chooseCameraMode())
         .setNegativeButton("Close", null)
@@ -279,7 +289,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         new AlertDialog.Builder(this)
             .setTitle("Set up Tapo Wi-Fi camera")
             .setView(p)
-            .setPositiveButton("Save and test", null)
+            .setPositiveButton("Save and record test clip", null)
             .setNegativeButton("Cancel", null)
             .create();
     dialog.setOnShowListener(

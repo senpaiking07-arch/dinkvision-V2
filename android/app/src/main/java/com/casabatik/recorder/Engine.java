@@ -44,12 +44,20 @@ final class Engine {
   volatile boolean visible = false;
   volatile boolean initialized = false;
   volatile String attemptedRevision = "";
+  volatile boolean cameraTestReady = false;
+  volatile boolean cameraTestHasAudio = false;
+  volatile String cameraTestRevision = "";
+  volatile String cameraTestCamera = "";
+  volatile String cameraTestToken = "";
   volatile JSONObject server = new JSONObject();
 
   Engine(Context c) {
     context = c.getApplicationContext();
     vault = new Vault(context);
     api = new Api(vault);
+    // A review is intentionally limited to the current app process. Remove a stale
+    // cache clip after process death so it can never be mistaken for a new test.
+    cameraTestFile().delete();
     migratePendingRecording();
     reconcileLocalQueue();
     try {
@@ -339,6 +347,9 @@ final class Engine {
               .put("queue", publicQueue())
               .put("tested", cameraReady(device))
               .put("cameraMode", cameraMode())
+              .put("testReady", cameraTestReady)
+              .put("testHasAudio", cameraTestHasAudio)
+              .put("testToken", cameraTestToken)
               .put("audio", device != null && !device.optString("audio_device").isEmpty())
               .put("maxSeconds", server.optInt("maxSeconds", 900));
       if (server.optJSONArray("courts") != null && server.getJSONArray("courts").length() > 0)
@@ -383,6 +394,25 @@ final class Engine {
       vault.put("camera-revision", "");
     } catch (Exception ignored) {
     }
+  }
+
+  File cameraTestDirectory() {
+    File directory = new File(context.getCacheDir(), "camera-test");
+    if (!directory.isDirectory()) directory.mkdirs();
+    return directory;
+  }
+
+  File cameraTestFile() {
+    return new File(cameraTestDirectory(), "clip.mp4");
+  }
+
+  private void clearCameraTestReview() {
+    cameraTestReady = false;
+    cameraTestHasAudio = false;
+    cameraTestRevision = "";
+    cameraTestCamera = "";
+    cameraTestToken = "";
+    cameraTestFile().delete();
   }
 
   void configureCamera(JSONObject configuration) {
@@ -510,6 +540,7 @@ final class Engine {
       return;
     }
     if (!visible || !claim()) return;
+    clearCameraTestReview();
     try {
       startService(usesDeviceCamera(), false);
     } catch (Exception e) {
@@ -524,11 +555,9 @@ final class Engine {
             : "Connecting to and testing the external Tapo camera…";
     work.execute(
         () -> {
-          File test = new File(context.getCacheDir(), "camera-test.mp4");
+          File test = cameraTestFile();
           String revision = "";
-          boolean reported = false;
-          boolean passed = false;
-          final String[] testedCamera = {""};
+          boolean readyForReview = false;
           try {
             server = api.call("/api/tablet", null);
             JSONObject session = server.optJSONObject("session");
@@ -549,7 +578,7 @@ final class Engine {
               long capturedMillis = captureCamera(
                   camera,
                   test,
-                  4,
+                  3,
                   0,
                   new RtspRecorder.Listener() {
                     public void ready() {}
@@ -558,9 +587,7 @@ final class Engine {
 
                     public void started() {}
 
-                    public void camera(String label) {
-                      testedCamera[0] = label;
-                    }
+                    public void camera(String label) {}
 
                     public void frame(int seconds) {
                       elapsed = seconds;
@@ -578,20 +605,16 @@ final class Engine {
                   "External Wi-Fi camera test failed. Check the Tapo Camera Account, IP address,"
                       + " and local network, then retry.");
             }
-            api.call(
-                "/api/tablet/camera",
-                new JSONObject()
-                    .put("action", "tested")
-                    .put("revision", revision)
-                    .put("passed", true));
-            reported = true;
-            vault.put("camera", camera.toString());
-            vault.put("camera-revision", revision);
-            passed = true;
+            cameraTestRevision = revision;
+            cameraTestCamera = camera.toString();
+            cameraTestHasAudio = expectsAudio(camera);
+            cameraTestToken = revision + "-" + System.currentTimeMillis();
+            cameraTestReady = true;
+            readyForReview = true;
             message =
-                testedCamera[0].isEmpty()
-                    ? "Camera test passed. Ready to record."
-                    : "Camera test passed (" + testedCamera[0] + "). Ready to record.";
+                cameraTestHasAudio
+                    ? "Test clip ready. Play it with the volume on, then confirm that video and audio are clear."
+                    : "Test clip ready. Play it, then confirm that the video is clear.";
           } catch (Exception e) {
             String problem = e.getMessage() == null ? "" : e.getMessage();
             boolean setupRequired =
@@ -603,7 +626,7 @@ final class Engine {
                     ? "Open Device setup and choose this tablet’s camera."
                     : "Camera setup needs attention.";
             if (!revision.isEmpty()) clearCameraCache();
-            if (!revision.isEmpty() && !reported)
+            if (!revision.isEmpty())
               try {
                 api.call(
                     "/api/tablet/camera",
@@ -614,11 +637,60 @@ final class Engine {
               } catch (Exception ignored) {
               }
           } finally {
-            test.delete();
-            phase = passed ? "idle" : "error";
+            if (!readyForReview) clearCameraTestReview();
+            phase = readyForReview ? "review" : "error";
             elapsed = 0;
             finishWork();
           }
+        });
+  }
+
+  void confirmCameraTest(boolean accepted, boolean retry) {
+    if (!cameraTestReady || cameraTestRevision.isEmpty() || cameraTestCamera.isEmpty()) {
+      error = "The saved test clip is unavailable. Record another three-second test clip.";
+      phase = "error";
+      return;
+    }
+    if (!visible || !claim()) return;
+    phase = "confirming-test";
+    message = accepted ? "Saving your camera confirmation…" : "Preparing another camera test…";
+    final String revision = cameraTestRevision;
+    final String camera = cameraTestCamera;
+    work.execute(
+        () -> {
+          boolean updated = false;
+          try {
+            api.call(
+                "/api/tablet/camera",
+                new JSONObject()
+                    .put("action", "tested")
+                    .put("revision", revision)
+                    .put("passed", accepted));
+            if (accepted) {
+              vault.put("camera", camera);
+              vault.put("camera-revision", revision);
+              attemptedRevision = "";
+              message =
+                  cameraTestHasAudio
+                      ? "Video and audio confirmed. This tablet is ready for player mode."
+                      : "Video confirmed. This tablet is ready in video-only mode.";
+            } else {
+              clearCameraCache();
+              message = "Record another three-second test clip.";
+            }
+            error = "";
+            updated = true;
+          } catch (Exception e) {
+            error = e.getMessage();
+            message = "The camera test confirmation could not be saved.";
+          } finally {
+            if (updated) clearCameraTestReview();
+            phase = updated ? "idle" : "review";
+            busy = false;
+            if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
+            refresh();
+          }
+          if (updated && retry && visible) syncCamera();
         });
   }
 

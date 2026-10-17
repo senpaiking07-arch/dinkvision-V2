@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let view = 'welcome', state = {}, emails = [], formError = '', enrollmentPrompted = false;
+let view = 'welcome', state = {}, emails = [], formError = '', enrollmentPrompted = false, lastTestToken = '';
 const native = window.CasaNative;
 const call = (action, value = '') => {
   if (native) native.action(action, value);
@@ -10,7 +10,7 @@ const call = (action, value = '') => {
 };
 function show(name) {
   view = name;
-  for (const section of ['welcome', 'form', 'confirm', 'session'])
+  for (const section of ['welcome', 'form', 'confirm', 'session', 'camera-test'])
     $(section).hidden = section !== name;
 }
 $('setup').onclick = () => call('setup');
@@ -118,6 +118,12 @@ $('record').onclick = () => {
   renderEmails();
 };
 $('stop').onclick = () => call('stop');
+$('camera-test-confirm').onclick = () => call('confirm-camera-test');
+$('camera-test-retry').onclick = () => {
+  const preview = $('camera-test-video');
+  preview.pause();
+  call('retry-camera-test');
+};
 $('reset').onclick = () => {
   call('reset');
   show('welcome');
@@ -134,6 +140,8 @@ function tick() {
   $('limit').textContent = `At least one Gmail address is required · Recording limit: ${limitMinutes} minutes`;
   $('setup').disabled = !!state.busy;
   $('record').disabled = !!state.busy;
+  $('camera-test-confirm').disabled = !!state.busy;
+  $('camera-test-retry').disabled = !!state.busy;
   const savedError = state.error === 'Select an Android camera mode for this device in the admin dashboard.'
     ? 'Open Device setup and choose this tablet’s camera.'
     : state.error;
@@ -146,7 +154,21 @@ function tick() {
   const session = state.session;
   const activeServerSession = session && ['requested', 'starting', 'recording', 'finalizing'].includes(session.status);
   const recordingFlow = state.busy && ['connecting', 'countdown', 'recording', 'finalizing', 'testing'].includes(state.phase);
-  if (recordingFlow || (activeServerSession && state.phase !== 'complete')) {
+  if (state.testReady) {
+    show('camera-test');
+    if (lastTestToken !== state.testToken) {
+      lastTestToken = state.testToken || String(Date.now());
+      const preview = $('camera-test-video');
+      preview.src = `https://appassets.androidplatform.net/camera-test/clip.mp4?v=${encodeURIComponent(lastTestToken)}`;
+      preview.load();
+    }
+    $('camera-test-help').textContent = state.testHasAudio
+      ? 'Turn the tablet volume up and confirm that court sounds or speech are clearly audible. This saved test clip is not muted.'
+      : 'This configuration is video-only. Record another test after enabling audio if the final video should include sound.';
+    $('camera-test-confirm').textContent = state.testHasAudio
+      ? 'I can see and hear the test'
+      : 'The video looks clear';
+  } else if (recordingFlow || (activeServerSession && state.phase !== 'complete')) {
     show('session');
     $('session-title').textContent = state.phase === 'recording'
       ? 'Stay in the game.'
@@ -162,7 +184,14 @@ function tick() {
     $('timer').textContent = String(Math.floor(remaining / 60)).padStart(2, '0') + ':' + String(remaining % 60).padStart(2, '0');
     $('stop').hidden = state.phase !== 'recording';
     $('reset').hidden = true;
-  } else if (view === 'session') {
+  } else if (view === 'session' || view === 'camera-test') {
+    if (view === 'camera-test') {
+      const preview = $('camera-test-video');
+      preview.pause();
+      preview.removeAttribute('src');
+      preview.load();
+      lastTestToken = '';
+    }
     show('welcome');
   }
   const completion = state.phase === 'complete' && view === 'welcome';
