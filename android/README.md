@@ -98,10 +98,19 @@ SDK location in a gitignored `local.properties`. From this directory:
 .\gradlew.bat :app:assembleDebug :app:lintDebug
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. It contains arm64-v8a and
-x86_64 native libraries. Gradle and native dependencies are pinned. The debug
-signing key lives in the developer's Android profile, not in this repository;
+APK: `app/build/outputs/apk/debug/app-debug.apk`. Every `assembleDebug` build,
+including Android Studio's **Build APK(s)** action, copies that exact APK to
+`../Dink-Vision-Recorder-0.5.16.apk` and
+`../artifacts/Dink-Vision-Recorder-0.5.16.apk`. It contains arm64-v8a and x86_64
+native libraries. Gradle and native dependencies are pinned. The debug signing
+key lives in the developer's Android profile, not in this repository;
 production signing and store distribution are a separate release step.
+
+Open the `android` directory itself as the Android Studio project. Select the
+automatically generated **app** Android run configuration and use **Run app**
+to rebuild and reinstall the current source on the selected emulator. Opening
+the repository root creates a non-Android project and can leave an older APK on
+the emulator.
 
 ## Android integration tests
 
