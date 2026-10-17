@@ -119,6 +119,7 @@ public class RecorderTest {
             w.evaluateJavascript(
                 "document.getElementById('begin').textContent.includes('Tap to start') &&"
                     + " document.querySelector('.court').naturalWidth>0 &&"
+                    + " document.getElementById('upload-status') !== null &&"
                     + " document.getElementById('camera-test-video') !== null &&"
                     + " document.getElementById('camera-test-confirm').textContent.includes('see and hear') &&"
                     + " document.getElementById('camera-test-retry').textContent.includes('another test')",
@@ -129,6 +130,29 @@ public class RecorderTest {
           });
       assertTrue(loaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
       assertEquals("true", result.get());
+
+      java.util.concurrent.CountDownLatch uploadUiLoaded =
+          new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> uploadUiResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "renderUploadStatus([{status:'uploading',progress:42}],true);"
+                    + " !document.getElementById('upload-status').hidden &&"
+                    + " document.getElementById('upload-title').textContent.includes('42%') &&"
+                    + " document.getElementById('upload-meter').style.width === '42%'",
+                value -> {
+                  uploadUiResult.set(value);
+                  uploadUiLoaded.countDown();
+                });
+          });
+      assertTrue(uploadUiLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", uploadUiResult.get());
 
       engine.cameraTestReady = true;
       engine.cameraTestHasAudio = true;
@@ -173,6 +197,15 @@ public class RecorderTest {
               .getSystemService(android.app.NotificationManager.class)
               .getActiveNotifications()
               .length);
+      RecorderService.updateUploadProgress(42);
+      Thread.sleep(250);
+      android.service.notification.StatusBarNotification active =
+          i.getTargetContext()
+              .getSystemService(android.app.NotificationManager.class)
+              .getActiveNotifications()[0];
+      assertTrue(
+          String.valueOf(active.getNotification().extras.getCharSequence("android.text"))
+              .contains("42%"));
       i.runOnMainSync(
           () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));
     } finally {

@@ -7,7 +7,6 @@ import static org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Matrix;
 import android.util.Log;
 import java.io.File;
 import java.io.InputStream;
@@ -139,12 +138,10 @@ final class VideoBranding {
       int markWidth = Math.max(1, (int) Math.round(original.getWidth() * scale));
       int markHeight = Math.max(1, (int) Math.round(original.getHeight() * scale));
       scaled = Bitmap.createScaledBitmap(original, markWidth, markHeight, true);
-      if (rotation == 0) mark = scaled;
-      else {
-        Matrix matrix = new Matrix();
-        matrix.postRotate(-rotation);
-        mark = Bitmap.createBitmap(scaled, 0, 0, scaled.getWidth(), scaled.getHeight(), matrix, true);
-      }
+      // FFmpegFrameGrabber already returns the picture in the orientation that
+      // we encode below. Rotating the mark from the source display metadata a
+      // second time made it appear upside down on Android camera recordings.
+      mark = scaled;
       int[] pixels = new int[mark.getWidth() * mark.getHeight()];
       mark.getPixels(pixels, 0, mark.getWidth(), 0, 0, mark.getWidth(), mark.getHeight());
       int channels = expectAudio ? Math.min(2, grabber.getAudioChannels()) : 0;
@@ -211,13 +208,11 @@ final class VideoBranding {
     ByteBuffer image = ((ByteBuffer) frame.image[0]).duplicate();
     int width = frame.imageWidth, height = frame.imageHeight;
     int margin = Math.max(12, Math.round(Math.min(width, height) * 0.02f));
-    int left, top;
-    switch (normalizeRotation(rotation)) {
-      case 90 -> { left = width - logoWidth - margin; top = margin; }
-      case 180 -> { left = margin; top = margin; }
-      case 270 -> { left = margin; top = height - logoHeight - margin; }
-      default -> { left = width - logoWidth - margin; top = height - logoHeight - margin; }
-    }
+    // Frames received from the grabber are already display-oriented. Keep the
+    // logo readable in those pixels and consistently anchor it bottom-right;
+    // the container's display metadata is copied separately by the recorder.
+    int left = width - logoWidth - margin;
+    int top = height - logoHeight - margin;
     left = Math.max(0, Math.min(left, width - logoWidth));
     top = Math.max(0, Math.min(top, height - logoHeight));
     int base = image.position(), stride = frame.imageStride;

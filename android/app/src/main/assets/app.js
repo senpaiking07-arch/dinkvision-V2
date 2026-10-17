@@ -128,6 +128,29 @@ $('reset').onclick = () => {
   call('reset');
   show('welcome');
 };
+function renderUploadStatus(queue, welcome = view === 'welcome') {
+  const jobs = Array.isArray(queue)
+    ? queue.filter(item => ['saved_locally', 'pending', 'uploading', 'retrying', 'failed'].includes(item.status))
+    : [];
+  const priority = ['uploading', 'retrying', 'saved_locally', 'pending', 'failed'];
+  const active = priority.map(status => jobs.find(item => item.status === status)).find(Boolean);
+  const panel = $('upload-status');
+  panel.hidden = !welcome || !active;
+  if (!active) return;
+  const progress = Math.max(0, Math.min(100, Number(active.progress || 0)));
+  const titles = {
+    saved_locally: 'Video saved · preparing background upload',
+    pending: 'Video saved · waiting for its upload turn',
+    uploading: `Uploading video in the background · ${progress}%`,
+    retrying: 'Internet interrupted · upload will retry automatically',
+    failed: 'Upload needs attention · your video is still safe'
+  };
+  $('upload-title').textContent = titles[active.status] || 'Background upload';
+  $('upload-meter').style.width = `${active.status === 'saved_locally' ? 0 : progress}%`;
+  $('upload-detail').textContent = active.status === 'failed'
+    ? 'The recording remains on this tablet. Use recovery or ask venue staff for help.'
+    : `You can start another match. The replay email is sent after Google Drive confirms the upload.${jobs.length > 1 ? ` ${jobs.length} videos are in this tablet’s queue.` : ''}`;
+}
 function tick() {
   try {
     state = native ? JSON.parse(native.state()) : {enabled: true, tested: true, court: 'Court 1', maxSeconds: 900, queue: []};
@@ -205,6 +228,7 @@ function tick() {
     : !state.tested
       ? 'Open Device setup and test the assigned camera before recording.'
       : view === 'welcome' ? (state.message || '') : '';
+  renderUploadStatus(state.queue);
   if (state.initialized && !state.enabled && !state.enrolled && !enrollmentPrompted) {
     enrollmentPrompted = true;
     call('setup');

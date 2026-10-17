@@ -13,6 +13,8 @@ public final class RecorderService extends Service {
   static final String EXTRA_UPLOAD_ACTIVE = "upload-active";
   private PowerManager.WakeLock wake;
   private Notification notification;
+  private boolean cameraWork;
+  private boolean uploadWork;
 
   static int foregroundTypes(
       int sdk, boolean deviceCamera, boolean cameraActive, boolean uploadActive) {
@@ -26,6 +28,59 @@ public final class RecorderService extends Service {
     return types;
   }
 
+  private Notification buildNotification(
+      boolean cameraActive, boolean uploadActive, int uploadPercent) {
+    PendingIntent open =
+        PendingIntent.getActivity(
+            this,
+            0,
+            new Intent(this, MainActivity.class),
+            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    String detail =
+        cameraActive && uploadActive
+            ? "Recording your match · background upload "
+                + Math.max(0, uploadPercent)
+                + "%"
+            : cameraActive
+                ? "Recording your match"
+                : uploadActive
+                    ? (uploadPercent > 0
+                        ? "Uploading saved video · " + uploadPercent + "%"
+                        : "Preparing background upload")
+                    : "Preparing your match";
+    Notification.Builder builder =
+        new Notification.Builder(this, "recording")
+            .setSmallIcon(com.casabatik.recorder.R.drawable.ic_camera)
+            .setContentTitle("Dink Vision Recorder")
+            .setContentText(detail)
+            .setContentIntent(open)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true);
+    if (uploadActive)
+      builder.setProgress(100, Math.max(0, Math.min(100, uploadPercent)), uploadPercent <= 0);
+    if (cameraActive) {
+      PendingIntent stop =
+          PendingIntent.getService(
+              this,
+              1,
+              new Intent(this, RecorderService.class).setAction("stop"),
+              PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+      builder.addAction(new Notification.Action.Builder(null, "Stop recording", stop).build());
+    }
+    return builder.build();
+  }
+
+  static void updateUploadProgress(int percent) {
+    RecorderService service = running;
+    if (service == null) return;
+    Engine engine = Engine.get(service);
+    service.cameraWork = service.cameraWork && engine.busy;
+    service.uploadWork = true;
+    service.notification =
+        service.buildNotification(service.cameraWork, true, Math.max(0, Math.min(100, percent)));
+    service.getSystemService(NotificationManager.class).notify(1, service.notification);
+  }
+
   @Override
   public void onCreate() {
     super.onCreate();
@@ -34,27 +89,7 @@ public final class RecorderService extends Service {
     manager.createNotificationChannel(
         new NotificationChannel(
             "recording", "Match recording", NotificationManager.IMPORTANCE_LOW));
-    PendingIntent open =
-        PendingIntent.getActivity(
-            this,
-            0,
-            new Intent(this, MainActivity.class),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-    PendingIntent stop =
-        PendingIntent.getService(
-            this,
-            1,
-            new Intent(this, RecorderService.class).setAction("stop"),
-            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-    notification =
-        new Notification.Builder(this, "recording")
-            .setSmallIcon(com.casabatik.recorder.R.drawable.ic_camera)
-            .setContentTitle("Dink Vision Recorder")
-            .setContentText("Recording or uploading your match")
-            .setContentIntent(open)
-            .setOngoing(true)
-            .addAction(new Notification.Action.Builder(null, "Stop recording", stop).build())
-            .build();
+    notification = buildNotification(false, false, -1);
     // Android starts the foreground-service timeout before onStartCommand. Promote the service
     // immediately with the permission-safe connected-device type, then narrow/update the type
     // from the actual work flags in onStartCommand.
@@ -71,8 +106,12 @@ public final class RecorderService extends Service {
   @Override
   public int onStartCommand(Intent i, int f, int id) {
     if (i != null && "stop".equals(i.getAction())) Engine.get(this).stop = true;
-    boolean cameraActive = i != null && i.getBooleanExtra(EXTRA_CAMERA_ACTIVE, false);
-    boolean uploadActive = i != null && i.getBooleanExtra(EXTRA_UPLOAD_ACTIVE, false);
+    boolean requestedCamera = i != null && i.getBooleanExtra(EXTRA_CAMERA_ACTIVE, false);
+    boolean requestedUpload = i != null && i.getBooleanExtra(EXTRA_UPLOAD_ACTIVE, false);
+    Engine engine = Engine.get(this);
+    cameraWork = requestedCamera || (cameraWork && engine.busy);
+    uploadWork = requestedUpload || (uploadWork && engine.uploadWorkerRunning.get());
+    notification = buildNotification(cameraWork, uploadWork, engine.uploadPercent);
     try {
       if (Build.VERSION.SDK_INT >= 29)
         startForeground(
@@ -80,21 +119,20 @@ public final class RecorderService extends Service {
             notification,
             foregroundTypes(
                 Build.VERSION.SDK_INT,
-                Engine.get(this).usesDeviceCamera(),
-                cameraActive,
-                uploadActive));
+                engine.usesDeviceCamera(),
+                cameraWork,
+                uploadWork));
       else startForeground(1, notification);
     } catch (RuntimeException failure) {
       Log.e(TAG, "Unable to update foreground service type", failure);
-      Engine.get(this).stop = true;
-      Engine.get(this).error =
-          cameraActive
+      engine.stop = true;
+      engine.error =
+          cameraWork
               ? "Open Device setup and allow camera and microphone access first."
               : "Android could not start the background upload service. Reopen the app and retry.";
       stopSelf(id);
       return START_NOT_STICKY;
     }
-    Engine engine = Engine.get(this);
     if (!engine.busy && !engine.uploadWorkerRunning.get()) stopSelf(id);
     return START_NOT_STICKY;
   }

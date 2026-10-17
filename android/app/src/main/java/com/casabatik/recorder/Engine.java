@@ -41,6 +41,7 @@ final class Engine {
   volatile int uploadPercent = -1;
   volatile long recordingStartedNanos = 0;
   volatile String activeSession = "";
+  volatile String latestSavedSession = "";
   volatile boolean visible = false;
   volatile boolean initialized = false;
   volatile String attemptedRevision = "";
@@ -227,6 +228,22 @@ final class Engine {
               .put("localAvailable", item.optBoolean("localAvailable", true)));
     }
     return result;
+  }
+
+  private void reportQueueItem(JSONObject item) throws Exception {
+    JSONObject report =
+        new JSONObject()
+            .put("id", item.getString("id"))
+            .put("status", item.optString("status", "saved_locally"))
+            .put("progress", item.optInt("progress", 0))
+            .put("retry_count", item.optInt("retryCount", 0))
+            .put("last_error", item.optString("lastError"))
+            .put("local_available", item.optBoolean("localAvailable", true))
+            .put("created_at", item.optLong("createdAt"))
+            .put("bytes", item.optLong("bytes"))
+            .put("uploaded_bytes", 0);
+    if (item.has("durationMs")) report.put("duration_ms", item.optLong("durationMs"));
+    api.tablet("queue-report", report);
   }
 
   synchronized boolean claim() {
@@ -873,11 +890,19 @@ final class Engine {
                 .put("lastError", "")
                 .put("nextRetryAt", 0);
             saveQueueItem(queued);
+            latestSavedSession = sid;
+            try {
+              // Make the locally safe video visible to venue staff before the
+              // potentially long Google Drive transfer begins.
+              reportQueueItem(queued);
+            } catch (Exception ignored) {
+              // The durable local queue remains authoritative while offline.
+            }
             phase = "complete";
             message =
                 capturedMillis < 60_000
                     ? "Recording saved locally. Clips under 1 minute are not uploaded or emailed."
-                    : "Video complete. Check your Gmail later for the replay link.";
+                    : "Video saved safely. Uploading in the background. You can start another match.";
             kickUploads();
           } catch (Exception e) {
             error = e.getMessage();
@@ -1057,10 +1082,14 @@ final class Engine {
             .put("lastError", new LocalOnlyException(sid).getMessage())
             .put("nextRetryAt", 0);
         saveQueueItem(item);
+        if (sid.equals(latestSavedSession) && "complete".equals(phase))
+          message = "Recording saved locally. Clips under 1 minute are not uploaded or emailed.";
         return;
       }
       item.put("status", "uploading").put("progress", 0);
       saveQueueItem(item);
+      uploadPercent = 0;
+      RecorderService.updateUploadProgress(0);
       final JSONObject uploading = item;
       UploadTransfer.send(
           file.length(),
@@ -1077,6 +1106,8 @@ final class Engine {
             try {
               uploading.put("status", "uploading").put("progress", percent);
               saveQueueItem(uploading);
+              uploadPercent = (int) Math.max(0, Math.min(100, percent));
+              RecorderService.updateUploadProgress(uploadPercent);
             } catch (Exception ignored) {
             }
           },
@@ -1084,6 +1115,8 @@ final class Engine {
             try {
               uploading.put("status", "pending").put("progress", waiting.optInt("percent", 0));
               saveQueueItem(uploading);
+              uploadPercent = Math.max(0, Math.min(100, waiting.optInt("percent", 0)));
+              RecorderService.updateUploadProgress(uploadPercent);
             } catch (Exception ignored) {
             }
           },
@@ -1098,6 +1131,10 @@ final class Engine {
           .put("lastError", "")
           .put("nextRetryAt", 0);
       saveQueueItem(item);
+      uploadPercent = 100;
+      RecorderService.updateUploadProgress(100);
+      if (sid.equals(latestSavedSession) && "complete".equals(phase))
+        message = "Upload complete. The replay email is being sent.";
     } catch (Exception failure) {
       try {
         int retries = item.optInt("retryCount", 0) + 1;
@@ -1116,8 +1153,24 @@ final class Engine {
             .put("lastError", failureMessage)
             .put("nextRetryAt", permanent ? 0 : System.currentTimeMillis() + delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L)));
         saveQueueItem(item);
+        uploadPercent = -1;
+        if (sid.equals(latestSavedSession) && "complete".equals(phase))
+          message =
+              permanent
+                  ? "Upload needs attention. Your video is still safe on this tablet."
+                  : "Upload paused by the connection. It will retry automatically; your video is safe.";
         try {
-          api.tablet("upload-failed", new JSONObject().put("id", sid));
+          api.tablet(
+              "upload-failed",
+              new JSONObject()
+                  .put("id", sid)
+                  .put("retry_count", retries)
+                  .put("retrying", !permanent)
+                  .put("last_error", failureMessage)
+                  .put(
+                      "validation_failed",
+                      failureMessage.contains("missing or incomplete")
+                          || failureMessage.contains("not playable")));
         } catch (Exception ignored) {
         }
       } catch (Exception ignored) {

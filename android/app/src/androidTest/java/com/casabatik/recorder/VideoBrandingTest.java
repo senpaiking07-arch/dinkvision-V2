@@ -56,4 +56,17 @@ public class VideoBrandingTest {
       assertEquals(0, pixels.get(0));
     }
   }
+
+  @Test
+  public void rotatedMetadataDoesNotReverseOrMoveTheMark() throws Exception {
+    try (Frame frame = new Frame(100, 60, Frame.DEPTH_UBYTE, 3)) {
+      int[] redThenBlue = {0xffff0000, 0xff0000ff};
+      VideoBranding.blend(frame, redThenBlue, 2, 1, 180);
+      ByteBuffer pixels = ((ByteBuffer) frame.image[0]).duplicate();
+      int offset = (60 - 12 - 1) * frame.imageStride + (100 - 12 - 2) * 3;
+      assertTrue("First logo pixel stays red", (pixels.get(offset + 2) & 0xff) > 200);
+      assertTrue("Second logo pixel stays blue", (pixels.get(offset + 3) & 0xff) > 200);
+      assertEquals("Rotation metadata must not move the mark", 0, pixels.get(0));
+    }
+  }
 }
