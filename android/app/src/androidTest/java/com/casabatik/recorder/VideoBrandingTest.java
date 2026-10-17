@@ -4,6 +4,7 @@ import static org.junit.Assert.*;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import android.graphics.Bitmap;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -58,15 +59,42 @@ public class VideoBrandingTest {
   }
 
   @Test
-  public void rotatedMetadataDoesNotReverseOrMoveTheMark() throws Exception {
-    try (Frame frame = new Frame(100, 60, Frame.DEPTH_UBYTE, 3)) {
-      int[] redThenBlue = {0xffff0000, 0xff0000ff};
-      VideoBranding.blend(frame, redThenBlue, 2, 1, 180);
-      ByteBuffer pixels = ((ByteBuffer) frame.image[0]).duplicate();
-      int offset = (60 - 12 - 1) * frame.imageStride + (100 - 12 - 2) * 3;
-      assertTrue("First logo pixel stays red", (pixels.get(offset + 2) & 0xff) > 200);
-      assertTrue("Second logo pixel stays blue", (pixels.get(offset + 3) & 0xff) > 200);
-      assertEquals("Rotation metadata must not move the mark", 0, pixels.get(0));
+  public void rotatedMetadataUsesTheRawCornerThatDisplaysBottomRight() throws Exception {
+    int[][] expected = {
+      {86, 46}, // 0: raw bottom-right
+      {12, 46}, // 90: raw bottom-left
+      {12, 12}, // 180: raw top-left
+      {86, 12}  // 270: raw top-right
+    };
+    int[] rotations = {0, 90, 180, 270};
+    for (int index = 0; index < rotations.length; index++) {
+      try (Frame frame = new Frame(100, 60, Frame.DEPTH_UBYTE, 3)) {
+        int[] red = {0xffff0000, 0xffff0000, 0xffff0000, 0xffff0000};
+        VideoBranding.blend(frame, red, 2, 2, rotations[index]);
+        ByteBuffer pixels = ((ByteBuffer) frame.image[0]).duplicate();
+        int offset = expected[index][1] * frame.imageStride + expected[index][0] * 3;
+        assertTrue("Rotation " + rotations[index] + " uses the correct raw corner",
+            (pixels.get(offset + 2) & 0xff) > 200);
+      }
+    }
+  }
+
+  @Test
+  public void markIsCounterRotatedBeforeDisplayRotation() {
+    Bitmap source = Bitmap.createBitmap(2, 1, Bitmap.Config.ARGB_8888);
+    source.setPixel(0, 0, 0xffff0000);
+    source.setPixel(1, 0, 0xff0000ff);
+    Bitmap oriented = VideoBranding.orientMark(source, 270);
+    try {
+      assertEquals(1, oriented.getWidth());
+      assertEquals(2, oriented.getHeight());
+      // A 270-degree source display transform rotates clockwise at playback,
+      // so the raw mark is stored counterclockwise: blue above red.
+      assertEquals(0xff0000ff, oriented.getPixel(0, 0));
+      assertEquals(0xffff0000, oriented.getPixel(0, 1));
+    } finally {
+      oriented.recycle();
+      if (oriented != source) source.recycle();
     }
   }
 }

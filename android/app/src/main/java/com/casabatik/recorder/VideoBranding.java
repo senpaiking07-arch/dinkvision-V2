@@ -7,6 +7,7 @@ import static org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.util.Log;
 import java.io.File;
 import java.io.InputStream;
@@ -138,10 +139,7 @@ final class VideoBranding {
       int markWidth = Math.max(1, (int) Math.round(original.getWidth() * scale));
       int markHeight = Math.max(1, (int) Math.round(original.getHeight() * scale));
       scaled = Bitmap.createScaledBitmap(original, markWidth, markHeight, true);
-      // FFmpegFrameGrabber already returns the picture in the orientation that
-      // we encode below. Rotating the mark from the source display metadata a
-      // second time made it appear upside down on Android camera recordings.
-      mark = scaled;
+      mark = orientMark(scaled, rotation);
       int[] pixels = new int[mark.getWidth() * mark.getHeight()];
       mark.getPixels(pixels, 0, mark.getWidth(), 0, 0, mark.getWidth(), mark.getHeight());
       int channels = expectAudio ? Math.min(2, grabber.getAudioChannels()) : 0;
@@ -201,6 +199,18 @@ final class VideoBranding {
     }
   }
 
+  static Bitmap orientMark(Bitmap scaled, int rotation) {
+    int normalized = normalizeRotation(rotation);
+    if (normalized == 0) return scaled;
+    Matrix matrix = new Matrix();
+    // getDisplayRotation() reports the display transform counterclockwise.
+    // Android Bitmap coordinates run downward, so using the same numeric
+    // angle produces the inverse visual transform required before playback.
+    matrix.postRotate(normalized);
+    return Bitmap.createBitmap(
+        scaled, 0, 0, scaled.getWidth(), scaled.getHeight(), matrix, true);
+  }
+
   static void blend(Frame frame, int[] pixels, int logoWidth, int logoHeight, int rotation)
       throws Exception {
     if (frame.image == null || frame.image.length == 0 || !(frame.image[0] instanceof ByteBuffer))
@@ -208,11 +218,27 @@ final class VideoBranding {
     ByteBuffer image = ((ByteBuffer) frame.image[0]).duplicate();
     int width = frame.imageWidth, height = frame.imageHeight;
     int margin = Math.max(12, Math.round(Math.min(width, height) * 0.02f));
-    // Frames received from the grabber are already display-oriented. Keep the
-    // logo readable in those pixels and consistently anchor it bottom-right;
-    // the container's display metadata is copied separately by the recorder.
-    int left = width - logoWidth - margin;
-    int top = height - logoHeight - margin;
+    // Choose the raw-frame corner that becomes bottom-right after the player
+    // applies the MP4 display rotation copied by the recorder.
+    int left, top;
+    switch (normalizeRotation(rotation)) {
+      case 90 -> {
+        left = margin;
+        top = height - logoHeight - margin;
+      }
+      case 180 -> {
+        left = margin;
+        top = margin;
+      }
+      case 270 -> {
+        left = width - logoWidth - margin;
+        top = margin;
+      }
+      default -> {
+        left = width - logoWidth - margin;
+        top = height - logoHeight - margin;
+      }
+    }
     left = Math.max(0, Math.min(left, width - logoWidth));
     top = Math.max(0, Math.min(top, height - logoHeight));
     int base = image.position(), stride = frame.imageStride;
