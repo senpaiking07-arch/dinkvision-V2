@@ -478,7 +478,12 @@ export default function TabletKiosk({
           </button>
         )}
       </header>
-      <p className="tablet-watermark" aria-hidden="true">Dink Vision</p>
+      <img
+        className="tablet-watermark"
+        src="/dink-vision-logo.png"
+        alt=""
+        aria-hidden="true"
+      />
       {!session && screen === "welcome" && (
         <>
         {completionNotice && (

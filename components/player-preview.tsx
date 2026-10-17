@@ -182,9 +182,6 @@ export default function PlayerPreview({
             src="/dink-vision-logo.png"
             alt="DinkVision"
           />
-          <span>
-            Dink Vision
-          </span>
         </a>
         <nav aria-label="Main navigation">
           <a className="nav-active" href="#record">

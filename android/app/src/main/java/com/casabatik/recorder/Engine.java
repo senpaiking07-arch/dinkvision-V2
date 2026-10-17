@@ -59,6 +59,7 @@ final class Engine {
     // cache clip after process death so it can never be mistaken for a new test.
     cameraTestFile().delete();
     migratePendingRecording();
+    VideoBranding.recoverInterruptedSwaps(new File(context.getFilesDir(), "recordings"));
     reconcileLocalQueue();
     try {
       JSONObject jar = vault.object("cookies");
@@ -593,7 +594,10 @@ final class Engine {
                       elapsed = seconds;
                     }
                   });
-              RtspRecorder.validate(test, capturedMillis, expectsAudio(camera));
+              message = "Adding the Dink Vision logo to the test clip…";
+              capturedMillis =
+                  VideoBranding.apply(
+                      context, test, capturedMillis, expectsAudio(camera));
             } catch (Exception e) {
               String reason = e.getMessage();
               if ("device".equals(camera.optString("type")))
@@ -854,12 +858,17 @@ final class Engine {
                       + "Any saved footage stays on this tablet. Choose Recover"
                       + " upload.");
             }
-            RtspRecorder.validate(file, capturedMillis, expectsAudio(camera));
+            phase = "finalizing";
+            message = "Adding the Dink Vision logo… Keep this app open.";
+            capturedMillis =
+                VideoBranding.apply(
+                    context, file, capturedMillis, expectsAudio(camera));
             api.tablet("stopped", new JSONObject().put("id", sid));
             JSONObject queued = queueItem(sid);
             queued
                 .put("durationMs", capturedMillis)
                 .put("bytes", file.length())
+                .put("branded", true)
                 .put("status", "saved_locally")
                 .put("lastError", "")
                 .put("nextRetryAt", 0);
@@ -969,6 +978,7 @@ final class Engine {
           || !belongsToCurrentDevice(item)) continue;
       String status = item.optString("status", "saved_locally");
       if (!java.util.Arrays.asList("saved_locally", "pending", "retrying").contains(status)
+          || (busy && !item.optBoolean("branded", false))
           || item.optLong("nextRetryAt", 0) > now) continue;
       if (selected == null || item.optLong("createdAt") < selected.optLong("createdAt"))
         selected = item;
@@ -1023,7 +1033,12 @@ final class Engine {
           item.has("audioExpected")
               ? item.optBoolean("audioExpected")
               : expectsAudio(vault.object("camera"));
-      RtspRecorder.validate(file, durationMs, audioExpected);
+      if (!item.optBoolean("branded", false)) {
+        durationMs = VideoBranding.apply(context, file, durationMs, audioExpected);
+        item.put("durationMs", durationMs).put("branded", true);
+      } else {
+        RtspRecorder.validate(file, durationMs, audioExpected);
+      }
       item
           .put("status", "pending")
           .put("bytes", file.length())

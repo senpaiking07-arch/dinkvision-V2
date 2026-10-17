@@ -4,7 +4,7 @@
 
 The deployment branch is `codex/player-preview`. After reviewing and merging contributor changes, the Vercel project owner publishes the release using their linked Git identity. Keep contributor commits intact. Verify that the new Vercel deployment reaches **Ready**, then promote it to Production if it was created as a Preview. Redeploying an older deployment does not include newer branch commits.
 
-Latest owner deployment refresh: October 10, 2026. That deployment includes Android recording accuracy safeguards, upload queue and email delivery updates, and live recording status. The latest local Android package is [Dink Vision Recorder 0.5.17](artifacts/Dink-Vision-Recorder-0.5.17.apk) (debug-signed; [SHA-256 checksum](artifacts/Dink-Vision-Recorder-0.5.17.apk.sha256)); it has not been published or deployed. Apply the pending database migration `supabase/migrations/202610100028_device_upload_queues.sql` to the deployment database before testing the new queue behavior. Venue hardware testing is still required.
+Latest owner deployment refresh: October 18, 2026. The latest local Android package is [Dink Vision Recorder 0.5.18](artifacts/Dink-Vision-Recorder-0.5.18.apk) (debug-signed; [SHA-256 checksum](artifacts/Dink-Vision-Recorder-0.5.18.apk.sha256)). It adds the Dink Vision logo to saved recordings and uses the approved logo throughout the app. It has not been published or deployed. Apply the pending database migration `supabase/migrations/202610100028_device_upload_queues.sql` to the deployment database before testing the new queue behavior. Venue hardware testing is still required.
 
 Tablet guest recording with Google Drive upload, emailed playback links, and automatic retention cleanup. The tablet design preview is at `/preview` and cannot record.
 
@@ -76,7 +76,7 @@ Automated tests cover browser registration, fixed assignment, scoped transitions
 - Successful clips upload to Drive, receive a read-only playback link, and queue Gmail delivery. Expired cloud and local videos are permanently deleted by the recorder worker.
 - `/preview` uses the same tablet UI with a labeled read-only fixture and never starts a capture.
 
-The supplied original logo is preserved in `public/dink-vision-logo.png`. Court artwork is an original SVG illustration. Fonts use Google Fonts with local system fallbacks.
+The approved logo is `public/dink-vision-logo.png`. Website and Android copies are checked against that file during tests and Android builds. Court artwork is an original SVG illustration. Fonts use Google Fonts with local system fallbacks.
 
 ## Foundation and configuration
 

@@ -2,7 +2,6 @@ import { assertCaptureVisible, watchCaptureVisibility } from "./capture-visibili
 import { inspectRecording } from "./recording-integrity";
 import {
   cameraTransform,
-  hasCameraTransform,
   type CameraTransform,
 } from "./camera-transform";
 
@@ -97,7 +96,7 @@ async function transformedCamera(raw: MediaStream, selected: Partial<CameraTrans
     MediaStreamTrackGenerator?: new (options: { kind: string }) => MediaStreamTrack & { writable: WritableStream };
   };
   if (!api.MediaStreamTrackProcessor || !api.MediaStreamTrackGenerator || typeof Worker === "undefined")
-    throw Error("This browser cannot record camera flips or rotation reliably in the background. Disable flips and rotation in device setup, or use a supported Chrome/Edge browser.");
+    throw Error("This browser cannot add the Dink Vision logo reliably. Use an updated Chrome or Edge browser.");
   const input = raw.getVideoTracks()[0];
   const processor = new api.MediaStreamTrackProcessor({ track: input });
   const output = new api.MediaStreamTrackGenerator({ kind: "video" });
@@ -192,17 +191,16 @@ export async function openCamera(
   try { verifyTracks(c, stream); }
   catch (error) { stream.getTracks().forEach(t => t.stop()); throw error; }
   const progress = cameraProgress(stream);
-  if (hasCameraTransform(c)) {
-    try {
-      const camera = await transformedCamera(stream, c);
-      return { stream: camera.stream, stalled: camera.stalled, close: () => { progress.close(); camera.close(); } };
-    } catch (error) {
-      progress.close();
-      stream.getTracks().forEach((track) => track.stop());
-      throw error;
-    }
+  try {
+    // Every supported browser recording goes through the worker so the saved
+    // video always includes the same Dink Vision mark as Android recordings.
+    const camera = await transformedCamera(stream, c);
+    return { stream: camera.stream, stalled: camera.stalled, close: () => { progress.close(); camera.close(); } };
+  } catch (error) {
+    progress.close();
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
   }
-  return { stream, stalled: progress.stalled, close: () => { progress.close(); stream.getTracks().forEach((t) => t.stop()); } };
 }
 
 export async function testCamera(c: BrowserCamera, preview?: HTMLVideoElement) {

@@ -50,11 +50,14 @@ class UploadCancelledError extends Error {}
 class LocalOnlyRecordingError extends Error {}
 
 export class BrowserCapture {
+  private startup?: { cancelled: boolean };
   private recorder?: MediaRecorder;
   private finishCapture?: () => void;
+  private forceStop?: (reason: string) => void;
   private releaseLock?: () => void;
   private wake?: WakeLockSentinel;
   private stopping = false;
+  private stopIssued = false;
   private stopTimer?: ReturnType<typeof setTimeout>;
   private captureStart = 0;
   private captureEnd = 0;
@@ -65,6 +68,7 @@ export class BrowserCapture {
     private changed: (event?: "started" | "queued" | "short" | "progress") => void,
   ) {}
   dispose() {
+    if (this.startup) this.startup.cancelled = true;
     if (this.activeId || this.recorder) this.stop(true);
     else this.finishCapture?.();
   }
@@ -76,48 +80,58 @@ export class BrowserCapture {
     beforeRecording?: () => Promise<void>,
   ) {
     this.finishCapture = undefined;
+    if (this.startup || this.activeId || this.recorder)
+      throw Error("Finish the current recording before starting another match.");
     if (!navigator.locks)
       throw Error("An updated browser with Web Locks support is required.");
-    await new Promise<void>((resolve, reject) => {
-      void navigator.locks
-        .request(
-          `casa-tablet-recorder-v2:${config.id}`,
-          { ifAvailable: true },
-          async (lock) => {
-            if (!lock) {
-              reject(
-                Error(
-                  "Another Dink Vision tab is using this device. Close the old tab or reload it, then retry.",
-                ),
-              );
-              return;
-            }
-            await new Promise<void>((release) => {
-              this.releaseLock = release;
-              void this.capture(
-                config,
-                emails,
-                key,
-                maxSeconds,
-                beforeRecording,
-              ).then(
-                resolve,
-                (e) => {
-                  release();
-                  reject(e);
-                },
-              );
-            });
-          },
-        )
-        .catch(reject);
-    });
+    const startup = { cancelled: false };
+    this.startup = startup;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        void navigator.locks
+          .request(
+            `casa-tablet-recorder-v2:${config.id}`,
+            { ifAvailable: true },
+            async (lock) => {
+              if (!lock) {
+                reject(
+                  Error(
+                    "Another Dink Vision tab is using this device. Close the old tab or reload it, then retry.",
+                  ),
+                );
+                return;
+              }
+              await new Promise<void>((release) => {
+                this.releaseLock = release;
+                void this.capture(
+                  config,
+                  emails,
+                  key,
+                  maxSeconds,
+                  startup,
+                  beforeRecording,
+                ).then(
+                  resolve,
+                  (e) => {
+                    release();
+                    reject(e);
+                  },
+                );
+              });
+            },
+          )
+          .catch(reject);
+      });
+    } finally {
+      if (this.startup === startup) this.startup = undefined;
+    }
   }
   private async capture(
     config: Config,
     emails: string[],
     key: string,
     maxSeconds: number,
+    startup: { cancelled: boolean },
     beforeRecording?: () => Promise<void>,
   ) {
     const estimate = await navigator.storage?.estimate();
@@ -128,6 +142,10 @@ export class BrowserCapture {
       );
     await navigator.storage?.persist?.();
     const camera = await openCamera(config);
+    if (startup.cancelled) {
+      camera.close();
+      throw Error("Recording start was cancelled because the page was closed.");
+    }
     let sid: string | undefined;
     let aborted = false;
     let failureReport: Promise<unknown> | null = null;
@@ -145,6 +163,8 @@ export class BrowserCapture {
       });
       const result = await tabletRequest("start", { emails, key });
       sid = result.id;
+      if (startup.cancelled)
+        throw Error("Recording start was cancelled because the page was closed.");
       const id = sid!;
       const meta: LocalRecording = {
         id,
@@ -165,6 +185,7 @@ export class BrowserCapture {
       this.activeId = id;
       this.recorder = recorder;
       this.stopping = false;
+      this.stopIssued = false;
       let write = Promise.resolve(),
         index = 0,
         bytes = 0,
@@ -176,17 +197,24 @@ export class BrowserCapture {
         firstResolve = resolve;
         firstReject = reject;
       });
+      // The encoder can fail before startup has finished awaiting `started`.
+      // Observe this promise immediately so that early camera failures do not
+      // become an unhandled rejection while cleanup is still in progress.
+      void first.catch(() => {});
       let startedResolve: () => void = () => {},
         startedReject: (e: Error) => void = () => {};
       const started = new Promise<void>((resolve, reject) => {
         startedResolve = resolve;
         startedReject = reject;
       });
+      void started.catch(() => {});
       let timeout: ReturnType<typeof setTimeout> | undefined,
         limit: ReturnType<typeof setTimeout> | undefined;
       let watchdog: ReturnType<typeof setInterval> | undefined;
       let lastChunkAt = performance.now();
       let interruptionReason: string | undefined;
+      let cleaned = false;
+      let finalizeStop: (forcedReason?: string) => void = () => {};
       const unload = (e: BeforeUnloadEvent) => {
         e.preventDefault();
         e.returnValue = "";
@@ -197,7 +225,7 @@ export class BrowserCapture {
       };
       document.addEventListener("visibilitychange", resumed);
       const unwatchVisibility = watchCaptureVisibility(() => {
-        if (recorder.state === "inactive") return;
+        if (cleaned) return;
         interrupted = true;
         interruptionReason = CAPTURE_HIDDEN_MESSAGE;
         this.message(interruptionReason);
@@ -205,6 +233,8 @@ export class BrowserCapture {
         this.stop(true);
       });
       const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         if (timeout) clearTimeout(timeout);
         if (limit) clearTimeout(limit);
         if (watchdog) clearInterval(watchdog);
@@ -219,6 +249,7 @@ export class BrowserCapture {
         this.startedAt = 0;
         this.recorder = undefined;
         this.finishCapture = undefined;
+        if (this.forceStop === finalizeStop) this.forceStop = undefined;
         const releaseLock = this.releaseLock;
         this.releaseLock = undefined;
         releaseLock?.();
@@ -273,7 +304,14 @@ export class BrowserCapture {
           }
         }),
       );
-      recorder.onstop = () => {
+      finalizeStop = (forcedReason?: string) => {
+        // A late stop event from a failed encoder must not clean up a newer
+        // recording that has already reclaimed the same BrowserCapture.
+        if (cleaned) return;
+        if (forcedReason) {
+          interrupted = true;
+          interruptionReason = forcedReason;
+        }
         if (!this.stopping) {
           interrupted = true;
           this.message(
@@ -328,6 +366,8 @@ export class BrowserCapture {
           this.changed();
         });
       };
+      this.forceStop = finalizeStop;
+      recorder.onstop = () => finalizeStop();
       try {
         this.wake = await navigator.wakeLock?.request("screen");
       } catch {
@@ -336,7 +376,7 @@ export class BrowserCapture {
         );
       }
       await beforeRecording?.();
-      if (this.stopping) throw Error("Recording start was cancelled.");
+      if (this.stopping || startup.cancelled) throw Error("Recording start was cancelled.");
       timeout = setTimeout(() => {
         interrupted = true;
         startedReject(Error("Camera produced no video."));
@@ -368,7 +408,7 @@ export class BrowserCapture {
             e instanceof Error ? e.message : "Recording was interrupted.",
         }).catch(() => {});
       if (this.recorder && this.recorder.state !== "inactive")
-        { this.captureEnd = performance.now(); this.recorder.stop(); }
+        this.stop(true);
       else {
         camera.close();
         this.finishCapture?.();
@@ -378,15 +418,29 @@ export class BrowserCapture {
     }
   }
   stop(immediate = false) {
+    if (this.stopIssued) return;
     if (this.stopping && !(immediate && this.stopTimer)) return;
     this.stopping = true;
     const finish = () => {
+      if (this.stopIssued) return;
+      this.stopIssued = true;
       this.captureEnd = performance.now();
       this.stopTimer = undefined;
       if (this.activeId)
         void tabletRequest("stopped", { id: this.activeId }).catch(() => {});
-      if (this.recorder && this.recorder.state !== "inactive")
-        this.recorder.stop();
+      if (this.recorder && this.recorder.state !== "inactive") {
+        const recorder = this.recorder;
+        try {
+          recorder.stop();
+          if (this.recorder === recorder && this.forceStop)
+            this.stopTimer = setTimeout(
+              () => this.forceStop?.("The browser did not finish stopping the video. Available footage was preserved."),
+              10_000,
+            );
+        } catch {
+          this.forceStop?.("The browser could not finish stopping the video. Available footage was preserved.");
+        }
+      }
     };
     if (immediate || !this.recorder || this.recorder.state !== "recording") {
       if (this.stopTimer) clearTimeout(this.stopTimer);

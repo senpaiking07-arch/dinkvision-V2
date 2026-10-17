@@ -29,7 +29,7 @@ test("concurrent metadata updates preserve completion, UI dismissal and retry fi
       const result = (await getMeta(id))!;
       assert.equal(result.status,"uploaded","dismissing a result must not resurrect an uploading job");
       assert.equal(result.dismissedFromPlayer,true);
-      assert.equal(result.failureServerUpdatedAt,"2026-10-13T12:00:00Z");
+      assert.equal(result.failureServerUpdatedAt,Date.parse("2026-10-13T12:00:00Z"));
     }
   } finally { await removeVideo(id); }
 });
@@ -41,7 +41,7 @@ async function captureHarness(run: (h: {
   setFault: (fault: Fault) => void; start: () => Promise<void>; held: Set<string>;
   ids: string[]; tracks: Array<{readyState:string}>; page: EventTarget; events:string[];
 }) => Promise<void>) {
-  const names = ["navigator","window","document","MediaRecorder","fetch","setTimeout"] as const;
+  const names = ["navigator","window","document","MediaRecorder","MediaStream","MediaStreamTrackProcessor","MediaStreamTrackGenerator","Worker","fetch","setTimeout"] as const;
   const old = new Map(names.map(name => [name,Object.getOwnPropertyDescriptor(globalThis,name)]));
   const realTimeout = globalThis.setTimeout;
   const held = new Set<string>(), ids: string[] = [], events: string[] = [];
@@ -53,6 +53,19 @@ async function captureHarness(run: (h: {
   class Track extends EventTarget {
     readyState = "live"; enabled = true;
     stop() { this.readyState = "ended"; }
+  }
+  class Generator extends Track { writable={}; }
+  class Processor { readable={cancel:async()=>{}}; }
+  class Stream {
+    constructor(private streamTracks: Track[]) {}
+    getTracks(){return this.streamTracks;}
+    getVideoTracks(){return this.streamTracks.filter(track=>track instanceof Generator);}
+    getAudioTracks(){return this.streamTracks.filter(track=>!(track instanceof Generator));}
+  }
+  class LogoWorker {
+    onerror?:()=>void;onmessage?:(event:{data:{type:string}})=>void;
+    postMessage(){queueMicrotask(()=>this.onmessage?.({data:{type:"frame"}}));}
+    terminate(){}
   }
   class Recorder {
     static isTypeSupported() { return true; }
@@ -82,6 +95,7 @@ async function captureHarness(run: (h: {
   const capture = new BrowserCapture(()=>{},()=>{});
   const mocks = {
     window:Object.assign(page,{isSecureContext:true}), document:documentMock, MediaRecorder:Recorder,
+    MediaStream:Stream,MediaStreamTrackProcessor:Processor,MediaStreamTrackGenerator:Generator,Worker:LogoWorker,
     setTimeout:((fn:()=>void, ms?:number, ...args:unknown[]) => realTimeout(fn, ms && ms >= 10000 && ms <= 20000 ? 60 : ms,...args)) as typeof setTimeout,
     navigator:{
       storage:{estimate:async()=>({quota:1_000_000_000,usage:0}),persist:async()=>true},

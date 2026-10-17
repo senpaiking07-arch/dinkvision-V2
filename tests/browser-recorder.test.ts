@@ -297,7 +297,7 @@ test("background upload reopens a failed server queue without the admin dashboar
 });
 
 for (const hidden of [false, true]) test(`browser capture ${hidden ? "continues recording across tab switches" : "uploads a visible recording"}`, async () => {
-  const names = ["navigator", "window", "document", "MediaRecorder"] as const;
+  const names = ["navigator", "window", "document", "MediaRecorder", "MediaStream", "MediaStreamTrackProcessor", "MediaStreamTrackGenerator", "Worker"] as const;
   const old = new Map(
     names.map((n) => [n, Object.getOwnPropertyDescriptor(globalThis, n)]),
   );
@@ -338,6 +338,23 @@ for (const hidden of [false, true]) test(`browser capture ${hidden ? "continues 
     getVideoTracks: () => [videoTrack],
     getAudioTracks: () => [audioTrack],
   };
+  class OutputTrack {
+    kind = "video"; readyState = "live"; writable = {};
+    stop(){this.readyState="ended";}
+    addEventListener(){}
+  }
+  class Processor { readable={cancel:async()=>{}}; }
+  class Stream {
+    constructor(private tracks: Array<typeof audioTrack|OutputTrack>){}
+    getTracks(){return this.tracks;}
+    getVideoTracks(){return this.tracks.filter(track=>track.kind==="video");}
+    getAudioTracks(){return this.tracks.filter(track=>track.kind==="audio");}
+  }
+  class LogoWorker {
+    onerror?:()=>void;onmessage?:(event:{data:{type:string}})=>void;
+    postMessage(){queueMicrotask(()=>this.onmessage?.({data:{type:"frame"}}));}
+    terminate(){}
+  }
   class Recorder {
     static isTypeSupported() {
       return true;
@@ -410,6 +427,10 @@ for (const hidden of [false, true]) test(`browser capture ${hidden ? "continues 
     },
     document: documentMock,
     MediaRecorder: Recorder,
+    MediaStream: Stream,
+    MediaStreamTrackProcessor: Processor,
+    MediaStreamTrackGenerator: OutputTrack,
+    Worker: LogoWorker,
   }))
     Object.defineProperty(globalThis, n, { configurable: true, value });
   globalThis.fetch = async (input, init) => {
