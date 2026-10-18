@@ -13,7 +13,10 @@ measures capture time and detects backlog; it must not replace source timestamps
   now with source-based video timing and audio sample/source drift checks.
 - Android device camera: Camera2/MediaRecorder uses a supported frame-rate range
   compatible with the chosen output size. Sensor callbacks detect stalled capture
-  and clock drift. External USB selection is not added by this release.
+  and clock drift. Version 0.5.21 adds direct UVC/USB-host capture when Android
+  detects the camera but does not expose a Camera2 external source. It selects a
+  reported MJPEG mode at 720p when available, otherwise a safe reported mode up
+  to 1080p, and caps the requested rate at 30 fps where the camera permits it.
 - Browser cameras: MediaRecorder retains its native timing. Monotonic capture time
   ends before final storage writes. The original camera's frame delivery, track
   state, and chunk delivery are monitored, including for transformed canvas video.
@@ -40,7 +43,9 @@ upload queue, retry, email delivery and retention behavior remains in place.
 Direct copy preserves camera bitrate and resolution; it may produce larger files
 than the old 720p encoder. Lower camera stream quality if bandwidth/storage require
 it. Software fallback is guarded, not guaranteed to sustain every stream. Hardware
-encoding and universal USB support are not claimed by this release.
+encoding is not guaranteed on every device. Direct UVC support covers compliant
+USB cameras; proprietary devices, inadequate OTG power, and unadvertised formats
+remain outside the compatibility claim.
 
 ## Acceptance at the venue
 

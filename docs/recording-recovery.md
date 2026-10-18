@@ -2,11 +2,12 @@
 
 ## Scope and root causes
 
-The APK records Camera2 or RTSP. The October 14 update adds an explicit external
-Camera2 mode for USB cameras exposed by the tablet's operating system, with no
-fallback to the rear camera. It has no USB-host/UVC driver. The browser also
-supports USB cameras exposed through getUserMedia. Neither path guarantees USB
-support on untested Android hardware. See the
+The APK records Camera2, direct UVC/USB-host, or RTSP. Version 0.5.21 keeps the
+external Camera2 path and adds a direct UVC fallback for Android devices that
+detect a standards-based USB camera without publishing it through Camera2. It
+does not substitute the rear camera while a UVC device is attached. The browser
+also supports USB cameras exposed through getUserMedia. Physical camera formats,
+OTG adapters, available USB power, and manufacturer behavior still require testing. See the
 [October 14 report](dinkvision-readiness-2026-10-14.md) and
 [tenant rollout guide](tenant-rollout.md) for the current release requirements;
 the October 13 results below are historical.

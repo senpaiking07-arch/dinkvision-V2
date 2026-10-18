@@ -3,7 +3,7 @@ def environment = new Properties()
 def environmentFile = rootProject.file('../.env')
 if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
 def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
-def appVersionName = '0.5.20'
+def appVersionName = '0.5.21'
 if (!appOrigin || !(appOrigin ==~ /^https:\/\/[^\/?#]+$/))
     throw new GradleException('Set APP_ORIGIN to the hosted HTTPS origin in the repository .env or build environment.')
 android {
@@ -13,7 +13,7 @@ android {
         applicationId 'com.casabatik.recorder'
         minSdk 26
         targetSdk 36
-        versionCode 26
+        versionCode 27
         versionName appVersionName
         buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
@@ -27,6 +27,7 @@ configurations { nativeBundles }
 dependencies {
     implementation 'androidx.activity:activity:1.10.1'
     implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'com.herohan:UVCAndroid:1.0.13'
     implementation('org.bytedeco:javacv:1.5.12') { transitive = false }
     implementation 'org.bytedeco:javacpp:1.5.12'
     implementation 'org.bytedeco:ffmpeg:7.1.1-1.5.12'

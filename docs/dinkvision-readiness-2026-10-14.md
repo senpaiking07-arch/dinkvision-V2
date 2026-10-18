@@ -1,5 +1,11 @@
 # DinkVision implementation and readiness — October 14, 2026
 
+> October 18 follow-up: Android 0.5.21 adds an in-APK UVC/USB-host fallback for
+> standards-based OTG cameras that Android detects without publishing through
+> Camera2, including the path reported on a Samsung A22. The original October 14
+> matrix below remains historical; physical capture, unplug/reconnect, long-run,
+> and powered-OTG acceptance tests are still required on the venue hardware.
+
 **Verdict: CONDITIONALLY READY for a supervised pitch after the checks below.** Local software verification passes. The new tenant schema and matching application are not deployed; physical USB capture, a real 15-minute match, native Android clip execution, and real Google playback/email delivery remain unverified. This is not production approval or a claim that every possible failure has been tested.
 
 The consolidated implementation request supersedes the earlier read-only multi-tenancy audit. Scope and completion criteria are recorded in [implementation-scope.md](implementation-scope.md). Wireless-specific work was excluded. Existing fixes and pre-existing uncommitted changes were preserved.

@@ -1,5 +1,11 @@
 # DinkVision cross-platform verification — October 14, 2026
 
+> October 18 follow-up: Android 0.5.21 adds a direct UVC/USB-host fallback when
+> the operating system sees a standards-based OTG camera but does not expose a
+> Camera2 external source. The October 14 matrix remains a historical record;
+> the new path compiles and its mode-selection tests pass, while physical USB
+> capture and disconnect recovery still require the target phone and camera.
+
 ## A. Compatibility summary
 
 **Verdict: CONDITIONALLY READY for a supervised desktop demonstration. The wired Android demonstration is not signed off.** All executable checks below pass. A connected Android tablet/USB camera, a fifteen-minute physical recording, and staged Google delivery are still required. This report does not claim that synthetic cameras or desktop rendering of APK assets verify Android hardware.

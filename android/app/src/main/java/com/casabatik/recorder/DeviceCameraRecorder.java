@@ -5,10 +5,6 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.hardware.camera2.*;
-import android.hardware.usb.UsbConstants;
-import android.hardware.usb.UsbDevice;
-import android.hardware.usb.UsbInterface;
-import android.hardware.usb.UsbManager;
 import android.media.MediaRecorder;
 import android.os.*;
 import android.util.Size;
@@ -58,18 +54,6 @@ final class DeviceCameraRecorder {
     throw new Exception("This Android device has no camera.");
   }
 
-  private static boolean usbCameraAttached(Context context) {
-    UsbManager manager = context.getSystemService(UsbManager.class);
-    if (manager == null) return false;
-    for (UsbDevice device : manager.getDeviceList().values())
-      for (int index = 0; index < device.getInterfaceCount(); index++) {
-        UsbInterface face = device.getInterface(index);
-        if (face.getInterfaceClass() == UsbConstants.USB_CLASS_VIDEO
-            && face.getInterfaceSubclass() == 2) return true;
-      }
-    return false;
-  }
-
   static android.util.Range<Integer> recordingRate(android.util.Range<Integer>[] ranges, long minFrameNs) throws Exception {
     if (ranges == null || ranges.length == 0)
       throw new RecordingAccuracy.Failure("Camera does not report supported recording frame rates.");
@@ -97,12 +81,19 @@ final class DeviceCameraRecorder {
       throw new Exception("Allow camera and microphone permissions in the Android app.");
 
     CameraManager manager = context.getSystemService(CameraManager.class);
-    String[] selection = selectCamera(manager);
+    String[] selection;
+    try {
+      selection = selectCamera(manager);
+    } catch (Exception noPlatformCamera) {
+      if (UvcCameraRecorder.hasAttachedCamera(context))
+        return UvcCameraRecorder.capture(
+            context, file, seconds, countInSeconds, stop, listener);
+      throw noPlatformCamera;
+    }
     String cameraId = selection[0];
-    if (!"USB camera".equals(selection[1]) && usbCameraAttached(context))
-      throw new RecordingAccuracy.Failure(
-          "A USB camera is connected, but this Android device cannot use it. Use a device"
-              + " that supports external USB cameras, or disconnect the USB camera.");
+    if (!"USB camera".equals(selection[1]) && UvcCameraRecorder.hasAttachedCamera(context))
+      return UvcCameraRecorder.capture(
+          context, file, seconds, countInSeconds, stop, listener);
     listener.camera(selection[1]);
     CameraCharacteristics details = manager.getCameraCharacteristics(cameraId);
     Size size = recordingSize(details);

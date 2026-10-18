@@ -8,15 +8,16 @@ camera on the same local network.
 
 ## Install and configure
 
-1. Transfer `Dink-Vision-Recorder-0.5.20.apk` to a **64-bit Android 8 or newer** device.
+1. Transfer `Dink-Vision-Recorder-0.5.21.apk` to a **64-bit Android 8 or newer** device.
    Open it and allow installation from that file source when Android asks.
    This is a debug-signed testing build, not a Play Store release.
 2. In the hosted admin's **Devices & cameras**, add/edit the device, assign its
    court, and generate an enrollment code. Camera mode is selected on the
    enrolled tablet:
-   - **Wired USB / built-in Android camera** uses an Android-compatible external
-     camera when the device exposes it through Camera2, otherwise it uses the
-     rear camera. The tablet microphone supplies audio.
+   - **Wired USB / built-in Android camera** uses an attached standards-based
+     UVC camera. It first uses Android Camera2 when the manufacturer exposes the
+     camera there, then falls back to the APK's direct USB-host/UVC driver. With
+     no USB camera attached it uses the rear camera. The tablet microphone supplies audio.
    - **Tapo Wi-Fi camera** uses a Tapo C210 or compatible RTSP camera. The APK
      receives, saves, and uploads the external camera stream; it does not use
      the Android camera or microphone.
@@ -57,9 +58,10 @@ video. Recovering that video later places it at the end of the queue.
 
 - Tapo C210 uses standard RTSP; no proprietary Tapo SDK is embedded. Support for
   a camera depends on its protocol, codecs, account settings, and network access.
-- This build records either the Android device's rear camera and microphone or
-  an assigned RTSP camera. The browser remains the path for USB and
-  browser-visible cameras. iOS, proprietary cloud-only cameras, ONVIF discovery,
+- This build records a standards-based UVC/OTG camera, the Android device's rear
+  camera and microphone, or an assigned RTSP camera. UVC support still depends
+  on the camera's advertised formats, a working OTG adapter, and sufficient USB
+  power. Proprietary non-UVC cameras are unsupported. iOS, proprietary cloud-only cameras, ONVIF discovery,
   automatic IP discovery, and remote PTZ are not added here.
 - RTSP capture copies H.264/AAC packets directly to hybrid-fragmented MP4 when
   compatible (H.264 video-only is also supported), preserving source resolution,
@@ -100,8 +102,8 @@ SDK location in a gitignored `local.properties`. From this directory:
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`. Every `assembleDebug` build,
 including Android Studio's **Build APK(s)** action, copies that exact APK to
-`../Dink-Vision-Recorder-0.5.20.apk` and
-`../artifacts/Dink-Vision-Recorder-0.5.20.apk`. It contains arm64-v8a and x86_64
+`../Dink-Vision-Recorder-0.5.21.apk` and
+`../artifacts/Dink-Vision-Recorder-0.5.21.apk`. It contains arm64-v8a and x86_64
 native libraries. Gradle and native dependencies are pinned. The debug signing
 key lives in the developer's Android profile, not in this repository;
 production signing and store distribution are a separate release step.
@@ -138,8 +140,8 @@ actual Drive/email delivery remain device acceptance tests.
 
 ## Open-source components
 
-JavaCV/JavaCPP 1.5.12, FFmpeg 7.1.1-1.5.12 non-GPL Android classifiers, AndroidX
-WebKit 1.14.0 and Activity 1.10.1. License texts and source links are packaged in
+JavaCV/JavaCPP 1.5.12, FFmpeg 7.1.1-1.5.12 non-GPL Android classifiers,
+UVCAndroid 1.0.13, AndroidX WebKit 1.14.0 and Activity 1.10.1. License texts and source links are packaged in
 `app/src/main/assets/licenses`. FFmpeg libraries are dynamically linked; replacing
 their native JAR inputs and rebuilding/re-signing the APK supports modifications
 to those libraries. Preserve the included license notices when distributing.
