@@ -2,6 +2,7 @@ package com.casabatik.recorder;
 
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
 import java.io.File;
 import java.util.HashSet;
 import java.util.Locale;
@@ -617,11 +618,18 @@ final class Engine {
                       context, test, capturedMillis, expectsAudio(camera));
             } catch (Exception e) {
               String reason = e.getMessage();
-              if ("device".equals(camera.optString("type")))
+              Log.e("DinkVisionCamera", "Camera test failed", e);
+              if ("device".equals(camera.optString("type"))) {
+                if (!DeviceCameraRecorder.hasPermissions(context))
+                  throw new Exception(
+                      "Camera and microphone access is not available. Open Android Settings, allow both permissions, then retry.",
+                      e);
                 throw new Exception(
-                    reason != null && reason.contains("USB camera")
-                        ? reason
-                        : "Camera test failed. Allow camera and microphone permissions, then retry.");
+                    reason == null || reason.trim().isEmpty()
+                        ? "The camera test failed without an error message. Reconnect the camera and retry."
+                        : reason.trim(),
+                    e);
+              }
               throw new Exception(
                   "External Wi-Fi camera test failed. Check the Tapo Camera Account, IP address,"
                       + " and local network, then retry.");

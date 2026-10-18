@@ -205,12 +205,15 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
       chooseCameraMode();
       return;
     }
-    if (deviceCamera && !DeviceCameraRecorder.hasPermissions(this))
+    if (deviceCamera && !DeviceCameraRecorder.hasPermissions(this)) {
+      configureDeviceCameraAfterPermission = true;
       requestPermissions(
           new String[] {
             android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO
           },
           2);
+      return;
+    }
     new AlertDialog.Builder(this)
         .setTitle(
             deviceCamera

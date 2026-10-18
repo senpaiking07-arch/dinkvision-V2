@@ -63,7 +63,9 @@ final class UvcCameraRecorder {
                 .min(Integer::compareTo)
                 .orElse(0);
     }
-    if (selected == 0) selected = size.fps > 0 ? Math.min(size.fps, 30) : 30;
+    // Never invent a frame rate. Some UVC cameras expose a mode only at 50/60 fps;
+    // asking libuvc for 30 fps in that case closes the camera during setup.
+    if (selected == 0) selected = size.fps > 0 ? size.fps : 30;
     return selected;
   }
 

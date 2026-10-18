@@ -2,7 +2,7 @@
 
 ## Scope and root causes
 
-The APK records Camera2, direct UVC/USB-host, or RTSP. Version 0.5.21 keeps the
+The APK records Camera2, direct UVC/USB-host, or RTSP. Version 0.5.22 keeps the
 external Camera2 path and adds a direct UVC fallback for Android devices that
 detect a standards-based USB camera without publishing it through Camera2. It
 does not substitute the rear camera while a UVC device is attached. The browser

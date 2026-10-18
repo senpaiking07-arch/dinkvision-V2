@@ -54,4 +54,12 @@ public class UvcCameraRecorderTest {
     assertEquals(1280, selected.width);
     assertEquals(720, selected.height);
   }
+
+  @Test
+  public void preservesTheOnlyFrameRateReportedByTheCamera() throws Exception {
+    Size selected =
+        UvcCameraRecorder.chooseRecordingSize(
+            Arrays.asList(size(UVCCamera.UVC_VS_FRAME_MJPEG, 1280, 720, 60)));
+    assertEquals(60, selected.fps);
+  }
 }

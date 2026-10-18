@@ -77,8 +77,11 @@ final class VideoBranding {
         } catch (Exception restoreFailure) {
           failure.addSuppressed(restoreFailure);
         }
+      String detail = failure.getMessage();
       throw new Exception(
-          "The Dink Vision logo could not be added. The original video was preserved.", failure);
+          "The Dink Vision logo could not be added. The original video was preserved."
+              + (detail == null || detail.trim().isEmpty() ? "" : " " + detail.trim()),
+          failure);
     }
   }
 
