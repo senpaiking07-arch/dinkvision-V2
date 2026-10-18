@@ -47,6 +47,24 @@ public class VideoBrandingTest {
   }
 
   @Test
+  public void roundedVideoTimestampsAlwaysProduceIncreasingFrameNumbers() throws Exception {
+    double frameRate = 30.0;
+    long sourceStart = 1_000_000L;
+    int first = VideoBranding.nextFrameNumber(sourceStart, sourceStart, frameRate, -1);
+    // Both timestamps normally round to frame zero at 30 fps. The second output frame must
+    // still advance or FFmpeg rejects the MP4 packet with av_interleaved_write_frame error -22.
+    int second = VideoBranding.nextFrameNumber(sourceStart + 8_000L, sourceStart, frameRate, first);
+    int third = VideoBranding.nextFrameNumber(sourceStart + 16_000L, sourceStart, frameRate, second);
+    int afterGap =
+        VideoBranding.nextFrameNumber(sourceStart + 200_000L, sourceStart, frameRate, third);
+
+    assertEquals(0, first);
+    assertEquals(1, second);
+    assertEquals(2, third);
+    assertEquals(6, afterGap);
+  }
+
+  @Test
   public void markIsPlacedAtTheDisplayedBottomRight() throws Exception {
     try (Frame frame = new Frame(100, 60, Frame.DEPTH_UBYTE, 3)) {
       int[] red = {0xffff0000, 0xffff0000, 0xffff0000, 0xffff0000};

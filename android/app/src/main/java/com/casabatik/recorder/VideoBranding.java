@@ -77,10 +77,9 @@ final class VideoBranding {
         } catch (Exception restoreFailure) {
           failure.addSuppressed(restoreFailure);
         }
-      String detail = failure.getMessage();
+      Log.e("DinkVisionVideo", "Logo processing failed; the source video was preserved", failure);
       throw new Exception(
-          "The Dink Vision logo could not be added. The original video was preserved."
-              + (detail == null || detail.trim().isEmpty() ? "" : " " + detail.trim()),
+          "The Dink Vision logo could not be added. The original video was preserved. Please retry.",
           failure);
     }
   }
@@ -170,6 +169,7 @@ final class VideoBranding {
         }
         recorder.start();
         long sourceStart = Long.MIN_VALUE, lastVideo = Long.MIN_VALUE;
+        int outputFrameNumber = -1;
         boolean wroteVideo = false, wroteAudio = false;
         Frame frame;
         while ((frame = grabber.grabFrame(channels > 0, true, true, false)) != null) {
@@ -182,7 +182,13 @@ final class VideoBranding {
             if (frame.timestamp <= lastVideo)
               throw new Exception("The saved video timestamps do not advance.");
             blend(frame, pixels, mark.getWidth(), mark.getHeight(), rotation);
-            recorder.setTimestamp(Math.max(0, frame.timestamp - sourceStart));
+            // JavaCV converts setTimestamp() to a rounded frame number. Two valid source
+            // timestamps can therefore round to the same frame and make FFmpeg reject the
+            // second packet as non-monotonic. Assign the closest strictly increasing frame
+            // number instead so every device produces valid MP4 packet timestamps.
+            outputFrameNumber =
+                nextFrameNumber(frame.timestamp, sourceStart, fps, outputFrameNumber);
+            recorder.setFrameNumber(outputFrameNumber);
             recorder.record(frame);
             lastVideo = frame.timestamp;
             wroteVideo = true;
@@ -200,6 +206,19 @@ final class VideoBranding {
       if (scaled != null) scaled.recycle();
       if (original != null) original.recycle();
     }
+  }
+
+  static int nextFrameNumber(
+      long sourceTimestampUs, long sourceStartUs, double frameRate, int previousFrameNumber)
+      throws Exception {
+    if (!Double.isFinite(frameRate) || frameRate <= 0)
+      throw new Exception("The saved video frame rate is invalid.");
+    long relativeTimestampUs = Math.max(0L, sourceTimestampUs - sourceStartUs);
+    long timestampFrame = Math.round(relativeTimestampUs * frameRate / 1_000_000.0);
+    long nextFrame = Math.max(timestampFrame, (long) previousFrameNumber + 1L);
+    if (nextFrame > Integer.MAX_VALUE)
+      throw new Exception("The saved video is too long to finish safely.");
+    return (int) nextFrame;
   }
 
   static Bitmap orientMark(Bitmap scaled, int rotation) {

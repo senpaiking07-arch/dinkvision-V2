@@ -2,7 +2,7 @@
 
 ## Scope and root causes
 
-The APK records Camera2, direct UVC/USB-host, or RTSP. Version 0.5.22 keeps the
+The APK records Camera2, direct UVC/USB-host, or RTSP. Version 0.5.23 keeps the
 external Camera2 path and adds a direct UVC fallback for Android devices that
 detect a standards-based USB camera without publishing it through Camera2. It
 does not substitute the rear camera while a UVC device is attached. The browser
@@ -11,6 +11,10 @@ OTG adapters, available USB power, and manufacturer behavior still require testi
 [October 14 report](dinkvision-readiness-2026-10-14.md) and
 [tenant rollout guide](tenant-rollout.md) for the current release requirements;
 the October 13 results below are historical.
+
+Version 0.5.23 also maps camera timestamps to strictly increasing MP4 frame
+numbers while adding the Dink Vision logo. This prevents FFmpeg error -22 when
+two valid camera timestamps round to the same encoded frame number.
 
 - Camera2 callbacks could arrive after open/configure timeouts and escape cleanup.
   Session/encoder failures did not consistently release every resource. Browser

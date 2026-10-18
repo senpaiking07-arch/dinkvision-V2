@@ -3,7 +3,7 @@ def environment = new Properties()
 def environmentFile = rootProject.file('../.env')
 if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
 def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
-def appVersionName = '0.5.22'
+def appVersionName = '0.5.23'
 if (!appOrigin || !(appOrigin ==~ /^https:\/\/[^\/?#]+$/))
     throw new GradleException('Set APP_ORIGIN to the hosted HTTPS origin in the repository .env or build environment.')
 android {
@@ -13,7 +13,7 @@ android {
         applicationId 'com.casabatik.recorder'
         minSdk 26
         targetSdk 36
-        versionCode 28
+        versionCode 29
         versionName appVersionName
         buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
