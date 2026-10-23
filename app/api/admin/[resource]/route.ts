@@ -26,12 +26,13 @@ export async function POST(
     if (!["courts", "cameras", "recorders", "settings"].includes(resource))
       return json({ error: "Not found." }, 404);
     const body = await readBody(request);
-    const db = await serverSupabase();
+    const db = resource === "settings" ? await serverSupabase() : (await import("@/lib/recorder-server")).systemDatabase();
     let result;
     if (resource === "settings") {
       result = await db
         .from("venue_settings")
         .update(settingsInput(body))
+        .eq("tenant_id", account.tenantId)
         .eq("id", true)
         .select("id")
         .single();
@@ -47,13 +48,18 @@ export async function POST(
           name: text(body.name, "Court name"),
           location: body.location.trim(),
           active: bool(body.active),
+          tenant_id: account.tenantId,
         };
-      } else if (resource === "cameras") values = cameraInput(body);
-      else values = { name: text(body.name, "Recorder name") };
+      } else if (resource === "cameras") {
+        values = { ...cameraInput(body), tenant_id: account.tenantId };
+      } else {
+        values = { name: text(body.name, "Recorder name"), tenant_id: account.tenantId };
+      }
       result = body.id
         ? await db
             .from(resource)
             .update(values)
+            .eq("tenant_id", account.tenantId)
             .eq("id", uuid(body.id))
             .select("id")
             .single()
@@ -104,15 +110,16 @@ export async function DELETE(
     if (resource !== "courts") return json({ error: "Not found." }, 404);
     const body = await readBody(request);
     const id = uuid(body.id);
-    const db = await serverSupabase();
+    const db = (await import("@/lib/recorder-server")).systemDatabase();
     const court = await db
       .from("courts")
       .select("id,name")
+      .eq("tenant_id", account.tenantId)
       .eq("id", id)
       .maybeSingle();
     if (court.error) throw court.error;
     if (!court.data) return json({ error: "This court no longer exists." }, 404);
-    const removed = await db.from("courts").delete().eq("id", id);
+    const removed = await db.from("courts").delete().eq("tenant_id", account.tenantId).eq("id", id);
     if (removed.error) {
       return json(
         {
