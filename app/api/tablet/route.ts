@@ -266,6 +266,15 @@ export async function POST(request: Request) {
       const progress = Number(b.progress || 0), retries = Number(b.retry_count || 0);
       if (!Number.isInteger(progress) || progress < 0 || progress > 100 || !Number.isInteger(retries) || retries < 0 || retries > 100)
         throw new InputError("Invalid local queue report.");
+      const brandingState =
+        b.branding_state === undefined
+          ? undefined
+          : b.branding_state === null || b.branding_state === ""
+            ? null
+            : String(b.branding_state);
+      if (brandingState !== undefined && brandingState !== null &&
+        !["processing", "complete", "failed"].includes(brandingState))
+        throw new InputError("Invalid logo status.");
       const updated = await db.from("browser_recordings").update({
         upload_state: status,
         uploaded_bytes: b.bytes ? Math.min(Number(b.bytes), Math.max(0, Number(b.uploaded_bytes || 0))) : 0,
@@ -275,6 +284,9 @@ export async function POST(request: Request) {
         client_created_at: b.created_at ? new Date(Number(b.created_at)).toISOString() : undefined,
         duration_ms: b.duration_ms == null ? null : Number(b.duration_ms),
         upload_updated_at: new Date().toISOString(),
+        ...(brandingState === undefined
+          ? {}
+          : { branding_state: brandingState, branding_updated_at: new Date().toISOString() }),
       }).eq("session_id", id).eq("device_id", t.device.id);
       if (updated.error) throw updated.error;
       return json({ ok: true });
@@ -305,6 +317,16 @@ export async function POST(request: Request) {
         return json({ error: "Upload queue state changed. Refresh and retry." }, 409);
       const updated = await db.from("browser_recordings").update({
         ...(b.retrying === true && b.validation_failed !== true ? { upload_state: "retrying" } : {}),
+        ...(b.branding_state === undefined
+          ? {}
+          : {
+              branding_state: ["processing", "complete", "failed"].includes(
+                String(b.branding_state),
+              )
+                ? String(b.branding_state)
+                : null,
+              branding_updated_at: new Date().toISOString(),
+            }),
         retry_count: retries,
         last_error: b.last_error
           ? String(b.last_error).slice(0, 300)
@@ -353,7 +375,7 @@ export async function POST(request: Request) {
       return json(r);
     }
     if (
-      !["started", "stopped", "saved", "failed", "reset"].includes(
+      !["started", "stopped", "captured", "saved", "failed", "reset"].includes(
         String(b.action),
       )
     )
@@ -372,6 +394,20 @@ export async function POST(request: Request) {
       p_mime: b.mime ?? null,
     });
     if (r.error) throw r.error;
+    if (b.action === "saved" && b.branding_state !== undefined) {
+      const brandingState = String(b.branding_state);
+      if (!["processing", "complete", "failed"].includes(brandingState))
+        throw new InputError("Invalid logo status.");
+      const branded = await db
+        .from("browser_recordings")
+        .update({
+          branding_state: brandingState,
+          branding_updated_at: new Date().toISOString(),
+        })
+        .eq("session_id", id)
+        .eq("device_id", t.device.id);
+      if (branded.error) throw branded.error;
+    }
     if (b.action === "saved") {
       const localOnly = await db.rpc("hold_short_browser_recording", {
         p_session: id,
@@ -418,6 +454,8 @@ export async function POST(request: Request) {
           ["finalizing", "uploading", "sharing", "ready"].includes(
             currentStatus || "",
           )) ||
+        (b.action === "captured" &&
+          ["uploading", "sharing", "ready"].includes(currentStatus || "")) ||
         (b.action === "started" &&
           ["recording", "finalizing", "uploading", "sharing", "ready"].includes(
             currentStatus || "",

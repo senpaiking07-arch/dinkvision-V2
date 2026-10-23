@@ -13,6 +13,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 final class Engine {
+  private static final String LOGO_PROCESSING = "Adding Dink Vision logo.";
   private static Engine instance;
 
   private static final class LocalOnlyException extends Exception {
@@ -82,6 +83,7 @@ final class Engine {
               else api.tablet("heartbeat", new JSONObject());
             }
             if (!busy) {
+              releaseCapturedRecordings();
               refresh();
               reportFailedCaptureIfNeeded();
             }
@@ -226,6 +228,7 @@ final class Engine {
               .put("createdAt", item.optLong("createdAt"))
               .put("bytes", item.optLong("bytes"))
               .put("durationMs", item.optLong("durationMs"))
+              .put("captureReleased", item.optBoolean("captureReleased", false))
               .put("localAvailable", item.optBoolean("localAvailable", true)));
     }
     return result;
@@ -243,8 +246,43 @@ final class Engine {
             .put("created_at", item.optLong("createdAt"))
             .put("bytes", item.optLong("bytes"))
             .put("uploaded_bytes", 0);
+    if (item.has("brandingState"))
+      report.put("branding_state", item.optString("brandingState"));
     if (item.has("durationMs")) report.put("duration_ms", item.optLong("durationMs"));
     api.tablet("queue-report", report);
+  }
+
+  private void releaseCapturedRecording(JSONObject item) throws Exception {
+    if (item.optBoolean("captureReleased", false)) return;
+    String status = item.optString("status", "saved_locally");
+    if (!java.util.Arrays.asList("saved_locally", "pending", "retrying", "uploading")
+        .contains(status)) return;
+    String sid = item.optString("id");
+    UUID.fromString(sid);
+    File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
+    if (!file.isFile() || file.length() < 1) return;
+    api.tablet("captured", new JSONObject().put("id", sid));
+    item.put("captureReleased", true);
+    JSONObject latest = queueItem(sid);
+    if (latest.length() > 0) {
+      latest.put("captureReleased", true);
+      saveQueueItem(latest);
+    }
+  }
+
+  private void releaseCapturedRecordings() {
+    JSONArray current = queue();
+    for (int index = 0; index < current.length(); index++) {
+      JSONObject item = current.optJSONObject(index);
+      if (item == null || !item.optBoolean("localAvailable", true) || !belongsToCurrentDevice(item))
+        continue;
+      try {
+        releaseCapturedRecording(new JSONObject(item.toString()));
+      } catch (Exception ignored) {
+        // A later heartbeat, recording start, or upload attempt retries this
+        // idempotent release while the local video remains authoritative.
+      }
+    }
   }
 
   synchronized boolean claim() {
@@ -504,7 +542,7 @@ final class Engine {
 
   void finishWork() {
     busy = false;
-    if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
+    if (!uploadWorkerRunning.get() && !hasPendingUploadWork()) RecorderService.stopWhenIdle();
     refresh();
   }
 
@@ -786,6 +824,7 @@ final class Engine {
           try {
             JSONObject camera = vault.object("camera");
             if (camera.length() == 0) throw new Exception("Configure and test the camera first.");
+            releaseCapturedRecordings();
             server = api.call("/api/tablet", null);
             JSONObject device = server.optJSONObject("device");
             if (device == null) throw new Exception("Enroll this tablet first.");
@@ -884,16 +923,14 @@ final class Engine {
                       + " upload.");
             }
             phase = "finalizing";
-            message = "Adding the Dink Vision logo… Keep this app open.";
-            capturedMillis =
-                VideoBranding.apply(
-                    context, file, capturedMillis, expectsAudio(camera));
+            message = "Saving the complete video…";
             api.tablet("stopped", new JSONObject().put("id", sid));
             JSONObject queued = queueItem(sid);
             queued
                 .put("durationMs", capturedMillis)
                 .put("bytes", file.length())
-                .put("branded", true)
+                .put("branded", false)
+                .put("captureReleased", false)
                 .put("status", "saved_locally")
                 .put("lastError", "")
                 .put("nextRetryAt", 0);
@@ -903,6 +940,7 @@ final class Engine {
             heartbeat.execute(
                 () -> {
                   try {
+                    releaseCapturedRecording(queueReport);
                     // Make the locally safe video visible to venue staff without
                     // delaying the tablet's return to the welcome screen.
                     reportQueueItem(queueReport);
@@ -914,8 +952,7 @@ final class Engine {
             message =
                 capturedMillis < 60_000
                     ? "Recording saved locally. Clips under 1 minute are not uploaded or emailed."
-                    : "Video saved safely. Uploading in the background. You can start another match.";
-            kickUploads();
+                    : "Video saved safely. You can start another match.";
           } catch (Exception e) {
             error = e.getMessage();
             phase = "error";
@@ -942,6 +979,9 @@ final class Engine {
             recordingStartedNanos = 0;
             activeSession = "";
             finishWork();
+            // The foreground capture is free as soon as the original file is
+            // durable. Logo processing and upload continue independently.
+            kickUploads();
           }
         });
   }
@@ -1004,6 +1044,20 @@ final class Engine {
     return file;
   }
 
+  boolean hasPendingUploadWork() {
+    JSONArray current = queue();
+    for (int index = 0; index < current.length(); index++) {
+      JSONObject item = current.optJSONObject(index);
+      if (item == null
+          || !item.optBoolean("localAvailable", true)
+          || !belongsToCurrentDevice(item)) continue;
+      String status = item.optString("status", "saved_locally");
+      if (java.util.Arrays.asList("saved_locally", "pending", "retrying", "uploading")
+          .contains(status)) return true;
+    }
+    return false;
+  }
+
   private JSONObject nextUpload() {
     long now = System.currentTimeMillis();
     JSONArray current = queue();
@@ -1015,7 +1069,6 @@ final class Engine {
           || !belongsToCurrentDevice(item)) continue;
       String status = item.optString("status", "saved_locally");
       if (!java.util.Arrays.asList("saved_locally", "pending", "retrying").contains(status)
-          || (busy && !item.optBoolean("branded", false))
           || item.optLong("nextRetryAt", 0) > now) continue;
       if (selected == null || item.optLong("createdAt") < selected.optLong("createdAt"))
         selected = item;
@@ -1033,6 +1086,13 @@ final class Engine {
     JSONObject first = nextUpload();
     if (first == null) {
       uploadWorkerRunning.set(false);
+      if (hasPendingUploadWork()) {
+        try {
+          startService(false, true);
+        } catch (Exception ignored) {
+          // The next heartbeat retries while uploads remain in the local queue.
+        }
+      }
       return;
     }
     try {
@@ -1049,7 +1109,7 @@ final class Engine {
             while ((item = nextUpload()) != null) upload(item);
           } finally {
             uploadWorkerRunning.set(false);
-            if (!busy) RecorderService.stopWhenIdle();
+            if (!busy && !hasPendingUploadWork()) RecorderService.stopWhenIdle();
           }
         });
   }
@@ -1065,16 +1125,37 @@ final class Engine {
       UUID.fromString(sid);
       if (!file.isFile() || file.length() < 1024)
         throw new Exception("The locally saved video is missing or incomplete.");
+      try {
+        releaseCapturedRecording(item);
+      } catch (Exception ignored) {
+        // Branding can proceed offline. `saved` performs the same idempotent
+        // release when the final branded bytes are ready.
+      }
       long durationMs = item.optLong("durationMs", -1);
       boolean audioExpected =
           item.has("audioExpected")
               ? item.optBoolean("audioExpected")
               : expectsAudio(vault.object("camera"));
       if (!item.optBoolean("branded", false)) {
-        durationMs = VideoBranding.apply(context, file, durationMs, audioExpected);
-        item.put("durationMs", durationMs).put("branded", true);
+        item
+            .put("status", "saved_locally")
+            .put("brandingState", "processing")
+            .put("progress", 0)
+            .put("lastError", LOGO_PROCESSING);
+        saveQueueItem(item);
+        try {
+          reportQueueItem(new JSONObject(item.toString()));
+        } catch (Exception ignored) {
+        }
+        durationMs =
+            VideoBranding.apply(context, file, durationMs, audioExpected, () -> false);
+        item
+            .put("durationMs", durationMs)
+            .put("branded", true)
+            .put("brandingState", "complete");
       } else {
         RtspRecorder.validate(file, durationMs, audioExpected);
+        item.put("brandingState", "complete");
       }
       item
           .put("status", "pending")
@@ -1085,7 +1166,8 @@ final class Engine {
           new JSONObject()
               .put("id", sid)
               .put("bytes", file.length())
-              .put("mime", "video/mp4");
+              .put("mime", "video/mp4")
+              .put("branding_state", "complete");
       if (durationMs >= 0) savedFields.put("duration_ms", durationMs);
       JSONObject saved = api.tablet("saved", savedFields);
       if (saved.optBoolean("localOnly")) {
@@ -1164,6 +1246,8 @@ final class Engine {
             .put("serverRetryRequired", true)
             .put("lastError", failureMessage)
             .put("nextRetryAt", permanent ? 0 : System.currentTimeMillis() + delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L)));
+        if (!item.optBoolean("branded", false) && item.has("brandingState"))
+          item.put("brandingState", "failed");
         saveQueueItem(item);
         uploadPercent = -1;
         if (sid.equals(latestSavedSession) && "complete".equals(phase))
@@ -1172,8 +1256,7 @@ final class Engine {
                   ? "Upload needs attention. Your video is still safe on this tablet."
                   : "Upload paused by the connection. It will retry automatically; your video is safe.";
         try {
-          api.tablet(
-              "upload-failed",
+          JSONObject failureReport =
               new JSONObject()
                   .put("id", sid)
                   .put("retry_count", retries)
@@ -1182,7 +1265,10 @@ final class Engine {
                   .put(
                       "validation_failed",
                       failureMessage.contains("missing or incomplete")
-                          || failureMessage.contains("not playable")));
+                          || failureMessage.contains("not playable"));
+          if (item.has("brandingState"))
+            failureReport.put("branding_state", item.optString("brandingState"));
+          api.tablet("upload-failed", failureReport);
         } catch (Exception ignored) {
         }
       } catch (Exception ignored) {

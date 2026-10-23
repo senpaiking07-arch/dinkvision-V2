@@ -487,6 +487,7 @@ for (const hidden of [false, true]) test(`browser capture ${hidden ? "continues 
       "start",
       "started",
       "stopped",
+      "captured",
       "saved",
       "upload",
       "finish",
@@ -497,6 +498,7 @@ for (const hidden of [false, true]) test(`browser capture ${hidden ? "continues 
     assert.ok((uploaded?.durationMs || 0) >= 500, "capture includes time before the delayed start event");
     assert.equal(uploaded?.status, "uploaded");
     assert.equal(uploaded?.localAvailable, false);
+    assert.equal(uploaded?.captureReleased, true);
   } finally {
     await removeVideo("capture-test");
     globalThis.fetch = originalFetch;

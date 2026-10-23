@@ -128,28 +128,22 @@ $('reset').onclick = () => {
   call('reset');
   show('welcome');
 };
-function renderUploadStatus(queue, welcome = view === 'welcome') {
-  const jobs = Array.isArray(queue)
-    ? queue.filter(item => ['saved_locally', 'pending', 'uploading', 'retrying', 'failed'].includes(item.status))
-    : [];
-  const priority = ['uploading', 'retrying', 'saved_locally', 'pending', 'failed'];
-  const active = priority.map(status => jobs.find(item => item.status === status)).find(Boolean);
-  const panel = $('upload-status');
-  panel.hidden = !welcome || !active;
-  if (!active) return;
-  const progress = Math.max(0, Math.min(100, Number(active.progress || 0)));
-  const titles = {
-    saved_locally: 'Video saved · preparing background upload',
-    pending: 'Video saved · waiting for its upload turn',
-    uploading: `Uploading video in the background · ${progress}%`,
-    retrying: 'Internet interrupted · upload will retry automatically',
-    failed: 'Upload needs attention · your video is still safe'
-  };
-  $('upload-title').textContent = titles[active.status] || 'Background upload';
-  $('upload-meter').style.width = `${active.status === 'saved_locally' ? 0 : progress}%`;
-  $('upload-detail').textContent = active.status === 'failed'
-    ? 'The recording remains on this tablet. Use recovery or ask venue staff for help.'
-    : `You can start another match. The replay email is sent after Google Drive confirms the upload.${jobs.length > 1 ? ` ${jobs.length} videos are in this tablet’s queue.` : ''}`;
+function renderUploadStatus(queue) {
+  const jobs = Array.isArray(queue) ? queue : [];
+  const counts = {pending: 0, uploading: 0, completed: 0, failed: 0};
+  jobs.forEach(item => {
+    const status = String(item?.status || 'saved_locally');
+    if (['saved_locally', 'pending', 'queued', 'retrying'].includes(status)) counts.pending++;
+    else if (status === 'uploading') counts.uploading++;
+    else if (['uploaded', 'complete', 'completed'].includes(status)) counts.completed++;
+    else if (status === 'failed') counts.failed++;
+  });
+  $('queue-pending').textContent = String(counts.pending);
+  $('queue-uploading').textContent = String(counts.uploading);
+  $('queue-completed').textContent = String(counts.completed);
+  $('queue-failed').textContent = String(counts.failed);
+  $('queue-indicator').hidden = jobs.length === 0;
+  return counts;
 }
 function tick() {
   try {

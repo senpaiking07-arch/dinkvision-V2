@@ -15,7 +15,7 @@ export async function GET() {
     db
       .from("browser_recordings")
       .select(
-        "session_id,device_id,job_id,safe_error,last_error,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,client_created_at,duration_ms,retry_count,local_available,recording_sessions(id,court_id,status,created_at,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
+        "session_id,device_id,job_id,safe_error,last_error,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,recording_sessions(id,court_id,status,created_at,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
       )
       .order("last_seen_at", { ascending: false })
       .limit(100),
@@ -89,15 +89,13 @@ export async function POST(request: Request) {
       return json({ ok: true, retryRequested: true });
     }
     if (b.action === "remove" && id) {
+      if (b.confirm !== true)
+        throw new InputError("Confirm permanent device deletion.");
       const removed = await db.rpc("remove_browser_device", {
         p_device: id,
         p_actor: account.id,
       });
-      if (removed.error) {
-        if (removed.error.code === "P0001")
-          return json({ error: "Finish the active recording before removing this device." }, 409);
-        throw removed.error;
-      }
+      if (removed.error) throw removed.error;
       if (!removed.data) return json({ error: "Device no longer exists." }, 404);
       return json({ ok: true, removed: true });
     }

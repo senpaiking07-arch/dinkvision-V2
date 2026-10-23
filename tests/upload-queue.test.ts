@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 
-test("cameras on the same court share one FIFO upload queue", async () => {
+test("all devices in a tenant share one global FIFO upload queue", async () => {
   const db = new PGlite();
   try {
     await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;
@@ -89,18 +89,30 @@ test("cameras on the same court share one FIFO upload queue", async () => {
         )
       ).rows[0].ok;
 
-    // Every camera on the court shares one FIFO queue, ordered by queue time.
+    // Every camera in the tenant shares one FIFO queue, ordered by queue time.
     const first = await turn(0);
     assert.equal(first.allowed, true);
     assert.equal(first.queue_position, 1);
     assert.equal(first.queue_total, 3);
     assert.equal(first.active_device_name, "Tablet 1");
 
+    await db.query(
+      "update browser_recordings set upload_updated_at=now()-interval '10 minutes',lease_until=null where session_id=$1",
+      [sessions[1]],
+    );
     const second = await turn(1);
     assert.equal(second.allowed, false, "cameras on the same court share one queue");
     assert.equal(second.queue_position, 2);
     assert.equal(second.queue_total, 3);
     assert.equal(second.active_device_name, "Tablet 1");
+    const waiting = (
+      await db.query<{ upload_state: string; fresh: boolean }>(
+        "select upload_state,upload_updated_at>now()-interval '1 minute' fresh from browser_recordings where session_id=$1",
+        [sessions[1]],
+      )
+    ).rows[0];
+    assert.deepEqual(waiting, { upload_state: "pending", fresh: true },
+      "polling the queue keeps an active waiter from being expired");
 
     const third = await turn(2);
     assert.equal(third.allowed, false);
@@ -111,7 +123,7 @@ test("cameras on the same court share one FIFO upload queue", async () => {
     assert.equal(await report(0, "uploading", 400), true);
     assert.equal((await turn(2, false)).active_percent, 40);
 
-    // A camera on another court uploads without waiting for this court.
+    // A camera on another court still waits for the tenant-wide queue head.
     const otherCourt = courts[1];
     const otherKiosk = randomUUID();
     const otherDevice = randomUUID();
@@ -144,17 +156,17 @@ test("cameras on the same court share one FIFO upload queue", async () => {
         otherDevice,
       ])
     ).rows[0];
-    assert.equal(independent.allowed, true, "a different court uploads independently");
-    assert.equal(independent.queue_position, 1);
-    assert.equal(independent.queue_total, 1);
-    assert.equal(independent.active_device_name, "Tablet 3");
+    assert.equal(independent.allowed, false, "a different court shares the global queue");
+    assert.equal(independent.queue_position, 4);
+    assert.equal(independent.queue_total, 4);
+    assert.equal(independent.active_device_name, "Tablet 1");
 
     // When the court head fails, the next camera on that court takes over.
     assert.equal(await report(0, "failed", 400), true);
     const next = await turn(1);
     assert.equal(next.allowed, true, "a failed item does not block later videos");
     assert.equal(next.queue_position, 1);
-    assert.equal(next.queue_total, 2);
+    assert.equal(next.queue_total, 3);
     assert.equal(next.active_device_name, "Tablet 2");
     assert.equal(next.blocked_by_failure, false);
 
@@ -165,11 +177,34 @@ test("cameras on the same court share one FIFO upload queue", async () => {
     const last = await turn(2);
     assert.equal(last.allowed, true);
     assert.equal(last.queue_position, 1);
-    assert.equal(last.queue_total, 1);
+    assert.equal(last.queue_total, 2);
     assert.equal(last.active_device_name, "Tablet 1");
     assert.equal(await report(2, "complete", 1000), true);
     await db.query("update recording_sessions set status='ready' where id=$1", [
       sessions[2],
+    ]);
+
+    const otherTurn = (
+      await db.query<any>("select * from browser_upload_turn($1,$2,true)", [
+        otherSession,
+        otherDevice,
+      ])
+    ).rows[0];
+    assert.equal(otherTurn.allowed, true);
+    assert.equal(otherTurn.queue_position, 1);
+    assert.equal(otherTurn.queue_total, 1);
+    assert.equal(otherTurn.active_device_name, "Tablet 3");
+    assert.equal(
+      (
+        await db.query<{ ok: boolean }>(
+          "select report_browser_upload($1,$2,'complete',1000) ok",
+          [otherSession, otherDevice],
+        )
+      ).rows[0].ok,
+      true,
+    );
+    await db.query("update recording_sessions set status='ready' where id=$1", [
+      otherSession,
     ]);
 
     await db.query(
@@ -350,11 +385,22 @@ test("cameras on the same court share one FIFO upload queue", async () => {
     assert.equal(
       (
         await db.query<{ ok: boolean }>(
-          "select browser_event($1,$2,'failed') ok",
+          "select browser_event($1,$2,'captured') ok",
           [kiosks[0], interruptedSession],
         )
       ).rows[0].ok,
       true,
+      "a durable local capture releases the device before branding and upload",
+    );
+    assert.deepEqual(
+      (
+        await db.query<{ status: string; current_session_id: string | null }>(
+          `select s.status,k.current_session_id from recording_sessions s
+           join kiosk_devices k on k.id=s.kiosk_id where s.id=$1`,
+          [interruptedSession],
+        )
+      ).rows[0],
+      { status: "uploading", current_session_id: null },
     );
     assert.equal(
       (
@@ -364,7 +410,7 @@ test("cameras on the same court share one FIFO upload queue", async () => {
         )
       ).rows[0].ok,
       true,
-      "finalized footage remains recoverable after capture interruption",
+      "final branded bytes can be registered after the camera slot is released",
     );
     assert.equal(
       (
@@ -404,22 +450,84 @@ test("cameras on the same court share one FIFO upload queue", async () => {
     await db.query("update kiosk_devices set current_session_id=$1 where id=$2", [stale,kiosks[0]]);
     assert.equal((await db.query<{ok:boolean}>("select cancel_browser_upload($1,$2) ok", [stale,devices[0]])).rows[0].ok, false,
       "a failed upload flag alone cannot cancel a live recording");
-    await assert.rejects(db.query("select remove_browser_device($1,$2)", [devices[0],admin]), /active recording/);
-    assert.equal((await db.query<{active:boolean}>("select active from kiosk_devices where id=$1", [kiosks[0]])).rows[0].active, true,
-      "failed removal must preserve enrollment");
+    // Administrator deletion overrides a live capture. The device/enrollment
+    // disappears, while the interrupted session remains as failed history.
+    const activeDevice = randomUUID(),
+      activeKiosk = randomUUID(),
+      activeSession = randomUUID();
+    await db.query(
+      "insert into kiosk_devices(id,token_hash,created_by) values($1,'active-delete-token',$2)",
+      [activeKiosk, admin],
+    );
+    await db.query(
+      "insert into browser_devices(id,name,court_id,kiosk_id) values($1,'Active Tablet',$2,$3)",
+      [activeDevice, courts[0], activeKiosk],
+    );
+    await db.query(
+      `insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email)
+       values($1,$2,$3,gen_random_uuid(),'recording',$4,'active-delete@example.com')`,
+      [
+        activeSession,
+        activeKiosk,
+        courts[0],
+        JSON.stringify({ capture_mode: "browser", device_id: activeDevice }),
+      ],
+    );
+    await db.query(
+      "insert into browser_recordings(session_id,device_id,upload_state,local_available) values($1,$2,'idle',true)",
+      [activeSession, activeDevice],
+    );
+    await db.query("update kiosk_devices set current_session_id=$1 where id=$2", [activeSession, activeKiosk]);
+    assert.equal(
+      (await db.query<{ok:boolean}>("select remove_browser_device($1,$2) ok", [activeDevice, admin])).rows[0].ok,
+      true,
+      "an active recording does not block administrator deletion",
+    );
+    assert.deepEqual(
+      (await db.query("select status,failure_stage from recording_sessions where id=$1", [activeSession])).rows[0],
+      {status:'failed',failure_stage:'device_removed'},
+    );
+    assert.deepEqual(
+      (await db.query("select device_id,upload_state,lease_token,lease_until from browser_recordings where session_id=$1", [activeSession])).rows[0],
+      {device_id:null,upload_state:'cancelled',lease_token:null,lease_until:null},
+    );
+    assert.deepEqual(
+      (await db.query("select active,current_session_id from kiosk_devices where id=$1", [activeKiosk])).rows[0],
+      {active:false,current_session_id:null},
+    );
     await db.query("update recording_sessions set status='finalizing',stopped_at=now() where id=$1", [stale]);
     assert.equal((await db.query<{ok:boolean}>("select cancel_browser_upload($1,$2) ok", [stale,devices[1]])).rows[0].ok, false);
     assert.equal((await db.query<{ok:boolean}>("select cancel_browser_upload($1,$2) ok", [stale,devices[0]])).rows[0].ok, true);
     assert.deepEqual((await db.query("select status,failure_stage from recording_sessions where id=$1", [stale])).rows[0],
       {status:'failed',failure_stage:'upload_cancelled'});
     assert.equal((await db.query<{current_session_id:string|null}>("select current_session_id from kiosk_devices where id=$1", [kiosks[0]])).rows[0].current_session_id, null);
-    // Removal also works directly, without requiring cancellation first.
+    // Permanent deletion still cleans up an ended failed finalizer.
     await db.query("update recording_sessions set status='finalizing' where id=$1", [stale]);
     await db.query("update browser_recordings set upload_state='failed' where session_id=$1", [stale]);
+
+    // It also cancels an active upload and releases its lease without requiring
+    // a separate cancellation action first.
+    const deletingUpload = randomUUID();
+    await db.query(`insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email,stopped_at)
+      values($1,$2,$3,gen_random_uuid(),'uploading','{}','delete-upload@example.com',now())`, [deletingUpload,kiosks[0],courts[0]]);
+    await db.query("insert into browser_recordings(session_id,device_id,upload_state,local_available,lease_token,lease_until) values($1,$2,'uploading',true,gen_random_uuid(),now()+interval '3 minutes')", [deletingUpload,devices[0]]);
+
+    const nextAfterDelete = randomUUID();
+    await db.query(`insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email,stopped_at)
+      values($1,$2,$3,gen_random_uuid(),'uploading','{}','next-after-delete@example.com',now())`, [nextAfterDelete,kiosks[1],courts[0]]);
+    const nextAfterDeleteFile = (await db.query<{id:string}>("insert into recording_files(session_id,status,bytes) values($1,'local_ready',1000) returning id", [nextAfterDelete])).rows[0].id;
+    await db.query("insert into browser_recordings(session_id,device_id,file_id,mime_type,bytes,upload_state,upload_queued_at,local_available) values($1,$2,$3,'video/mp4',1000,'pending',now()+interval '1 minute',true)", [nextAfterDelete,devices[1],nextAfterDeleteFile]);
+
     assert.equal((await db.query<{ok:boolean}>("select remove_browser_device($1,$2) ok", [devices[0],admin])).rows[0].ok, true);
-    assert.deepEqual((await db.query("select device_id,local_available from browser_recordings where session_id=$1", [stale])).rows[0],
-      {device_id:null,local_available:true});
+    assert.deepEqual((await db.query("select device_id,local_available,upload_state,lease_token,lease_until from browser_recordings where session_id=$1", [deletingUpload])).rows[0],
+      {device_id:null,local_available:true,upload_state:'cancelled',lease_token:null,lease_until:null});
+    assert.deepEqual((await db.query("select status,failure_stage from recording_sessions where id=$1", [deletingUpload])).rows[0],
+      {status:'failed',failure_stage:'device_removed'});
+    assert.deepEqual((await db.query("select s.status,s.failure_stage,b.device_id,b.upload_state from recording_sessions s join browser_recordings b on b.session_id=s.id where s.id=$1", [stale])).rows[0],
+      {status:'failed',failure_stage:'upload_cancelled',device_id:null,upload_state:'cancelled'});
     assert.equal((await db.query<{active:boolean}>("select active from kiosk_devices where id=$1", [kiosks[0]])).rows[0].active, false);
+    assert.equal((await db.query<{allowed:boolean}>("select allowed from browser_upload_turn($1,$2,true)", [nextAfterDelete,devices[1]])).rows[0].allowed, true,
+      "deleting the active uploading device releases the global queue immediately");
 
     await db.query("delete from courts where id=$1", [courts[0]]);
     assert.equal(

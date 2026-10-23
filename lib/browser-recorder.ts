@@ -72,6 +72,30 @@ export class BrowserCapture {
     if (this.activeId || this.recorder) this.stop(true);
     else this.finishCapture?.();
   }
+  private async releaseCompletedCaptures(deviceId: string) {
+    const ready = (await listMeta())
+      .filter(
+        (item) =>
+          item.deviceId === deviceId &&
+          item.complete &&
+          !item.interrupted &&
+          item.localAvailable !== false &&
+          item.captureReleased !== true &&
+          ["saved_locally", "pending", "retrying", "uploading", undefined].includes(
+            item.status,
+          ),
+      )
+      .sort((a, b) => a.createdAt - b.createdAt);
+    for (const item of ready) {
+      try {
+        await tabletRequest("captured", { id: item.id });
+        await patchMeta(item.id, { captureReleased: true });
+      } catch {
+        // The local copy remains authoritative. A later start, queue pass, or
+        // final `saved` transition retries this idempotently.
+      }
+    }
+  }
   async start(
     config: Config,
     emails: string[],
@@ -141,6 +165,9 @@ export class BrowserCapture {
         "Not enough browser storage for this match. Free storage before recording.",
       );
     await navigator.storage?.persist?.();
+    // Release a previous locally durable capture before asking the server for
+    // another session. Its upload continues independently.
+    await this.releaseCompletedCaptures(config.id);
     const camera = await openCamera(config);
     if (startup.cancelled) {
       camera.close();
@@ -332,6 +359,7 @@ export class BrowserCapture {
             durationMs,
             bytes,
             status: interrupted || storageFailed || aborted ? "failed" : "saved_locally",
+            captureReleased: false,
             lastError: interrupted || storageFailed || aborted ? interruptionReason || "Recording was interrupted." : undefined,
           });
           cleanup();
@@ -357,7 +385,9 @@ export class BrowserCapture {
               : "Recording saved. Checking video and preparing upload...",
           );
           this.changed(shortRecording ? "short" : "queued");
-          void this.processQueue(config.id);
+          void this.releaseCompletedCaptures(config.id).finally(
+            () => void this.processQueue(config.id),
+          );
         })().catch((e) => {
           cleanup();
           this.message(
@@ -512,6 +542,7 @@ export class BrowserCapture {
   }
   async processQueue(deviceId: string, requestedRetries: string[] = []) {
     if (!navigator.locks || !deviceId) return;
+    await this.releaseCompletedCaptures(deviceId);
     let localRecordings = await listMeta();
     const requested = new Set(requestedRetries);
     const resumable = localRecordings.filter(

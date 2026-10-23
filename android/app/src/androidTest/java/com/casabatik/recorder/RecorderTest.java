@@ -119,7 +119,7 @@ public class RecorderTest {
             w.evaluateJavascript(
                 "document.getElementById('begin').textContent.includes('Tap to start') &&"
                     + " document.querySelector('.court').naturalWidth>0 &&"
-                    + " document.getElementById('upload-status') !== null &&"
+                    + " document.getElementById('queue-indicator') !== null &&"
                     + " document.getElementById('camera-test-video') !== null &&"
                     + " document.getElementById('camera-test-confirm').textContent.includes('see and hear') &&"
                     + " document.getElementById('camera-test-retry').textContent.includes('another test')",
@@ -142,10 +142,12 @@ public class RecorderTest {
                     ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
                         .getChildAt(0);
             w.evaluateJavascript(
-                "renderUploadStatus([{status:'uploading',progress:42}],true);"
-                    + " !document.getElementById('upload-status').hidden &&"
-                    + " document.getElementById('upload-title').textContent.includes('42%') &&"
-                    + " document.getElementById('upload-meter').style.width === '42%'",
+                "renderUploadStatus([{status:'pending'},{status:'uploading'},{status:'uploaded'},{status:'failed'}]);"
+                    + " !document.getElementById('queue-indicator').hidden &&"
+                    + " document.getElementById('queue-pending').textContent === '1' &&"
+                    + " document.getElementById('queue-uploading').textContent === '1' &&"
+                    + " document.getElementById('queue-completed').textContent === '1' &&"
+                    + " document.getElementById('queue-failed').textContent === '1'",
                 value -> {
                   uploadUiResult.set(value);
                   uploadUiLoaded.countDown();

@@ -29,7 +29,7 @@ final class Api {
     if (!path.startsWith("/api/")) throw new Exception("Invalid application request.");
     HttpURLConnection c = connections.open(new URL(ORIGIN + path));
     c.setConnectTimeout(15000);
-    c.setReadTimeout(60000);
+    c.setReadTimeout(30000);
     c.setInstanceFollowRedirects(false);
     c.setRequestProperty("Accept", "application/json");
     c.setRequestProperty("Origin", ORIGIN);

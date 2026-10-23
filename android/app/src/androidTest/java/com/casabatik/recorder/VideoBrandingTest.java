@@ -65,6 +65,31 @@ public class VideoBrandingTest {
   }
 
   @Test
+  public void aNewRecordingPausesBrandingWithoutChangingTheOriginal() throws Exception {
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    File source =
+        new File(instrumentation.getTargetContext().getCacheDir(), "paused-branding.mp4");
+    try {
+      try (InputStream input =
+              instrumentation.getContext().getAssets().open("recording-one-second.mp4");
+          FileOutputStream output = new FileOutputStream(source)) {
+        input.transferTo(output);
+      }
+      long originalBytes = source.length();
+      assertThrows(
+          VideoBranding.ProcessingPausedException.class,
+          () ->
+              VideoBranding.apply(
+                  instrumentation.getTargetContext(), source, -1, true, () -> true));
+      assertEquals(originalBytes, source.length());
+      assertTrue(RtspRecorder.validate(source, -1, true) > 0);
+      assertFalse(new File(source.getParentFile(), source.getName() + ".dinkvision.tmp").exists());
+    } finally {
+      source.delete();
+    }
+  }
+
+  @Test
   public void markIsPlacedAtTheDisplayedBottomRight() throws Exception {
     try (Frame frame = new Frame(100, 60, Frame.DEPTH_UBYTE, 3)) {
       int[] red = {0xffff0000, 0xffff0000, 0xffff0000, 0xffff0000};

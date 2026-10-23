@@ -5,9 +5,11 @@ import pg from "pg";
 const connectionString = process.env.MIGRATION_DATABASE_URL;
 if (!connectionString)
   throw new Error("Set MIGRATION_DATABASE_URL in .env.");
-const ca = process.env.DATABASE_CA_CERT_PATH
-  ? await readFile(process.env.DATABASE_CA_CERT_PATH, "utf8")
-  : undefined;
+const ca =
+  process.env.DATABASE_CA_CERT?.replaceAll("\\n", "\n") ||
+  (process.env.DATABASE_CA_CERT_PATH
+    ? await readFile(process.env.DATABASE_CA_CERT_PATH, "utf8")
+    : undefined);
 const client = new pg.Client({
   connectionString,
   ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) },

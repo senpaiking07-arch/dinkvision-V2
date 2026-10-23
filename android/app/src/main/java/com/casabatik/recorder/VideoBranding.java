@@ -15,6 +15,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.function.BooleanSupplier;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.FFmpegFrameRecorder;
 import org.bytedeco.javacv.Frame;
@@ -25,6 +26,12 @@ final class VideoBranding {
   private static final String BRAND = "DinkVision";
   private static final String TEMP_SUFFIX = ".dinkvision.tmp";
   private static final String BACKUP_SUFFIX = ".dinkvision.backup";
+
+  static final class ProcessingPausedException extends Exception {
+    ProcessingPausedException() {
+      super("Logo processing paused while another recording starts.");
+    }
+  }
 
   static void recoverInterruptedSwaps(File directory) {
     File[] backups = directory.listFiles((parent, name) -> name.endsWith(BACKUP_SUFFIX));
@@ -45,7 +52,18 @@ final class VideoBranding {
 
   static long apply(Context context, File source, long expectedMillis, boolean expectAudio)
       throws Exception {
+    return apply(context, source, expectedMillis, expectAudio, () -> false);
+  }
+
+  static long apply(
+      Context context,
+      File source,
+      long expectedMillis,
+      boolean expectAudio,
+      BooleanSupplier pauseRequested)
+      throws Exception {
     long sourceMillis = RtspRecorder.validate(source, expectedMillis, expectAudio);
+    if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
     File temporary = new File(source.getParentFile(), source.getName() + TEMP_SUFFIX);
     File backup = new File(source.getParentFile(), source.getName() + BACKUP_SUFFIX);
     if (isBranded(source)) {
@@ -59,8 +77,9 @@ final class VideoBranding {
       throw new Exception("Not enough tablet storage to finish the Dink Vision video.");
 
     try {
-      render(context, source, temporary, sourceMillis, expectAudio);
+      render(context, source, temporary, sourceMillis, expectAudio, pauseRequested);
       long brandedMillis = RtspRecorder.validate(temporary, expectedMillis, expectAudio);
+      if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
       replaceValidated(source, temporary, backup);
       long confirmedMillis = RtspRecorder.validate(source, expectedMillis, expectAudio);
       if (!isBranded(source)) throw new Exception("The saved video is missing its Dink Vision logo marker.");
@@ -77,6 +96,7 @@ final class VideoBranding {
         } catch (Exception restoreFailure) {
           failure.addSuppressed(restoreFailure);
         }
+      if (failure instanceof ProcessingPausedException) throw failure;
       Log.e("DinkVisionVideo", "Logo processing failed; the source video was preserved", failure);
       throw new Exception(
           "The Dink Vision logo could not be added. The original video was preserved. Please retry.",
@@ -118,7 +138,12 @@ final class VideoBranding {
   }
 
   private static void render(
-      Context context, File source, File output, long sourceMillis, boolean expectAudio)
+      Context context,
+      File source,
+      File output,
+      long sourceMillis,
+      boolean expectAudio,
+      BooleanSupplier pauseRequested)
       throws Exception {
     Bitmap original = null, scaled = null, mark = null;
     long timeoutMillis = Math.max(180_000L, Math.min(2_700_000L, sourceMillis * 3L + 60_000L));
@@ -173,6 +198,7 @@ final class VideoBranding {
         boolean wroteVideo = false, wroteAudio = false;
         Frame frame;
         while ((frame = grabber.grabFrame(channels > 0, true, true, false)) != null) {
+          if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
           if (System.nanoTime() > deadline)
             throw new Exception("Adding the logo took too long. The original video was preserved.");
           if (output.getParentFile().getUsableSpace() < 50_000_000L)

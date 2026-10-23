@@ -264,6 +264,7 @@ export default function BrowserTabletsAdmin() {
                 <small>
                   {d.camera_name || "No camera selected"}
                   {recording ? ` · ${recording.upload_state === "failed" ? "needs attention" : recording.recording_sessions.status}` : ""}
+                  {recording?.branding_state === "processing" ? " · adding logo" : ""}
                 </small>
                 <span className="device-queue-overview">
                   <strong>Upload queue</strong>
@@ -289,13 +290,19 @@ export default function BrowserTabletsAdmin() {
                           <span>
                             {item.upload_state.replaceAll("_", " ")}
                             {item.upload_state === "uploading" ? ` · ${percent}%` : ""}
+                            {item.branding_state === "processing"
+                              ? " · adding logo"
+                              : item.branding_state === "complete" &&
+                                  item.upload_state === "saved_locally"
+                                ? " · logo added"
+                                : ""}
                           </span>
                         </span>
                       );
                     })}
                     {queueItems.length > visibleQueue.length && (
                       <span className="device-queue-more">
-                        +{queueItems.length - visibleQueue.length} more in the court queue
+                        +{queueItems.length - visibleQueue.length} more on this device
                       </span>
                     )}
                   </span>
@@ -304,7 +311,9 @@ export default function BrowserTabletsAdmin() {
                   <span className="device-upload-status">
                     <span>
                       <strong>
-                        {recording.upload_state === "uploading"
+                        {recording.branding_state === "processing"
+                          ? "Adding Dink Vision logo · preparing upload"
+                          : recording.upload_state === "uploading"
                           ? `Uploading to Google Drive · ${uploadPercent}%`
                           : recording.upload_state === "failed"
                             ? recording.safe_error || (canContinue
@@ -319,10 +328,15 @@ export default function BrowserTabletsAdmin() {
                                   : "Local only · clip under one minute"
                               : recording.upload_state === "retrying"
                                 ? "Connection interrupted · retrying automatically"
+                              : recording.upload_state === "saved_locally" &&
+                                  recording.branding_state === "complete"
+                                ? "Logo attached · waiting in the upload queue"
                             : "Waiting in the upload queue"}
                       </strong>
                       <small>
-                        {recording.upload_state === "local_only"
+                        {recording.branding_state === "processing"
+                          ? "The saved video is being edited to attach the Dink Vision logo before upload."
+                          : recording.upload_state === "local_only"
                           ? "This clip will not be sent to Google Drive."
                           : "The original webpage or APK keeps the local backup until it verifies that the upload completed."}
                       </small>
@@ -544,7 +558,7 @@ export default function BrowserTabletsAdmin() {
               <div>
                 <strong>Pending video upload</strong>
                 <p>
-                  Release the court upload queue without deleting the video
+                  Release the global upload queue without deleting the video
                   saved on this device. It can be retried later from the
                   original device.
                 </p>
@@ -585,8 +599,8 @@ export default function BrowserTabletsAdmin() {
           {selected && (
             <div className="device-danger-zone">
               <div>
-                <strong>Remove device</strong>
-                <p>Permanently disconnect and remove this device. Recording logs and uploaded videos are kept.</p>
+                <strong>Delete device</strong>
+                <p>Permanently delete this device and its enrollment, even during an active recording or upload. The recording is stopped and its upload cancelled; recording logs and uploaded videos are kept.</p>
               </div>
               <button
                 type="button"
@@ -595,7 +609,7 @@ export default function BrowserTabletsAdmin() {
                 onClick={() => setRemoving(selected)}
               >
                 <Trash2 size={16} />
-                Remove device
+                Delete device
               </button>
             </div>
           )}
@@ -655,7 +669,7 @@ export default function BrowserTabletsAdmin() {
               Cancel upload for {cancellingUpload.device.name}?
             </h2>
             <p id="cancel-upload-description">
-              This releases the court upload queue so the next video can
+              This releases the global upload queue so the next video can
               upload. The video is not deleted: it stays on the original device
               and can rejoin the end of the queue with Recover / retry upload.
             </p>
@@ -688,7 +702,7 @@ export default function BrowserTabletsAdmin() {
                   });
                 }}
               >
-                {busy ? "Cancelling…" : "Cancel upload & release court queue"}
+                {busy ? "Cancelling…" : "Cancel upload & release global queue"}
               </button>
             </div>
           </section>
@@ -712,9 +726,9 @@ export default function BrowserTabletsAdmin() {
             <div className="confirm-modal-icon" aria-hidden="true">
               <Trash2 size={20} />
             </div>
-            <h2 id="remove-device-title">Remove {removing.name}?</h2>
+            <h2 id="remove-device-title">Are you sure you want to delete {removing.name}?</h2>
             <p id="remove-device-description">
-              This permanently removes the device and disconnects its enrollment. Existing recording logs and uploaded videos stay available, but unsent footage on the removed device may no longer be recoverable.
+              This permanently deletes the device and disconnects its enrollment. Any active recording is stopped and marked failed, and any active or queued upload is cancelled so the next queued upload can begin. Existing recording logs and uploaded videos stay available, but unsent footage on the deleted device may no longer be recoverable.
             </p>
             {error && <p className="form-error" role="alert">{error}</p>}
             <div className="confirm-modal-actions">
@@ -731,7 +745,7 @@ export default function BrowserTabletsAdmin() {
                 className="remove-court-button-solid"
                 disabled={busy}
                 onClick={() => {
-                  void action({ action: "remove", id: removing.id }).then(
+                  void action({ action: "remove", id: removing.id, confirm: true }).then(
                     (removed) => {
                       if (!removed) return;
                       setRemoving(null);
@@ -740,7 +754,7 @@ export default function BrowserTabletsAdmin() {
                   );
                 }}
               >
-                {busy ? "Removing…" : "Remove permanently"}
+                {busy ? "Deleting…" : "Yes, delete permanently"}
               </button>
             </div>
           </section>

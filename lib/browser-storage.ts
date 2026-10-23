@@ -24,6 +24,7 @@ export type LocalRecording = {
   serverRetryRequired?: boolean;
   serverUploadReference?: string;
   localAvailable?: boolean;
+  captureReleased?: boolean;
   sourceSessionId?: string;
   validationFailed?: boolean;
   dismissedFromPlayer?: boolean;

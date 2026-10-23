@@ -3,6 +3,7 @@ package com.casabatik.recorder;
 import android.app.*;
 import android.content.*;
 import android.content.pm.ServiceInfo;
+import android.net.wifi.WifiManager;
 import android.os.*;
 import android.util.Log;
 
@@ -12,6 +13,7 @@ public final class RecorderService extends Service {
   static final String EXTRA_CAMERA_ACTIVE = "camera-active";
   static final String EXTRA_UPLOAD_ACTIVE = "upload-active";
   private PowerManager.WakeLock wake;
+  private WifiManager.WifiLock wifi;
   private Notification notification;
   private boolean cameraWork;
   private boolean uploadWork;
@@ -101,6 +103,11 @@ public final class RecorderService extends Service {
         getSystemService(PowerManager.class)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WPC:Recording");
     wake.acquire(3 * 60 * 60 * 1000L);
+    wifi =
+        getSystemService(WifiManager.class)
+            .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "WPC:Upload");
+    wifi.setReferenceCounted(false);
+    wifi.acquire();
   }
 
   @Override
@@ -133,7 +140,8 @@ public final class RecorderService extends Service {
       stopSelf(id);
       return START_NOT_STICKY;
     }
-    if (!engine.busy && !engine.uploadWorkerRunning.get()) stopSelf(id);
+    if (!engine.busy && !engine.uploadWorkerRunning.get() && !engine.hasPendingUploadWork())
+      stopSelf(id);
     return START_NOT_STICKY;
   }
 
@@ -150,6 +158,7 @@ public final class RecorderService extends Service {
   @Override
   public void onDestroy() {
     if (running == this) running = null;
+    if (wifi != null && wifi.isHeld()) wifi.release();
     if (wake != null && wake.isHeld()) wake.release();
     super.onDestroy();
   }

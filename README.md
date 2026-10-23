@@ -82,7 +82,7 @@ The approved logo is `public/dink-vision-logo.png`. Website and Android copies a
 
 Copy `.env.example` to `.env` and enter credentials locally. No secrets are committed. Rotate previously exposed credentials before configuring live services.
 
-The application uses Supabase's HTTPS API; direct PostgreSQL access is only needed for migrations. Set `MIGRATION_DATABASE_URL` to the session pooler URI (port 5432) from your project's Connect panel, replacing the password placeholder without brackets. Download the server CA certificate from Supabase Database Settings and set `DATABASE_CA_CERT_PATH` to its local path. TLS certificate verification stays enabled. The transaction pooler `DATABASE_URL` is reserved for future direct server queries.
+The application uses Supabase's HTTPS API; direct PostgreSQL access is only needed for migrations. Set `MIGRATION_DATABASE_URL` to the session pooler URI (port 5432) from your project's Connect panel, replacing the password placeholder without brackets. The public Supabase CA certificate is included as `DATABASE_CA_CERT` in the tracked `.env.example`; copy it into `.env` along with the other settings. Alternatively, set `DATABASE_CA_CERT_PATH` to a local certificate file. TLS certificate verification stays enabled. The transaction pooler `DATABASE_URL` is reserved for future direct server queries. Never commit `.env` or database credentials.
 
 ```sh
 npm run db:migrate
