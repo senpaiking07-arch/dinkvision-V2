@@ -66,6 +66,7 @@ export async function POST(
         : await db.from(resource).insert(values).select("id").single();
     }
     if (result.error) {
+      console.error("admin resource save error", { resource, code: result.error.code, message: result.error.message, details: result.error.details });
       const code = result.error.code;
       return json(
         {
