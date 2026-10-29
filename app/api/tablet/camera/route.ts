@@ -1,5 +1,4 @@
 import { browserTablet, publicTablet } from "@/lib/browser-tablets";
-import { decryptSecret } from "@/lib/google-crypto";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { nativeTabletCameraFields } from "@/lib/tablet-camera-config";
@@ -53,53 +52,24 @@ export async function POST(request: Request) {
         );
       return json({ ok: true, device: publicTablet(updated.data) });
     }
-    if (t.device.recorder_mode !== "android_rtsp")
+    if (
+      t.device.recorder_mode !== "android_rtsp" ||
+      t.device.video_device !== "android-camera-v1"
+    )
       return json(
         {
           error:
-            "Open Device setup and choose this tablet camera or a Tapo Wi-Fi camera.",
+            "Open Device setup and choose the USB or built-in Android camera.",
         },
         409,
       );
     if (b.action === "configuration") {
-      if (t.device.video_device === "android-camera-v1")
-        return json({
-          revision: t.device.config_revision,
-          camera: {
-            type: "device",
-            name: "Android USB / built-in camera",
-            audio: true,
-          },
-        });
-      if (t.device.video_device !== "android-rtsp-v2")
-        return json(
-          {
-            error:
-              "Open Device setup and choose this tablet camera or a Tapo Wi-Fi camera.",
-          },
-          409,
-        );
-      if (
-        !t.device.rtsp_url ||
-        !t.device.rtsp_username ||
-        !t.device.rtsp_password_encrypted
-      )
-        return json(
-          {
-            error:
-              "Complete the Tapo IP address and Camera Account details in Device setup.",
-          },
-          409,
-        );
       return json({
         revision: t.device.config_revision,
         camera: {
-          type: "rtsp",
-          name: t.device.camera_name,
-          address: t.device.rtsp_url,
-          user: t.device.rtsp_username,
-          password: decryptSecret(t.device.rtsp_password_encrypted),
-          audio: !!t.device.audio_device,
+          type: "device",
+          name: "Android USB / built-in camera",
+          audio: true,
         },
       });
     }

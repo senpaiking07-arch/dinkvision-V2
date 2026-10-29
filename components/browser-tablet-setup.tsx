@@ -364,28 +364,6 @@ export default function BrowserTabletSetup() {
                     </li>
                   </ol>
                 </article>
-                <article>
-                  <span className="status-tag connected">External Wi-Fi camera</span>
-                  <h4>Tapo C210 through Android gateway</h4>
-                  <ol>
-                    <li>
-                      In Admin → Devices & cameras, create the device, assign
-                      its court, and generate an enrollment code.
-                    </li>
-                    <li>
-                      In the Android APK, open Device setup, enter the code, and
-                      choose <strong>Tapo Wi-Fi camera</strong>.
-                    </li>
-                    <li>
-                      Enter the camera IP and Tapo Camera Account details on the
-                      tablet. Keep both devices on the same local network.
-                    </li>
-                    <li>
-                      The APK records the Tapo RTSP stream. It does not use the
-                      Android device’s camera or microphone in this mode.
-                    </li>
-                  </ol>
-                </article>
               </div>
               <div className="admin-callout">
                 <div>
@@ -444,8 +422,8 @@ export default function BrowserTabletSetup() {
                     <span>Camera connection</span>
                     <strong>Wired USB / built-in camera</strong>
                     <small>
-                      For Tapo C210 cameras, use Device setup in the Android
-                      recorder instead.
+                      Use a standard Android-compatible USB/UVC camera such as
+                      an EMEET camera, or the device’s built-in camera.
                     </small>
                   </div>
                   <button

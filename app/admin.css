@@ -187,8 +187,7 @@
 .live-recording-indicator span:not(.live-recording-dot) {
   font-size: 11px;
 }
-.live-recording-dot,
-.device-online-dot {
+.live-recording-dot {
   background: #9ca898;
   border-radius: 50%;
   flex: none;
@@ -946,15 +945,6 @@ summary {
   font-weight: 600;
   display: inline-flex;
 }
-.device-status-pill.online {
-  border: 1px solid var(--color-success-chip-border);
-  background: var(--color-success-chip-bg);
-  color: var(--color-success-chip-text);
-}
-.device-online-dot {
-  background: var(--color-success-chip-dot);
-  box-shadow: 0 0 0 3px #3c8b5d1f;
-}
 @media (prefers-reduced-motion: reduce) {
   .live-recording-indicator.is-recording .live-recording-dot {
     animation: none;
@@ -1062,28 +1052,6 @@ summary {
   color: #707c6b;
   font-size: 11px;
   line-height: 1.55;
-}
-.tapo-guide {
-  border-radius: var(--radius-md);
-  background: var(--color-surface-warm);
-  color: #4c6350;
-  border: 1px solid #dce3d7;
-  padding: 13px 15px;
-}
-.tapo-guide summary {
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
-.tapo-guide ol {
-  color: #697568;
-  margin: 14px 0 2px;
-  padding-left: 20px;
-  font-size: 11px;
-  line-height: 1.65;
-}
-.tapo-guide li + li {
-  margin-top: 8px;
 }
 .tablet-fields label > small {
   color: #7a866f;

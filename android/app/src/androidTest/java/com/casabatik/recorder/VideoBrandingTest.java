@@ -30,7 +30,7 @@ public class VideoBrandingTest {
       long duration =
           VideoBranding.apply(instrumentation.getTargetContext(), source, -1, true);
       assertTrue(duration > 0);
-      assertTrue(RtspRecorder.validate(source, -1, true) > 0);
+      assertTrue(RecordedVideo.validate(source, -1, true) > 0);
       try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(source)) {
         grabber.start();
         assertTrue(grabber.getMetadata("comment").contains("DinkVision"));
@@ -82,7 +82,7 @@ public class VideoBrandingTest {
               VideoBranding.apply(
                   instrumentation.getTargetContext(), source, -1, true, () -> true));
       assertEquals(originalBytes, source.length());
-      assertTrue(RtspRecorder.validate(source, -1, true) > 0);
+      assertTrue(RecordedVideo.validate(source, -1, true) > 0);
       assertFalse(new File(source.getParentFile(), source.getName() + ".dinkvision.tmp").exists());
     } finally {
       source.delete();

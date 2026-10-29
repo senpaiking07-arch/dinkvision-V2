@@ -136,7 +136,7 @@ export default function RecorderControls({
       <p className="form-note">
         A connection test checks video and, when enabled, two seconds of audio without saving a clip. A successful check
         remains valid while the recorder is connected. Retest after changing the
-        device or if capture fails. Network cameras may need local credentials.
+        device or if capture fails.
       </p>
       <div className="discovered-devices">
         {data.devices

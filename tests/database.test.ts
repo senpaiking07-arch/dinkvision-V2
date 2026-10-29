@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 
 test("migrations enforce roles, session privacy, primary-camera uniqueness, and hardware trust", async () => {
   const db = new PGlite();
@@ -32,6 +33,7 @@ test("migrations enforce roles, session privacy, primary-camera uniqueness, and 
       insert into public.recorders(id,name) values('${recorder}','Venue PC');
       insert into public.recording_sessions(player_id,court_id,idempotency_key,configuration_snapshot,recipient_email,status)
         values('${player}','${court}',gen_random_uuid(),'{}','player@example.com','ready'),('${other}','${court}',gen_random_uuid(),'{}','other@example.com','ready');`);
+    await provisionLegacyFixtureMemberships(db);
     async function asUser<T>(id: string, work: () => Promise<T>) {
       await db.exec(
         `begin; set local role authenticated; set local request.jwt.claim.sub='${id}';`,

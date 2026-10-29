@@ -122,7 +122,7 @@ final class UvcCameraRecorder {
       int seconds,
       int countInSeconds,
       BooleanSupplier stop,
-      RtspRecorder.Listener listener)
+      CameraCapture.Listener listener)
       throws Exception {
     if (!DeviceCameraRecorder.hasPermissions(context))
       throw new Exception("Allow camera and microphone permissions in the Android app.");
@@ -261,7 +261,6 @@ final class UvcCameraRecorder {
           Thread.sleep(25);
         }
       }
-      listener.countdown(0);
       if (stop.getAsBoolean()) throw new Exception("Recording start was cancelled.");
 
       helper.startRecording(
@@ -294,6 +293,8 @@ final class UvcCameraRecorder {
       await(started, 15, stop, failure, "Timed out while starting the USB camera recording.");
 
       long start = System.nanoTime();
+      // onStart is the first reliable signal that the USB capture is live.
+      listener.countdown(0);
       listener.started();
       while (!stop.getAsBoolean()
           && TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start) < seconds) {

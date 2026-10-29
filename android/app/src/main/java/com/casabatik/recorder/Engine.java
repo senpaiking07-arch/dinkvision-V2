@@ -383,10 +383,11 @@ final class Engine {
   String snapshot() {
     try {
       JSONObject device = server.optJSONObject("device");
-      int currentElapsed =
+      long currentElapsedMillis =
           "recording".equals(phase) && recordingStartedNanos > 0
-              ? (int) ((System.nanoTime() - recordingStartedNanos) / 1_000_000_000L)
-              : elapsed;
+              ? (System.nanoTime() - recordingStartedNanos) / 1_000_000L
+              : Math.max(0L, (long) elapsed * 1_000L);
+      int currentElapsed = (int) (currentElapsedMillis / 1_000L);
       JSONObject s =
           new JSONObject()
               .put("enabled", server.optBoolean("enabled"))
@@ -398,10 +399,10 @@ final class Engine {
               .put("error", error)
               .put("version", BuildConfig.VERSION_NAME)
               .put("elapsed", Math.max(0, currentElapsed))
+              .put("elapsedMs", Math.max(0L, currentElapsedMillis))
               .put("uploadPercent", uploadPercent)
               .put("countdown", countdown)
               .put("pending", hasLocalQueue())
-              .put("queue", publicQueue())
               .put("tested", cameraReady(device))
               .put("cameraMode", cameraMode())
               .put("testReady", cameraTestReady)
@@ -434,14 +435,8 @@ final class Engine {
     return device != null && "android-camera-v1".equals(device.optString("video_device"));
   }
 
-  boolean usesWifiCamera() {
-    JSONObject device = server.optJSONObject("device");
-    return device != null && "android-rtsp-v2".equals(device.optString("video_device"));
-  }
-
   String cameraMode() {
     if (usesDeviceCamera()) return "device";
-    if (usesWifiCamera()) return "wifi";
     return "";
   }
 
@@ -517,27 +512,16 @@ final class Engine {
       File file,
       int seconds,
       int countInSeconds,
-      RtspRecorder.Listener listener)
+      CameraCapture.Listener listener)
       throws Exception {
-    if ("device".equals(camera.optString("type"))) {
-      return DeviceCameraRecorder.capture(
-          context, file, seconds, countInSeconds, () -> stop, listener);
-    }
-    return RtspRecorder.capture(
-        RtspRecorder.cameraUri(
-            camera.getString("address"),
-            camera.optString("user"),
-            camera.optString("password")),
-        file,
-        seconds,
-        camera.optBoolean("audio"),
-        countInSeconds,
-        () -> stop,
-        listener);
+    if (!"device".equals(camera.optString("type")))
+      throw new Exception("Only a USB or built-in Android camera is supported.");
+    return DeviceCameraRecorder.capture(
+        context, file, seconds, countInSeconds, () -> stop, listener);
   }
 
   boolean expectsAudio(JSONObject camera) {
-    return "device".equals(camera.optString("type")) || camera.optBoolean("audio");
+    return "device".equals(camera.optString("type"));
   }
 
   void finishWork() {
@@ -578,8 +562,7 @@ final class Engine {
   boolean cameraReady(JSONObject d) {
     return d != null
         && "android_rtsp".equals(d.optString("recorder_mode"))
-        && ("android-camera-v1".equals(d.optString("video_device"))
-            || "android-rtsp-v2".equals(d.optString("video_device")))
+        && "android-camera-v1".equals(d.optString("video_device"))
         && !d.isNull("tested_at")
         && !vault.get("camera").isEmpty()
         && vault.get("camera-revision").equals(d.optString("config_revision"))
@@ -587,7 +570,7 @@ final class Engine {
   }
 
   void syncCamera() {
-    if (!usesDeviceCamera() && !usesWifiCamera()) {
+    if (!usesDeviceCamera()) {
       error = "";
       message =
           server.optBoolean("enabled")
@@ -599,17 +582,14 @@ final class Engine {
     if (!visible || !claim()) return;
     clearCameraTestReview();
     try {
-      startService(usesDeviceCamera(), false);
+      startService(true, false);
     } catch (Exception e) {
       busy = false;
       error = "Open the app and retry the camera test.";
       return;
     }
     phase = "testing";
-    message =
-        usesDeviceCamera()
-            ? "Testing this Android device’s camera…"
-            : "Connecting to and testing the external Tapo camera…";
+    message = "Testing this Android device’s USB or built-in camera…";
     work.execute(
         () -> {
           File test = cameraTestFile();
@@ -625,19 +605,16 @@ final class Engine {
             revision = config.getString("revision");
             attemptedRevision = revision;
             JSONObject camera = config.getJSONObject("camera");
-            message =
-                "device".equals(camera.optString("type"))
-                    ? "Testing this Android device’s camera…"
-                    : "Connecting to and testing the external Tapo camera…";
+            message = "Testing this Android device’s USB or built-in camera…";
             vault.put("camera", "");
             vault.put("camera-revision", "");
             try {
               long capturedMillis = captureCamera(
                   camera,
                   test,
-                  3,
+                  4,
                   0,
-                  new RtspRecorder.Listener() {
+                  new CameraCapture.Listener() {
                     public void ready() {}
 
                     public void countdown(int value) {}
@@ -652,25 +629,20 @@ final class Engine {
                   });
               message = "Adding the Dink Vision logo to the test clip…";
               capturedMillis =
-                  VideoBranding.apply(
-                      context, test, capturedMillis, expectsAudio(camera));
+                  VideoBranding.applyPreview(
+                      context, test, capturedMillis, expectsAudio(camera), 3_000L);
             } catch (Exception e) {
               String reason = e.getMessage();
               Log.e("DinkVisionCamera", "Camera test failed", e);
-              if ("device".equals(camera.optString("type"))) {
-                if (!DeviceCameraRecorder.hasPermissions(context))
-                  throw new Exception(
-                      "Camera and microphone access is not available. Open Android Settings, allow both permissions, then retry.",
-                      e);
+              if (!DeviceCameraRecorder.hasPermissions(context))
                 throw new Exception(
-                    reason == null || reason.trim().isEmpty()
-                        ? "The camera test failed without an error message. Reconnect the camera and retry."
-                        : reason.trim(),
+                    "Camera and microphone access is not available. Open Android Settings, allow both permissions, then retry.",
                     e);
-              }
               throw new Exception(
-                  "External Wi-Fi camera test failed. Check the Tapo Camera Account, IP address,"
-                      + " and local network, then retry.");
+                  reason == null || reason.trim().isEmpty()
+                      ? "The camera test failed without an error message. Reconnect the USB camera and retry."
+                      : reason.trim(),
+                  e);
             }
             cameraTestRevision = revision;
             cameraTestCamera = camera.toString();
@@ -686,7 +658,7 @@ final class Engine {
             String problem = e.getMessage() == null ? "" : e.getMessage();
             boolean setupRequired =
                 problem.contains("Open Device setup and choose")
-                    || problem.contains("Choose this tablet camera or a Tapo Wi-Fi camera");
+                    || problem.contains("Choose the USB or built-in Android camera");
             error = setupRequired ? "" : problem;
             message =
                 setupRequired
@@ -792,10 +764,7 @@ final class Engine {
     if (!cameraReady(configured)) {
       phase = "error";
       message = "Camera setup needs attention.";
-      if (usesWifiCamera())
-        error =
-            "The external Tapo camera test has not passed. Open Device setup and test the Tapo camera first.";
-      else if (usesDeviceCamera())
+      if (usesDeviceCamera())
         error =
             "The Android camera test has not passed. Open Device setup, allow camera and microphone access, then test again.";
       else
@@ -805,14 +774,11 @@ final class Engine {
     }
     if (!claim()) return;
     try {
-      startService(usesDeviceCamera(), false);
+      startService(true, false);
     } catch (Exception e) {
       busy = false;
       phase = "error";
-      error =
-          usesDeviceCamera()
-              ? "Allow camera and microphone permissions, then try again."
-              : "The recorder could not start. Keep the Android gateway awake and try again.";
+      error = "Allow camera and microphone permissions, then try again.";
       return;
     }
     phase = "connecting";
@@ -876,7 +842,7 @@ final class Engine {
                   file,
                   seconds,
                   3,
-                  new RtspRecorder.Listener() {
+                  new CameraCapture.Listener() {
                     public void ready() {
                       phase = "countdown";
                       message = "Recording starts in 3…";
@@ -894,6 +860,7 @@ final class Engine {
                     }
 
                     public void started() throws Exception {
+                      countdown = 0;
                       recordingStartedNanos = System.nanoTime();
                       elapsed = 0;
                       phase = "recording";
@@ -1154,7 +1121,7 @@ final class Engine {
             .put("branded", true)
             .put("brandingState", "complete");
       } else {
-        RtspRecorder.validate(file, durationMs, audioExpected);
+        RecordedVideo.validate(file, durationMs, audioExpected);
         item.put("brandingState", "complete");
       }
       item

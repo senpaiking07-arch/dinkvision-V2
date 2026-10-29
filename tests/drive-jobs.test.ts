@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 test("Drive jobs are scoped, leased, private and finalize atomically after sharing",async()=>{
   const db=new PGlite();
   try {
@@ -15,6 +16,7 @@ test("Drive jobs are scoped, leased, private and finalize atomically after shari
       await db.exec((await readFile(`supabase/migrations/${file}`,"utf8")).replace("create extension if not exists pgcrypto;",""));
     const player=randomUUID(),other=randomUUID(),court=randomUUID(),recorder=randomUUID(),camera=randomUUID(),session=randomUUID();
     await db.query("insert into auth.users(id) values($1),($2)",[player,other]);
+    await provisionLegacyFixtureMemberships(db);
     await db.query("insert into public.courts(id,name) values($1,'Court')",[court]);
     await db.query("insert into public.recorders(id,name) values($1,'Recorder')",[recorder]);
     await db.query("insert into public.cameras(id,recorder_id,name,source_type,device_reference) values($1,$2,'Camera','usb','usb-test')",[camera,recorder]);

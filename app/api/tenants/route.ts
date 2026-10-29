@@ -50,7 +50,7 @@ export async function POST(request:Request) {
       return json({ok:true,id:created.data});
     }
     if (account.role!=="admin" || !account.tenantId) return json({error:"Tenant administrator required."},403);
-const db=recorderDatabase();
+const db=recorderDatabase(account.tenantId);
     if (body.action==="membership") {
       const email=String(body.email||"").trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length>254 || !["admin","player"].includes(String(body.role)) || typeof body.active!=="boolean") throw new InputError("Enter a valid account email and role.");

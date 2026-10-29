@@ -20,7 +20,7 @@ final class VideoClip {
     int origin=copy.position();copy.limit(origin+end);copy.position(origin+start);return copy;
   }
   static long lastMinute(File source, File output, boolean audio, BooleanSupplier cancelled) throws Exception {
-    long sourceMs=RtspRecorder.validate(source,-1,audio);
+    long sourceMs=RecordedVideo.validate(source,-1,audio);
     if(sourceMs<=60000) throw new Exception("This recording is already under one minute. Keep its original local video.");
     if(!output.createNewFile()) throw new Exception("Clip output already exists; it was preserved.");
     long startUs=(sourceMs-60000)*1000, endUs=sourceMs*1000, deadline=System.nanoTime()+180_000_000_000L;
@@ -57,6 +57,6 @@ final class VideoClip {
         recorder.stop();
       }
     }
-    return RtspRecorder.validate(output,60000,audio);
+    return RecordedVideo.validate(output,60000,audio);
   }
 }

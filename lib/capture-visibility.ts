@@ -4,12 +4,8 @@ export const CAPTURE_HIDDEN_MESSAGE =
   "Recording stopped because the recording page was closed or navigated away. Available footage is saved on this device.";
 
 export function assertCaptureVisible() {
-  // Only warn if page is hidden, don't throw - let recording proceed
-  // The visibility change will be handled by the capture logic
-  if (document.visibilityState === "hidden") {
-    // Just log warning, don't prevent recording
-    console.warn(CAPTURE_HIDDEN_MESSAGE);
-  }
+  // Visibility alone is not an interruption. Camera capture continues while
+  // the tab is hidden; pagehide is the explicit leave signal below.
 }
 
 export function watchCaptureVisibility(interrupt: () => void) {

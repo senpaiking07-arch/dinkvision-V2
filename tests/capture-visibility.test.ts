@@ -17,8 +17,9 @@ test("capture visibility handles hiding, navigation and listener cleanup", () =>
     doc.dispatchEvent(new Event("visibilitychange"));
     assert.equal(interruptions, 0);
     doc.visibilityState = "hidden";
-    assert.throws(assertCaptureVisible, /page visible/);
+    assert.doesNotThrow(assertCaptureVisible);
     doc.dispatchEvent(new Event("visibilitychange"));
+    assert.equal(interruptions, 0);
     win.dispatchEvent(new Event("pagehide"));
     assert.equal(interruptions, 1);
     cleanup();

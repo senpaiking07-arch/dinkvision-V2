@@ -15,6 +15,7 @@ const client = new pg.Client({
   ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
   connectionTimeoutMillis: 10000,
 });
+let currentMigration;
 try {
   await client.connect();
   await client.query("select pg_advisory_lock(72105631)");
@@ -25,6 +26,7 @@ try {
   for (const name of (await readdir("supabase/migrations"))
     .filter((n) => n.endsWith(".sql"))
     .sort()) {
+    currentMigration = name;
     const sql = await readFile(`supabase/migrations/${name}`, "utf8");
     const checksum = createHash("sha256")
       .update(sql.replaceAll("\r\n", "\n"))
@@ -39,6 +41,7 @@ try {
           "An applied migration was modified; restore it and add a new migration.",
         );
       console.log("Already applied:", name);
+      currentMigration = undefined;
       continue;
     }
     await client.query("begin");
@@ -54,10 +57,21 @@ try {
       await client.query("rollback");
       throw error;
     }
+    currentMigration = undefined;
   }
   await client.query("notify pgrst, 'reload schema'");
 } catch (error) {
-  console.error("Migration failed:", error.code || error.message);
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(
+    `Migration failed${currentMigration ? ` (${currentMigration})` : ""}:`,
+    message,
+  );
+  if (error && typeof error === "object" && "code" in error && error.code)
+    console.error("PostgreSQL error code:", error.code);
+  if (error && typeof error === "object" && "detail" in error && error.detail)
+    console.error("Detail:", error.detail);
+  if (error && typeof error === "object" && "hint" in error && error.hint)
+    console.error("Hint:", error.hint);
   process.exitCode = 1;
 } finally {
   await client.end();

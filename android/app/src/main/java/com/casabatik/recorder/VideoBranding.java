@@ -52,7 +52,7 @@ final class VideoBranding {
 
   static long apply(Context context, File source, long expectedMillis, boolean expectAudio)
       throws Exception {
-    return apply(context, source, expectedMillis, expectAudio, () -> false);
+    return apply(context, source, expectedMillis, expectAudio, () -> false, -1);
   }
 
   static long apply(
@@ -62,7 +62,32 @@ final class VideoBranding {
       boolean expectAudio,
       BooleanSupplier pauseRequested)
       throws Exception {
-    long sourceMillis = RtspRecorder.validate(source, expectedMillis, expectAudio);
+    return apply(context, source, expectedMillis, expectAudio, pauseRequested, -1);
+  }
+
+  static long applyPreview(
+      Context context,
+      File source,
+      long expectedMillis,
+      boolean expectAudio,
+      long previewMillis)
+      throws Exception {
+    if (previewMillis < 1) throw new IllegalArgumentException("Preview duration must be positive.");
+    return apply(context, source, expectedMillis, expectAudio, () -> false, previewMillis);
+  }
+
+  private static long apply(
+      Context context,
+      File source,
+      long expectedMillis,
+      boolean expectAudio,
+      BooleanSupplier pauseRequested,
+      long previewMillis)
+      throws Exception {
+    long sourceMillis = RecordedVideo.validate(source, expectedMillis, expectAudio);
+    if (previewMillis > 0 && sourceMillis < previewMillis)
+      throw new RecordingAccuracy.Failure(
+          "The camera test did not contain the full three seconds. Reconnect the camera and retry.");
     if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
     File temporary = new File(source.getParentFile(), source.getName() + TEMP_SUFFIX);
     File backup = new File(source.getParentFile(), source.getName() + BACKUP_SUFFIX);
@@ -77,17 +102,29 @@ final class VideoBranding {
       throw new Exception("Not enough tablet storage to finish the Dink Vision video.");
 
     try {
-      render(context, source, temporary, sourceMillis, expectAudio, pauseRequested);
-      long brandedMillis = RtspRecorder.validate(temporary, expectedMillis, expectAudio);
+      render(
+          context,
+          source,
+          temporary,
+          sourceMillis,
+          expectAudio,
+          pauseRequested,
+          previewMillis);
+      long brandedMillis =
+          RecordedVideo.validate(
+              temporary, previewMillis > 0 ? -1 : expectedMillis, expectAudio);
+      if (previewMillis > 0) requirePreviewDuration(brandedMillis, previewMillis);
       if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
       replaceValidated(source, temporary, backup);
-      long confirmedMillis = RtspRecorder.validate(source, expectedMillis, expectAudio);
+      long confirmedMillis =
+          RecordedVideo.validate(source, previewMillis > 0 ? -1 : expectedMillis, expectAudio);
+      if (previewMillis > 0) requirePreviewDuration(confirmedMillis, previewMillis);
       if (!isBranded(source)) throw new Exception("The saved video is missing its Dink Vision logo marker.");
       backup.delete();
       Log.i(
           "DinkVisionVideo",
           "Logo saved durationMs=" + confirmedMillis + " bytes=" + source.length());
-      return brandedMillis;
+      return confirmedMillis;
     } catch (Exception failure) {
       temporary.delete();
       if (!source.exists() && backup.exists())
@@ -96,7 +133,8 @@ final class VideoBranding {
         } catch (Exception restoreFailure) {
           failure.addSuppressed(restoreFailure);
         }
-      if (failure instanceof ProcessingPausedException) throw failure;
+      if (failure instanceof ProcessingPausedException
+          || failure instanceof RecordingAccuracy.Failure) throw failure;
       Log.e("DinkVisionVideo", "Logo processing failed; the source video was preserved", failure);
       throw new Exception(
           "The Dink Vision logo could not be added. The original video was preserved. Please retry.",
@@ -143,7 +181,8 @@ final class VideoBranding {
       File output,
       long sourceMillis,
       boolean expectAudio,
-      BooleanSupplier pauseRequested)
+      BooleanSupplier pauseRequested,
+      long previewMillis)
       throws Exception {
     Bitmap original = null, scaled = null, mark = null;
     long timeoutMillis = Math.max(180_000L, Math.min(2_700_000L, sourceMillis * 3L + 60_000L));
@@ -205,6 +244,8 @@ final class VideoBranding {
             throw new Exception("Tablet storage is nearly full. The original video was preserved.");
           if (frame.image != null) {
             if (sourceStart == Long.MIN_VALUE) sourceStart = frame.timestamp;
+            if (previewMillis > 0
+                && frame.timestamp - sourceStart >= previewMillis * 1_000L) break;
             if (frame.timestamp <= lastVideo)
               throw new Exception("The saved video timestamps do not advance.");
             blend(frame, pixels, mark.getWidth(), mark.getHeight(), rotation);
@@ -219,6 +260,8 @@ final class VideoBranding {
             lastVideo = frame.timestamp;
             wroteVideo = true;
           } else if (frame.samples != null && channels > 0 && sourceStart != Long.MIN_VALUE) {
+            if (previewMillis > 0
+                && frame.timestamp - sourceStart >= previewMillis * 1_000L) break;
             recorder.record(frame);
             wroteAudio = true;
           }
@@ -232,6 +275,13 @@ final class VideoBranding {
       if (scaled != null) scaled.recycle();
       if (original != null) original.recycle();
     }
+  }
+
+  static void requirePreviewDuration(long actualMillis, long expectedMillis)
+      throws RecordingAccuracy.Failure {
+    if (actualMillis < expectedMillis - 250L || actualMillis > expectedMillis + 500L)
+      throw new RecordingAccuracy.Failure(
+          "The saved camera test duration is incomplete. Reconnect the camera and retry.");
   }
 
   static int nextFrameNumber(

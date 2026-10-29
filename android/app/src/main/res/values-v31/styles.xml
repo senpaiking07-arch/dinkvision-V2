@@ -1,0 +1,7 @@
+<resources>
+    <style name="AppTheme" parent="AppTheme.Base">
+        <item name="android:windowBackground">@drawable/dink_vision_splash</item>
+        <item name="android:windowSplashScreenBackground">#FCFCF8</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/dink_vision_splash_icon</item>
+    </style>
+</resources>

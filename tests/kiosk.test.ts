@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { GoogleDrive } from "../lib/google-drive";
 import { recordingMessage } from "../lib/gmail";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 test("guest capture has no account, scopes session control, and preserves court locks", async () => {
   const db = new PGlite();
   try {
@@ -34,6 +35,7 @@ test("guest capture has no account, scopes session control, and preserves court 
     await db.query("update public.profiles set role='admin' where id=$1", [
       admin,
     ]);
+    await provisionLegacyFixtureMemberships(db);
     await db.query(
       "insert into public.kiosk_devices(id,token_hash,created_by) values($1,'hash1',$3),($2,'hash2',$3)",
       [kiosk, other, admin],
@@ -66,7 +68,7 @@ test("guest capture has no account, scopes session control, and preserves court 
     ).rows[0];
     assert.equal(session.player_id, null);
     assert.equal(session.kiosk_id, kiosk);
-    assert.equal(session.configuration_snapshot.sharing_mode, "link");
+    assert.equal(session.configuration_snapshot.sharing_mode, "private");
     assert.equal(
       (await db.query<any>("select count(*)::int n from auth.users")).rows[0].n,
       1,

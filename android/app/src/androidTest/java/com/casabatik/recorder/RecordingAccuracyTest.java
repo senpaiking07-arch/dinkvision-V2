@@ -16,36 +16,54 @@ public class RecordingAccuracyTest {
     instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.CAMERA);
     instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.RECORD_AUDIO);
     File file = new File(context.getCacheDir(), "device-clock.mp4");
+    Engine engine = Engine.get(context);
+    ExecutorService capture = Executors.newSingleThreadExecutor();
+    CountDownLatch started = new CountDownLatch(1);
+    boolean screenSleeping = false;
+    engine.busy = true;
     try (var activity = androidx.test.core.app.ActivityScenario.launch(MainActivity.class)) {
-      long duration = DeviceCameraRecorder.capture(context, file, 6, 0, () -> false,
-          new RtspRecorder.Listener() {
-            public void ready() {} public void countdown(int n) {} public void started() {} public void frame(int n) {}
-          });
-      RtspRecorder.validate(file, duration, true);
-    } finally { file.delete(); }
-  }
-  private void record(String path, boolean audio, String name, int seconds) throws Exception {
-    File file = new File(InstrumentationRegistry.getInstrumentation().getTargetContext().getCacheDir(), name + ".mp4");
-    try {
-      long duration = RtspRecorder.capture("rtsp://10.0.2.2:18554/" + path, file,
-          seconds, audio, 0, () -> false, new RtspRecorder.Listener() {
-            public void ready() {} public void countdown(int n) {} public void started() {} public void frame(int n) {}
-          });
-      RtspRecorder.validate(file, duration, audio);
-    } finally { file.delete(); }
-  }
-  @Test public void videoOnlyPacketCopy() throws Exception { record("camera", false, "no-audio", 4); }
-  @Test public void audioOnlyConversionRetainsSourceTiming() throws Exception { record("g711", true, "g711", 6); }
-  @Test public void fourConcurrentRecordersKeepIndependentClocks() throws Exception {
-    ExecutorService pool = Executors.newFixedThreadPool(4);
-    try {
-      java.util.List<Future<?>> futures = new java.util.ArrayList<>();
-      for (int i = 0; i < 4; i++) {
-        final int index = i;
-        futures.add(pool.submit(() -> { record("camera", true, "concurrent-" + index, 6); return null; }));
-      }
-      for (var future : futures) future.get(45, TimeUnit.SECONDS);
-    } finally { pool.shutdownNow(); }
+      context.startForegroundService(
+          new android.content.Intent(context, RecorderService.class)
+              .putExtra(RecorderService.EXTRA_CAMERA_ACTIVE, true));
+      Future<Long> result =
+          capture.submit(
+              () ->
+                  DeviceCameraRecorder.capture(
+                      context,
+                      file,
+                      6,
+                      0,
+                      () -> false,
+                      new CameraCapture.Listener() {
+                        public void ready() {}
+
+                        public void countdown(int value) {}
+
+                        public void started() {
+                          started.countDown();
+                        }
+
+                        public void frame(int seconds) {}
+                      }));
+      assertTrue("Camera did not start", started.await(15, TimeUnit.SECONDS));
+      activity.moveToState(androidx.lifecycle.Lifecycle.State.CREATED);
+      instrumentation.getUiAutomation().executeShellCommand("input keyevent 223").close();
+      screenSleeping = true;
+      Thread.sleep(1_500);
+      assertTrue("Foreground service lost its CPU wake lock", RecorderService.holdsCpuWakeLock());
+      long duration = result.get(20, TimeUnit.SECONDS);
+      RecordedVideo.validate(file, duration, true);
+    } finally {
+      if (screenSleeping)
+        try {
+          instrumentation.getUiAutomation().executeShellCommand("input keyevent 224").close();
+        } catch (Exception ignored) {
+        }
+      engine.busy = false;
+      context.stopService(new android.content.Intent(context, RecorderService.class));
+      capture.shutdownNow();
+      file.delete();
+    }
   }
   @Test public void incompleteAudioCannotPassRecoveryValidation() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
@@ -53,7 +71,7 @@ public class RecordingAccuracyTest {
     try {
       try (InputStream in = instrumentation.getContext().getAssets().open("mismatched-tracks.mp4");
           OutputStream out = new FileOutputStream(file)) { in.transferTo(out); }
-      try { RtspRecorder.validate(file, -1, true); fail("Recovery must reject mismatched tracks"); }
+      try { RecordedVideo.validate(file, -1, true); fail("Recovery must reject mismatched tracks"); }
       catch (RecordingAccuracy.Failure expected) {}
     } finally { file.delete(); }
   }

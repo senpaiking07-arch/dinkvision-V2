@@ -1,12 +1,14 @@
 import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import { tokenHash } from "./recorder-protocol";
-export function recorderDatabase() {
+import { scopedFetch } from "./tenant-scope";
+export function recorderDatabase(scope?: string) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) throw new Error("Recorder service is not configured.");
   return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
+    ...(scope ? { global: { fetch: scopedFetch(scope) } } : {}),
   });
 }
 export function systemDatabase() {

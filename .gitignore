@@ -12,6 +12,8 @@ test-results/
 /android/.gradle/
 /android/**/build/
 /android/local.properties
+.idea/
+*.iml
 *.apk
 *.keystore
 *.jks

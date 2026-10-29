@@ -75,7 +75,7 @@ final class DeviceCameraRecorder {
       int seconds,
       int countInSeconds,
       BooleanSupplier stop,
-      RtspRecorder.Listener listener)
+      CameraCapture.Listener listener)
       throws Exception {
     if (!hasPermissions(context))
       throw new Exception("Allow camera and microphone permissions in the Android app.");
@@ -207,13 +207,15 @@ final class DeviceCameraRecorder {
         long deadline = System.nanoTime() + 1_000_000_000L;
         while (!stop.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(25);
       }
-      listener.countdown(0);
       if (stop.getAsBoolean()) throw new Exception("Recording start was cancelled.");
 
       recorder.start();
       recording = true;
       long start = System.nanoTime();
       lastFrame.set(start);
+      // Keep "1" visible while MediaRecorder performs its native startup.
+      // Clear the countdown only once capture has actually begun.
+      listener.countdown(0);
       listener.started();
       while (!stop.getAsBoolean()
           && (System.nanoTime() - start) / 1_000_000_000L < seconds) {

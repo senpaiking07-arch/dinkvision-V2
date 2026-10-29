@@ -5,60 +5,12 @@ import static org.junit.Assert.*;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.File;
-import java.util.concurrent.atomic.AtomicBoolean;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class RecorderTest {
-  @Test
-  public void rtspVideoAudioAndStop() throws Exception {
-    File file =
-        new File(
-            InstrumentationRegistry.getInstrumentation().getTargetContext().getCacheDir(),
-            "instrumented.mp4");
-    AtomicBoolean started = new AtomicBoolean(), stop = new AtomicBoolean();
-    long begin = System.nanoTime();
-    long capturedMillis =
-        RtspRecorder.capture(
-            "rtsp://10.0.2.2:18554/camera",
-            file,
-            30,
-            true,
-            0,
-            stop::get,
-            new RtspRecorder.Listener() {
-              public void ready() {}
-
-              public void countdown(int value) {}
-
-              public void started() {
-                started.set(true);
-              }
-
-              public void frame(int s) {
-                if (s >= 4) stop.set(true);
-              }
-            });
-    assertTrue(started.get());
-    assertTrue(stop.get());
-    assertTrue(capturedMillis >= 3_500 && capturedMillis < 8_000);
-    assertTrue((System.nanoTime() - begin) / 1e9 < 45);
-    RtspRecorder.validate(file, capturedMillis, true);
-    try (FFmpegFrameGrabber g = new FFmpegFrameGrabber(file)) {
-      g.start();
-      assertEquals("h264", g.getVideoCodecName());
-      assertEquals("aac", g.getAudioCodecName());
-      assertTrue(g.getAudioChannels() > 0);
-      assertTrue(g.getLengthInTime() >= 2_000_000 && g.getLengthInTime() < 10_000_000);
-      assertNotNull(g.grabImage());
-      assertNotNull(g.grabSamples());
-    }
-    file.delete();
-  }
-
   @Test
   public void sourceClockDoesNotStretchDelayedVideo() throws Exception {
     var clock = new RecordingAccuracy.Timeline();
@@ -75,6 +27,18 @@ public class RecorderTest {
     for (long actual : new long[] {74_900_000, 180_000_000}) {
       try { RecordingAccuracy.duration(actual, 121_550_000, "Video/audio"); fail(); }
       catch (RecordingAccuracy.Failure expected) {}
+    }
+  }
+
+  @Test public void cameraPreviewRequiresTheFullThreeSeconds() throws Exception {
+    VideoBranding.requirePreviewDuration(2_750, 3_000);
+    VideoBranding.requirePreviewDuration(3_500, 3_000);
+    for (long actual : new long[] {2_749, 3_501}) {
+      try {
+        VideoBranding.requirePreviewDuration(actual, 3_000);
+        fail("Incomplete or overlong previews must be rejected.");
+      } catch (RecordingAccuracy.Failure expected) {
+      }
     }
   }
 
@@ -99,6 +63,10 @@ public class RecorderTest {
             i.startActivitySync(
                 new android.content.Intent(i.getTargetContext(), MainActivity.class)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+    int systemUi = activity.getWindow().getDecorView().getSystemUiVisibility();
+    assertTrue((systemUi & android.view.View.SYSTEM_UI_FLAG_FULLSCREEN) != 0);
+    assertTrue((systemUi & android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) != 0);
+    assertTrue((systemUi & android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY) != 0);
     Engine engine = Engine.get(activity);
     engine.busy = true;
     try {
@@ -107,6 +75,7 @@ public class RecorderTest {
               activity.startForegroundService(
                   new android.content.Intent(activity, RecorderService.class)));
       Thread.sleep(2000);
+      assertTrue(RecorderService.holdsCpuWakeLock());
       java.util.concurrent.CountDownLatch loaded = new java.util.concurrent.CountDownLatch(1);
       java.util.concurrent.atomic.AtomicReference<String> result =
           new java.util.concurrent.atomic.AtomicReference<>();
@@ -117,9 +86,16 @@ public class RecorderTest {
                     ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
                         .getChildAt(0);
             w.evaluateJavascript(
-                "document.getElementById('begin').textContent.includes('Tap to start') &&"
-                    + " document.querySelector('.court').naturalWidth>0 &&"
-                    + " document.getElementById('queue-indicator') !== null &&"
+                "document.getElementById('begin').textContent.trim()==='' &&"
+                    + " document.getElementById('begin').getAttribute('aria-label')==='Start' &&"
+                    + " document.getElementById('begin').childElementCount===0 &&"
+                    + " document.querySelector('.backdrop') !== null &&"
+                    + " document.querySelectorAll('.brand img').length===1 &&"
+                    + " document.querySelectorAll('.watermark').length===0 &&"
+                    + " document.getElementById('setup')===null &&"
+                    + " document.getElementById('reenroll')!==null &&"
+                    + " getComputedStyle(document.querySelector('.backdrop')).backgroundImage.includes('Tablet-Background.png') &&"
+                    + " document.getElementById('queue-indicator') === null &&"
                     + " document.getElementById('camera-test-video') !== null &&"
                     + " document.getElementById('camera-test-confirm').textContent.includes('see and hear') &&"
                     + " document.getElementById('camera-test-retry').textContent.includes('another test')",
@@ -131,9 +107,8 @@ public class RecorderTest {
       assertTrue(loaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
       assertEquals("true", result.get());
 
-      java.util.concurrent.CountDownLatch uploadUiLoaded =
-          new java.util.concurrent.CountDownLatch(1);
-      java.util.concurrent.atomic.AtomicReference<String> uploadUiResult =
+      java.util.concurrent.CountDownLatch backLoaded = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> backResult =
           new java.util.concurrent.atomic.AtomicReference<>();
       i.runOnMainSync(
           () -> {
@@ -142,19 +117,131 @@ public class RecorderTest {
                     ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
                         .getChildAt(0);
             w.evaluateJavascript(
-                "renderUploadStatus([{status:'pending'},{status:'uploading'},{status:'uploaded'},{status:'failed'}]);"
-                    + " !document.getElementById('queue-indicator').hidden &&"
-                    + " document.getElementById('queue-pending').textContent === '1' &&"
-                    + " document.getElementById('queue-uploading').textContent === '1' &&"
-                    + " document.getElementById('queue-completed').textContent === '1' &&"
-                    + " document.getElementById('queue-failed').textContent === '1'",
+                "show('form');"
+                    + "const input=document.querySelector('.email-add-row').getBoundingClientRect();"
+                    + "const submit=document.querySelector('#email-form .record').getBoundingClientRect();"
+                    + "const centered=Math.abs((input.left+input.right)/2-innerWidth/2)<2 &&"
+                    + " Math.abs((submit.left+submit.right)/2-innerWidth/2)<2;"
+                    + "centered && !document.getElementById('form').hidden",
                 value -> {
-                  uploadUiResult.set(value);
-                  uploadUiLoaded.countDown();
+                  backResult.set(value);
+                  backLoaded.countDown();
                 });
           });
-      assertTrue(uploadUiLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
-      assertEquals("true", uploadUiResult.get());
+      assertTrue(backLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", backResult.get());
+      android.graphics.Bitmap formImage = i.getUiAutomation().takeScreenshot();
+      if (formImage != null)
+        try (java.io.FileOutputStream out =
+            new java.io.FileOutputStream(new File(activity.getCacheDir(), "player-form.png"))) {
+          formImage.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+        }
+      java.util.concurrent.CountDownLatch backNavigationLoaded =
+          new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> backNavigationResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "document.getElementById('back').click();"
+                    + "!document.getElementById('welcome').hidden &&"
+                    + " document.getElementById('form').hidden",
+                value -> {
+                  backNavigationResult.set(value);
+                  backNavigationLoaded.countDown();
+                });
+          });
+      assertTrue(backNavigationLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", backNavigationResult.get());
+
+      java.util.concurrent.CountDownLatch modalLoaded = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> modalResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "window.showNativeModal({kind:'enrollment',replace:false});"
+                    + " const m=document.getElementById('modal'),r=m.getBoundingClientRect();"
+                    + " !m.hidden && document.getElementById('modal-title').textContent.includes('Register') &&"
+                    + " m.querySelectorAll('img').length===0 &&"
+                    + " r.left>=0 && r.top>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1 &&"
+                    + " document.documentElement.scrollWidth<=innerWidth+1 &&"
+                    + " document.documentElement.scrollHeight<=innerHeight+1",
+                value -> {
+                  modalResult.set(value);
+                  modalLoaded.countDown();
+                });
+          });
+      assertTrue(modalLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", modalResult.get());
+
+      java.util.concurrent.CountDownLatch modalStatesLoaded = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> modalStatesResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "window.showNativeModal({kind:'camera-ready-device'});"
+                    + " document.getElementById('modal-title').textContent.includes('USB') &&"
+                    + " document.querySelectorAll('.modal-card img').length===0 &&"
+                    + " document.documentElement.scrollHeight<=innerHeight+1 &&"
+                    + " ['saved-enrollment','camera-ready-device','permission','discard','leave'].every(kind=>{"
+                    + "window.showNativeModal({kind});const m=document.getElementById('modal'),r=m.getBoundingClientRect();"
+                    + "return !m.hidden&&r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1&&"
+                    + "m.querySelectorAll('img').length===0&&document.documentElement.scrollWidth<=innerWidth+1&&"
+                    + "document.documentElement.scrollHeight<=innerHeight+1;}) &&"
+                    + "window.setNativeKeyboardVisible===undefined &&"
+                    + "document.documentElement.scrollTop===0",
+                value -> {
+                  modalStatesResult.set(value);
+                  modalStatesLoaded.countDown();
+                });
+          });
+      assertTrue(modalStatesLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", modalStatesResult.get());
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript("window.dismissNativeModal()", null);
+          });
+
+      java.util.concurrent.CountDownLatch timerUiLoaded =
+          new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> timerUiResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "document.getElementById('queue-indicator')===null &&"
+                    + " typeof renderUploadStatus==='undefined' &&"
+                    + " [0,1000,2000,3000].map(value=>formatRemainingTime(5,value)).join(',')==='00:05,00:04,00:03,00:02' &&"
+                    + " getComputedStyle(document.getElementById('timer')).fontVariantNumeric.includes('tabular-nums')",
+                value -> {
+                  timerUiResult.set(value);
+                  timerUiLoaded.countDown();
+                });
+          });
+      assertTrue(timerUiLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", timerUiResult.get());
 
       engine.cameraTestReady = true;
       engine.cameraTestHasAudio = true;
@@ -224,23 +311,6 @@ public class RecorderTest {
   }
 
   @Test
-  public void uriEscapesCredentialsAndRejectsUnsafeInput() throws Exception {
-    assertEquals(
-        "rtsp://u%3Aa:p%40%20x@192.168.1.2:554/stream1",
-        RtspRecorder.cameraUri("rtsp://192.168.1.2:554/stream1", "u:a", "p@ x"));
-    try {
-      RtspRecorder.cameraUri("https://example.com", "", "");
-      fail();
-    } catch (Exception expected) {
-    }
-    try {
-      RtspRecorder.cameraUri("rtsp://user:pass@192.168.1.2/stream1", "", "");
-      fail();
-    } catch (Exception expected) {
-    }
-  }
-
-  @Test
   public void managedCameraRequiresMatchingRevision() throws Exception {
     android.content.Context c = InstrumentationRegistry.getInstrumentation().getTargetContext();
     Engine engine = Engine.get(c);
@@ -250,7 +320,7 @@ public class RecorderTest {
     org.json.JSONObject d =
         new org.json.JSONObject()
             .put("recorder_mode", "android_rtsp")
-            .put("video_device", "android-rtsp-v2")
+            .put("video_device", "android-camera-v1")
             .put("tested_at", "2026-10-06")
             .put("config_revision", "revision-1")
             .put("tested_revision", "revision-1");
@@ -272,17 +342,14 @@ public class RecorderTest {
           new JSONObject()
               .put("device", new JSONObject().put("video_device", "android-camera-v1"));
       assertTrue(engine.usesDeviceCamera());
-      assertFalse(engine.usesWifiCamera());
       engine.server =
           new JSONObject()
-              .put("device", new JSONObject().put("video_device", "android-rtsp-v2"));
+              .put("device", new JSONObject().put("video_device", "unsupported-source"));
       assertFalse(engine.usesDeviceCamera());
-      assertTrue(engine.usesWifiCamera());
       engine.server =
           new JSONObject()
               .put("device", new JSONObject().put("video_device", "unexpected-source"));
       assertFalse(engine.usesDeviceCamera());
-      assertFalse(engine.usesWifiCamera());
     } finally {
       engine.server = original;
     }
@@ -292,10 +359,8 @@ public class RecorderTest {
   public void audioExpectationMatchesCameraMode() throws Exception {
     Engine engine = Engine.get(InstrumentationRegistry.getInstrumentation().getTargetContext());
     assertTrue(engine.expectsAudio(new JSONObject().put("type", "device")));
-    assertTrue(
-        engine.expectsAudio(new JSONObject().put("type", "rtsp").put("audio", true)));
     assertFalse(
-        engine.expectsAudio(new JSONObject().put("type", "rtsp").put("audio", false)));
+        engine.expectsAudio(new JSONObject().put("type", "unsupported")));
   }
 
   @Test
@@ -305,7 +370,7 @@ public class RecorderTest {
             InstrumentationRegistry.getInstrumentation().getTargetContext().getCacheDir(),
             "missing.mp4");
     try {
-      RtspRecorder.validate(f);
+      RecordedVideo.validate(f);
       fail();
     } catch (Exception expected) {
     }

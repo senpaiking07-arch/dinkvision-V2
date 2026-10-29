@@ -10,11 +10,11 @@ import org.junit.runner.RunWith;
 public class CompatibilityTest {
   @Test public void foregroundTypesKeepUploadAndCameraPermissionsSeparate() {
     assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,RecorderService.foregroundTypes(36,false,true,true));
-    assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,RecorderService.foregroundTypes(29,true,true,false));
-    assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+    assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE|ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,RecorderService.foregroundTypes(29,true,true,false));
+    assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE|ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
         RecorderService.foregroundTypes(30,true,true,false));
     assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,RecorderService.foregroundTypes(36,true,false,false));
-    assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE|ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+    assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE|ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA|ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE|ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
         RecorderService.foregroundTypes(36,true,true,true));
   }
 }

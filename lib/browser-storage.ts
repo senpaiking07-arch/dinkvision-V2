@@ -16,6 +16,7 @@ export type LocalRecording = {
     | "uploading"
     | "retrying"
     | "uploaded"
+    | "local_only"
     | "failed";
   progress?: number;
   retryCount?: number;

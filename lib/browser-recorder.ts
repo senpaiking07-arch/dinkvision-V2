@@ -28,8 +28,20 @@ export async function tabletRequest(
     body: JSON.stringify({ action, ...fields }),
     signal: AbortSignal.timeout(60000),
   });
-  const d = await r.json();
-  if (!r.ok) throw Error(d.error || "Tablet request failed.");
+  let d: any;
+  try {
+    d = await r.json();
+  } catch {
+    throw Error(
+      r.ok
+        ? "Tablet returned an invalid response. Please retry."
+        : `Tablet connection unavailable (${r.status}). Please retry.`,
+    );
+  }
+  if (!d || typeof d !== "object")
+    throw Error("Tablet returned an invalid response. Please retry.");
+  if (!r.ok)
+    throw Error(d.error || `Tablet connection unavailable (${r.status}).`);
   return d;
 }
 type Config = BrowserCamera & { id: string };
@@ -544,6 +556,36 @@ export class BrowserCapture {
     if (!navigator.locks || !deviceId) return;
     await this.releaseCompletedCaptures(deviceId);
     let localRecordings = await listMeta();
+    let captureIdle = false;
+    await navigator.locks.request(
+      `casa-tablet-recorder-v2:${deviceId}`,
+      { mode: "exclusive", ifAvailable: true },
+      async (lock) => {
+        if (!lock) return;
+        captureIdle = true;
+        const abandoned = localRecordings.filter(
+          (item) =>
+            item.deviceId === deviceId &&
+            !item.complete &&
+            item.localAvailable !== false,
+        );
+        await Promise.all(
+          abandoned.map(async (item) => {
+            await patchMeta(item.id, {
+              status: "failed",
+              interrupted: true,
+              lastError:
+                "Recording was interrupted before it could be finalized. Available footage remains on this device.",
+            });
+            await tabletRequest("failed", { id: item.id }).catch(
+              () => undefined,
+            );
+          }),
+        );
+      },
+    );
+    if (!captureIdle) return;
+    localRecordings = await listMeta();
     const requested = new Set(requestedRetries);
     const resumable = localRecordings.filter(
       (item) =>
@@ -575,7 +617,8 @@ export class BrowserCapture {
           (item) =>
             item.deviceId === deviceId &&
             item.status === "failed" &&
-            (item.interrupted || !item.complete),
+            item.complete &&
+            item.interrupted,
         )
         .map((item) =>
           tabletRequest("failed", { id: item.id }).catch(() => undefined),
@@ -583,12 +626,9 @@ export class BrowserCapture {
     );
     await navigator.locks.request(
       "casa-tablet-upload",
-      { mode: "exclusive", ifAvailable: true },
+      { mode: "exclusive" },
       async (lock) => {
-        if (!lock) {
-          setTimeout(() => void this.processQueue(deviceId), 300);
-          return;
-        }
+        if (!lock) return;
         while (true) {
           const now = Date.now();
           const next = (await listMeta())
@@ -617,8 +657,12 @@ export class BrowserCapture {
           } catch (error) {
             if (error instanceof LocalOnlyRecordingError || error instanceof UploadCancelledError) {
               await patchMeta(next.id, {
-                status: "failed",
+                status:
+                  error instanceof LocalOnlyRecordingError
+                    ? "local_only"
+                    : "failed",
                 lastError: error.message,
+                serverRetryRequired: false,
                 nextRetryAt: undefined,
               });
               this.changed("progress");

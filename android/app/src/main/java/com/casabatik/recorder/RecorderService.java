@@ -9,6 +9,7 @@ import android.util.Log;
 
 public final class RecorderService extends Service {
   private static final String TAG = "DinkVisionRecorder";
+  private static final long WORK_WAKE_TIMEOUT_MILLIS = 3 * 60 * 60 * 1000L;
   private static volatile RecorderService running;
   static final String EXTRA_CAMERA_ACTIVE = "camera-active";
   static final String EXTRA_UPLOAD_ACTIVE = "upload-active";
@@ -22,7 +23,13 @@ public final class RecorderService extends Service {
       int sdk, boolean deviceCamera, boolean cameraActive, boolean uploadActive) {
     int types = 0;
     if (cameraActive && deviceCamera) {
-      types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+      // The recorder may be using a directly attached UVC camera. Keep the
+      // connected-device classification alongside camera/microphone so the USB
+      // host is treated as active when the activity is backgrounded or the
+      // display is switched off.
+      types |=
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+              | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
       if (sdk >= 30) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
     }
     if (uploadActive) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
@@ -78,6 +85,7 @@ public final class RecorderService extends Service {
     Engine engine = Engine.get(service);
     service.cameraWork = service.cameraWork && engine.busy;
     service.uploadWork = true;
+    service.ensurePowerLocks();
     service.notification =
         service.buildNotification(service.cameraWork, true, Math.max(0, Math.min(100, percent)));
     service.getSystemService(NotificationManager.class).notify(1, service.notification);
@@ -102,12 +110,17 @@ public final class RecorderService extends Service {
     wake =
         getSystemService(PowerManager.class)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WPC:Recording");
-    wake.acquire(3 * 60 * 60 * 1000L);
+    wake.setReferenceCounted(false);
     wifi =
         getSystemService(WifiManager.class)
             .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "WPC:Upload");
     wifi.setReferenceCounted(false);
-    wifi.acquire();
+    ensurePowerLocks();
+  }
+
+  private void ensurePowerLocks() {
+    if (wake != null && !wake.isHeld()) wake.acquire(WORK_WAKE_TIMEOUT_MILLIS);
+    if (wifi != null && !wifi.isHeld()) wifi.acquire();
   }
 
   @Override
@@ -118,6 +131,7 @@ public final class RecorderService extends Service {
     Engine engine = Engine.get(this);
     cameraWork = requestedCamera || (cameraWork && engine.busy);
     uploadWork = requestedUpload || (uploadWork && engine.uploadWorkerRunning.get());
+    if (cameraWork || uploadWork) ensurePowerLocks();
     notification = buildNotification(cameraWork, uploadWork, engine.uploadPercent);
     try {
       if (Build.VERSION.SDK_INT >= 29)
@@ -143,6 +157,19 @@ public final class RecorderService extends Service {
     if (!engine.busy && !engine.uploadWorkerRunning.get() && !engine.hasPendingUploadWork())
       stopSelf(id);
     return START_NOT_STICKY;
+  }
+
+  @Override
+  public void onTaskRemoved(Intent rootIntent) {
+    Engine engine = Engine.get(this);
+    if (cameraWork || uploadWork || engine.busy || engine.uploadWorkerRunning.get())
+      ensurePowerLocks();
+    super.onTaskRemoved(rootIntent);
+  }
+
+  static boolean holdsCpuWakeLock() {
+    RecorderService service = running;
+    return service != null && service.wake != null && service.wake.isHeld();
   }
 
   static void stopWhenIdle() {

@@ -7,7 +7,7 @@ import { getAccount } from "./auth";
 export async function browserTablet() {
   const kiosk = await kioskDevice();
   if (!kiosk) return null;
-  const { data, error } = await recorderDatabase()
+  const { data, error } = await recorderDatabase(kiosk.tenant_id)
     .from("browser_devices")
     .select("*")
     .eq("kiosk_id", kiosk.id)
@@ -30,6 +30,13 @@ export async function canSetup(device: {
   return (await getAccount()).account?.role === "admin";
 }
 export function publicTablet(d: Record<string, any>) {
-  const { enrollment_hash, setup_hash, rtsp_password_encrypted, ...safe } = d;
-  return { ...safe, has_camera_password: !!rtsp_password_encrypted };
+  const {
+    enrollment_hash,
+    setup_hash,
+    rtsp_url,
+    rtsp_username,
+    rtsp_password_encrypted,
+    ...safe
+  } = d;
+  return safe;
 }

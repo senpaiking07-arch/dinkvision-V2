@@ -63,6 +63,14 @@ $$;
 -- tenant RLS too. Merely adding policies while leaving postgres as their owner
 -- would not isolate them. Clients cannot SET ROLE to this execution identity.
 create role dinkvision_executor nologin nosuperuser nobypassrls;
+-- PostgreSQL permits changing an object's owner only when the executing role
+-- can SET ROLE to the new owner. Supabase's database owner is intentionally
+-- not a full superuser, so make the migration role an explicit member before
+-- transferring the SECURITY DEFINER functions below. Runtime API roles are
+-- never granted this membership.
+do $$ begin
+  execute format('grant dinkvision_executor to %I',current_user);
+end $$;
 grant usage on schema public,auth to dinkvision_executor;
 grant execute on function auth.uid() to dinkvision_executor;
 

@@ -9,12 +9,20 @@ const clip=readFileSync(new URL("./fixtures/recording-one-second.mp4",import.met
 async function queueHarness(run:(h:{worker:BrowserCapture;held:Set<string>;actions:string[];ids:string[];
   respond:(fn:(body:any)=>Response|Promise<Response>)=>void; seed:(id:string,complete?:boolean)=>Promise<void>})=>Promise<void>) {
   const nav=Object.getOwnPropertyDescriptor(globalThis,"navigator"), originalFetch=globalThis.fetch;
-  const held=new Set<string>(), actions:string[]=[], ids:string[]=[];
+  const held=new Set<string>(), actions:string[]=[], ids:string[]=[], lockTails=new Map<string,Promise<void>>();
   let response:(body:any)=>Response|Promise<Response>=()=>Response.json({ok:true,ready:true});
   Object.defineProperty(globalThis,"navigator",{configurable:true,value:{locks:{
     request:async(name:string,options:any,run:(lock:object|null)=>Promise<void>)=>{
       if(held.has(name) && options.ifAvailable) return run(null);
-      held.add(name);try{await run({});}finally{held.delete(name);}
+      const previous=lockTails.get(name) || Promise.resolve();
+      let release!:()=>void;
+      const current=new Promise<void>(resolve=>{release=resolve;});
+      const tail=previous.then(()=>current);
+      lockTails.set(name,tail);
+      await previous;
+      held.add(name);
+      try{return await run({});}
+      finally{held.delete(name);release();if(lockTails.get(name)===tail)lockTails.delete(name);}
     },
   }}});
   globalThis.fetch=async(input,init)=>{
@@ -46,14 +54,14 @@ const faults:Record<string,(body:any)=>Response|Promise<Response>>={
   "missing final confirmation":body=>Response.json(body.action==="upload"?{ready:true}:{ok:true}),
   "repeated upload expiry":body=>Response.json(body.action==="upload-status"?{expired:true}:{ok:true}),
 };
-for(const [fault,respond] of Object.entries(faults)) test(`queue retains video and advances after ${fault}`,async()=>queueHarness(async h=>{
+for(const [fault,respond] of Object.entries(faults)) test(`queue retains video and blocks later uploads after ${fault}`,async()=>queueHarness(async h=>{
   await h.seed("faulty");await h.seed("healthy");
   h.respond(body=>body.id==="healthy"||body.action==="upload-failed"?Response.json({ok:true,ready:true}):respond(body));
   await h.worker.processQueue("fault-device");
   assert.equal((await getMeta("faulty"))?.status,"retrying");
   assert.equal((await getMeta("faulty"))?.retryCount,1);
   assert.equal((await savedVideo("faulty","video/mp4")).size,clip.length);
-  assert.equal((await getMeta("healthy"))?.status,"uploaded");
+  assert.equal((await getMeta("healthy"))?.status,"saved_locally");
   assert.equal(h.held.size,0);
   assert.ok(h.actions.length<20,"one bad recording has a bounded number of requests");
 }));

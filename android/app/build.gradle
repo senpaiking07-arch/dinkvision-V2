@@ -4,6 +4,11 @@ def environmentFile = rootProject.file('../.env')
 if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
 def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
 def appVersionName = '0.5.28'
+def releaseKeystore = System.getenv('ANDROID_RELEASE_KEYSTORE')
+def releaseStorePassword = System.getenv('ANDROID_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = System.getenv('ANDROID_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('ANDROID_RELEASE_KEY_PASSWORD')
+def releaseSigningReady = [releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it }
 if (!appOrigin || !(appOrigin ==~ /^https:\/\/[^\/?#]+$/))
     throw new GradleException('Set APP_ORIGIN to the hosted HTTPS origin in the repository .env or build environment.')
 android {
@@ -20,9 +25,29 @@ android {
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
     }
     buildFeatures { buildConfig true }
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseSigningReady) signingConfig signingConfigs.release
+        }
+    }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     packaging { resources { excludes += ['META-INF/DEPENDENCIES', 'META-INF/INDEX.LIST', 'META-INF/native-image/**'] }; jniLibs { useLegacyPackaging = true } }
 }
+if (!releaseSigningReady)
+    logger.lifecycle('Android release signing is not configured; release APK/AAB outputs will be unsigned.')
 configurations { nativeBundles }
 dependencies {
     implementation 'androidx.activity:activity:1.10.1'
@@ -75,6 +100,43 @@ tasks.register('verifyBrandLogo') {
     }
 }
 tasks.named('preBuild').configure { dependsOn 'verifyBrandLogo' }
+
+def publicAppLogo = rootProject.file('../public/dinkvision-logo-square-1x1.png')
+def packagedAppLogo = file('src/main/res/drawable/dinkvision_logo_square_1x1.png')
+tasks.register('verifyAppLogo') {
+    inputs.file(publicAppLogo)
+    inputs.file(packagedAppLogo)
+    doLast {
+        if (!publicAppLogo.isFile())
+            throw new GradleException('Missing public/dinkvision-logo-square-1x1.png')
+        if (!packagedAppLogo.isFile()
+                || !java.util.Arrays.equals(publicAppLogo.bytes, packagedAppLogo.bytes))
+            throw new GradleException('The packaged app logo must exactly match public/dinkvision-logo-square-1x1.png')
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyAppLogo' }
+
+def publicPlayerBackgrounds = [
+    rootProject.file('../public/Phone-Background.png'),
+    rootProject.file('../public/Tablet-Background.png')
+]
+def packagedPlayerBackgrounds = [
+    file('src/main/assets/Phone-Background.png'),
+    file('src/main/assets/Tablet-Background.png')
+]
+tasks.register('verifyPlayerBackgrounds') {
+    inputs.files(publicPlayerBackgrounds)
+    inputs.files(packagedPlayerBackgrounds)
+    doLast {
+        publicPlayerBackgrounds.eachWithIndex { source, index ->
+            def packaged = packagedPlayerBackgrounds[index]
+            if (!source.isFile()) throw new GradleException("Missing ${source}")
+            if (!packaged.isFile() || !java.util.Arrays.equals(source.bytes, packaged.bytes))
+                throw new GradleException("${packaged} must be an exact copy of ${source}")
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyPlayerBackgrounds' }
 
 // Keep Android Studio's APK and the named local copies synchronized. The
 // Build APK(s) action runs assembleDebug, so this always exports that exact

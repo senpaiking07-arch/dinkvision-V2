@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { inventoryInput, tokenHash } from "../lib/recorder-protocol";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 
 test("inventory strips local credentials, rejects duplicates, and limits payloads", () => {
   const device = {
@@ -58,6 +59,7 @@ test("recorder pairing, leases, result isolation, RLS and stale health", async (
     await db.exec(`insert into auth.users(id) values('${player}');insert into public.recorders(id,name) values('${r}','Recorder'),('${other}','Other');insert into public.courts(id,name) values('${court}','Court');
       insert into public.cameras(name,recorder_id,court_id,source_type,device_reference,is_primary,enabled) values('Camera','${r}','${court}','usb','usb-1',true,true);
       select public.issue_recorder_pair('${r}','pair',now()+interval '10 minutes');`);
+    await provisionLegacyFixtureMemberships(db);
     async function value(sql: string, args: unknown[] = []) {
       return Object.values((await db.query(sql, args)).rows[0] as object)[0];
     }

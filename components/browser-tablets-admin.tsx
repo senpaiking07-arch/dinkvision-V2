@@ -194,9 +194,7 @@ export default function BrowserTabletsAdmin() {
               ? "Disabled"
               : !d.kiosk_id
                 ? "Awaiting enrollment"
-                : online
-                  ? "Online"
-                  : "Offline";
+                : "Offline";
             const uploadPercent = recording?.bytes
               ? Math.min(
                   100,
@@ -249,10 +247,9 @@ export default function BrowserTabletsAdmin() {
                     "No court assigned"}
                 </span>
                 <span className="tablet-status-line">
-                  <span className={`device-status-pill ${online ? "online" : ""}`}>
-                    {online && <span className="device-online-dot" aria-hidden="true" />}
-                    {deviceStatus}
-                  </span>
+                  {!online && (
+                    <span className="device-status-pill">{deviceStatus}</span>
+                  )}
                   <span>
                     {d.tested_at
                       ? "Camera ready"

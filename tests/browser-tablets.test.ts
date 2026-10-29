@@ -210,7 +210,7 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     assert.equal(await event("reset"), true);
     // Native settings are tested by the assigned device, with revision checks.
     await db.query(
-      "update browser_devices set recorder_mode='android_rtsp',rtsp_url='rtsp://192.168.1.100/stream1',rtsp_username='camera',rtsp_password_encrypted='encrypted-fixture',video_device='android-rtsp-v2' where id=$1",
+      "update browser_devices set recorder_mode='android_rtsp',rtsp_url='',rtsp_username='',rtsp_password_encrypted=null,video_device='android-camera-v1' where id=$1",
       [device],
     );
     const revision = async () =>

@@ -18,10 +18,10 @@ public class VideoClipTest {
       long duration=VideoClip.lastMinute(source,output,true,()->false);
       assertTrue(Math.abs(duration-60000)<1500);
       assertEquals(bytes,source.length());
-      assertTrue(RtspRecorder.validate(source,65000,true)>0);
+      assertTrue(RecordedVideo.validate(source,65000,true)>0);
       try {VideoClip.lastMinute(source,output,true,()->false);fail("Existing clip must not be overwritten");}
       catch(Exception expected){assertTrue(expected.getMessage().contains("already exists"));}
-      assertTrue(RtspRecorder.validate(output,60000,true)>0);
+      assertTrue(RecordedVideo.validate(output,60000,true)>0);
     } finally {source.delete();output.delete();}
   }
 }

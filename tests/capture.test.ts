@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
+import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 test("capture requests enforce locks, privacy, snapshots, idempotency and terminal states", async () => {
   const db = new PGlite();
   try {
@@ -31,6 +32,7 @@ test("capture requests enforce locks, privacy, snapshots, idempotency and termin
       player,
       other,
     ]);
+    await provisionLegacyFixtureMemberships(db);
     await db.query("insert into public.courts(id,name) values($1,'Court')", [
       court,
     ]);
