@@ -6,7 +6,7 @@ const call = (action, value = '') => {
   if (native) native.action(action, value);
   else {
     $('error').hidden = false;
-    $('error').textContent = 'Design preview only. Install the APK to record.';
+    $('error-message').textContent = 'Design preview only. Install the APK to record.';
   }
 };
 const hideModal = () => {
@@ -85,6 +85,13 @@ function showNativeModal(raw) {
   } else if (data.kind === 'permission') {
     title('CAMERA PERMISSION', 'Camera access is needed', 'Allow camera and microphone access in Android settings, then return here and use the start circle to run the camera test again.');
     cancel('Close');
+  } else if (data.kind === 'recover-recording') {
+    title('SAVED VIDEO', data.partial ? 'Recover partial footage?' : 'Retry this saved video?',
+      data.partial
+        ? 'The camera stopped before the match ended. The saved file may be incomplete, so it will be checked first. Clips shorter than one minute stay on this device and are not emailed.'
+        : 'The video is still on this device. Retry the upload; the local copy is removed only after the server confirms it.');
+    modalButton(data.partial ? 'Check saved video' : 'Retry upload', () => { hideModal(); call('recover-failed'); }, true);
+    cancel('Keep video');
   } else if (data.kind === 'discard') {
     title('SAVED RECORDING', 'Discard this video?', 'This permanently deletes the unsent video from this tablet. Recover it first if you want to keep it.');
     modalButton('Delete video', () => { hideModal(); call('discard-confirmed'); }, true);
@@ -163,6 +170,11 @@ $('reenroll').addEventListener('click', event => {
   event.stopPropagation();
   call('setup-reenroll');
 });
+$('recover').addEventListener('click', event => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (state.recoverable && !state.busy) showNativeModal({kind: 'recover-recording', partial: state.recoveryKind === 'partial'});
+});
 $('edit').onclick = () => show('form');
 function renderEmails() {
   $('email-count').textContent = `Registered emails (${emails.length}/4) · At least 1 is required.`;
@@ -186,7 +198,7 @@ function addEmail() {
   else {
     emails.push(value); $('player-email').value = ''; formError = ''; $('error').hidden = true; renderEmails(); return true;
   }
-  $('error').hidden = false; $('error').textContent = formError;
+  $('error').hidden = false; $('error-message').textContent = formError;
   return false;
 }
 $('player-email').oninput = () => { formError = ''; renderEmails(); };
@@ -195,7 +207,7 @@ $('add-email').onclick = addEmail;
 $('email-form').onsubmit = event => {
   event.preventDefault();
   if ($('player-email').value.trim() && !addEmail()) return;
-  if (!emails.length) { formError = 'Add at least one valid Gmail address.'; $('error').hidden = false; $('error').textContent = formError; return; }
+  if (!emails.length) { formError = 'Add at least one valid Gmail address.'; $('error').hidden = false; $('error-message').textContent = formError; return; }
   formError = ''; $('error').hidden = true;
   $('confirmation').textContent = `${state.court || 'Your court'} · One replay for every registered email`;
   const card = node('div');
@@ -258,9 +270,15 @@ function tick() {
   $('record').disabled = !!state.busy;
   $('camera-test-confirm').disabled = !!state.busy;
   $('camera-test-retry').disabled = !!state.busy;
-  const currentError = state.error || formError;
+  const recoverable = view === 'welcome' && !!state.recoverable && !state.busy;
+  const recoveryMessage = state.recoveryKind === 'partial'
+    ? 'A partial video is saved on this device. Reconnect the camera, then recover the saved video.'
+    : 'A saved video needs another upload attempt.';
+  const currentError = state.error || formError || (recoverable ? recoveryMessage : '');
   $('error').hidden = !currentError;
-  $('error').textContent = currentError;
+  $('error-message').textContent = currentError;
+  $('recover').hidden = !recoverable;
+  document.body.classList.toggle('has-recovery', recoverable);
   const count = state.countdown || 0;
   $('count-in').hidden = count < 1;
   $('count-number').textContent = String(count || 3);

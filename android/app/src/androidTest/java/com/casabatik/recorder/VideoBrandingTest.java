@@ -17,6 +17,37 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class VideoBrandingTest {
   @Test
+  public void brandedCameraPreviewKeepsFullThreeSecondDuration() throws Exception {
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    File source =
+        new File(instrumentation.getTargetContext().getCacheDir(), "branded-camera-preview.mp4");
+    try {
+      try (InputStream input =
+              instrumentation.getContext().getAssets().open("recording-sixty-five-seconds.mp4");
+          FileOutputStream output = new FileOutputStream(source)) {
+        input.transferTo(output);
+      }
+      long sourceDuration = RecordedVideo.validate(source, -1, true);
+
+      long brandedDuration =
+          VideoBranding.applyPreview(
+              instrumentation.getTargetContext(), source, sourceDuration, true, 3_000L);
+
+      assertTrue("The saved preview must contain all three seconds", brandedDuration >= 3_000L);
+      assertTrue("The preview must not materially exceed three seconds", brandedDuration <= 3_500L);
+      assertTrue(
+          "The saved preview must contain three seconds of audio",
+          RecordedVideo.audioDurationMillis(source) >= 3_000L);
+      try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(source)) {
+        grabber.start();
+        assertTrue(grabber.getMetadata("comment").contains("DinkVision"));
+      }
+    } finally {
+      source.delete();
+    }
+  }
+
+  @Test
   public void savedVideoHasLogoMarkerAndRemainsPlayable() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
     File source =

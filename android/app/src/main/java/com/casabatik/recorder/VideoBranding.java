@@ -113,12 +113,23 @@ final class VideoBranding {
       long brandedMillis =
           RecordedVideo.validate(
               temporary, previewMillis > 0 ? -1 : expectedMillis, expectAudio);
-      if (previewMillis > 0) requirePreviewDuration(brandedMillis, previewMillis);
+      if (previewMillis > 0) {
+        long brandedAudioMillis = expectAudio ? RecordedVideo.audioDurationMillis(temporary) : -1;
+        Log.i(
+            "DinkVisionCameraTest",
+            "sourceDurationMs=" + sourceMillis + " brandedDurationMs=" + brandedMillis
+                + " brandedAudioMs=" + brandedAudioMillis
+                + " requiredDurationMs=" + previewMillis);
+        requirePreviewDuration(brandedMillis, previewMillis);
+        if (expectAudio) requirePreviewDuration(brandedAudioMillis, previewMillis);
+      }
       if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
       replaceValidated(source, temporary, backup);
       long confirmedMillis =
           RecordedVideo.validate(source, previewMillis > 0 ? -1 : expectedMillis, expectAudio);
       if (previewMillis > 0) requirePreviewDuration(confirmedMillis, previewMillis);
+      if (previewMillis > 0 && expectAudio)
+        requirePreviewDuration(RecordedVideo.audioDurationMillis(source), previewMillis);
       if (!isBranded(source)) throw new Exception("The saved video is missing its Dink Vision logo marker.");
       backup.delete();
       Log.i(
@@ -233,8 +244,10 @@ final class VideoBranding {
         }
         recorder.start();
         long sourceStart = Long.MIN_VALUE, lastVideo = Long.MIN_VALUE;
+        long audioSampleFrames = 0;
         int outputFrameNumber = -1;
         boolean wroteVideo = false, wroteAudio = false;
+        boolean previewVideoComplete = false, previewAudioComplete = channels == 0;
         Frame frame;
         while ((frame = grabber.grabFrame(channels > 0, true, true, false)) != null) {
           if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
@@ -244,8 +257,7 @@ final class VideoBranding {
             throw new Exception("Tablet storage is nearly full. The original video was preserved.");
           if (frame.image != null) {
             if (sourceStart == Long.MIN_VALUE) sourceStart = frame.timestamp;
-            if (previewMillis > 0
-                && frame.timestamp - sourceStart >= previewMillis * 1_000L) break;
+            if (previewVideoComplete) continue;
             if (frame.timestamp <= lastVideo)
               throw new Exception("The saved video timestamps do not advance.");
             blend(frame, pixels, mark.getWidth(), mark.getHeight(), rotation);
@@ -259,16 +271,30 @@ final class VideoBranding {
             recorder.record(frame);
             lastVideo = frame.timestamp;
             wroteVideo = true;
-          } else if (frame.samples != null && channels > 0 && sourceStart != Long.MIN_VALUE) {
             if (previewMillis > 0
-                && frame.timestamp - sourceStart >= previewMillis * 1_000L) break;
-            recorder.record(frame);
-            wroteAudio = true;
+                && frame.timestamp - sourceStart >= previewMillis * 1_000L)
+              previewVideoComplete = true;
+          } else if (frame.samples != null && channels > 0 && sourceStart != Long.MIN_VALUE) {
+            if (!previewAudioComplete) {
+              int frameChannels = frame.audioChannels > 0 ? frame.audioChannels : channels;
+              int sampleFrames = frame.samples[0].remaining();
+              if (frame.samples.length == 1) sampleFrames /= frameChannels;
+              audioSampleFrames += sampleFrames;
+              recorder.record(frame);
+              wroteAudio = true;
+              if (previewMillis > 0
+                  && audioSampleFrames * 1_000L >= previewMillis * sampleRate)
+                previewAudioComplete = true;
+            }
           }
+          if (previewMillis > 0 && previewVideoComplete && previewAudioComplete) break;
         }
         recorder.stop();
         if (!wroteVideo) throw new Exception("No video picture was available for the logo.");
         if (channels > 0 && !wroteAudio) throw new Exception("No audio was available while saving the logo.");
+        if (previewMillis > 0 && (!previewVideoComplete || !previewAudioComplete))
+          throw new RecordingAccuracy.Failure(
+              "The camera test did not contain the full three seconds. Reconnect the camera and retry.");
       }
     } finally {
       if (mark != null && mark != scaled) mark.recycle();

@@ -212,6 +212,31 @@ final class Engine {
     return false;
   }
 
+  private JSONObject latestRecoverableRecording() {
+    JSONArray current = queue();
+    JSONObject latest = null;
+    for (int index = 0; index < current.length(); index++) {
+      JSONObject item = current.optJSONObject(index);
+      if (item == null || !"failed".equals(item.optString("status"))
+          || !item.optBoolean("localAvailable", true) || !belongsToCurrentDevice(item)) continue;
+      String id = item.optString("id");
+      try {
+        UUID.fromString(id);
+      } catch (Exception ignored) {
+        continue;
+      }
+      File file = new File(new File(context.getFilesDir(), "recordings"), id + ".mp4");
+      if (!file.isFile() || file.length() < 1024) continue;
+      if (latest == null || item.optLong("createdAt") > latest.optLong("createdAt")) latest = item;
+    }
+    if (latest == null) return new JSONObject();
+    try {
+      return new JSONObject(latest.toString());
+    } catch (Exception ignored) {
+      return new JSONObject();
+    }
+  }
+
   private JSONArray publicQueue() throws Exception {
     JSONArray result = new JSONArray(), current = queue();
     for (int index = 0; index < current.length(); index++) {
@@ -383,6 +408,7 @@ final class Engine {
   String snapshot() {
     try {
       JSONObject device = server.optJSONObject("device");
+      JSONObject recovery = latestRecoverableRecording();
       long currentElapsedMillis =
           "recording".equals(phase) && recordingStartedNanos > 0
               ? (System.nanoTime() - recordingStartedNanos) / 1_000_000L
@@ -403,6 +429,9 @@ final class Engine {
               .put("uploadPercent", uploadPercent)
               .put("countdown", countdown)
               .put("pending", hasLocalQueue())
+              .put("recoverable", recovery.length() > 0)
+              .put("recoveryKind", recovery.length() == 0 ? "" :
+                  recovery.has("durationMs") ? "upload" : "partial")
               .put("tested", cameraReady(device))
               .put("cameraMode", cameraMode())
               .put("testReady", cameraTestReady)
@@ -884,10 +913,14 @@ final class Engine {
                     }
                   });
             } catch (Exception e) {
-              throw new Exception(
-                  (e instanceof RecordingAccuracy.Failure ? e.getMessage() + " " : "Recording interrupted. ")
-                      + "Any saved footage stays on this tablet. Choose Recover"
-                      + " upload.");
+              String detail = e.getMessage();
+              String reason = e instanceof RecordingAccuracy.Failure
+                  || (detail != null && detail.startsWith("The USB camera"))
+                      ? detail : "Recording interrupted.";
+              boolean savedFootage = file.isFile() && file.length() >= 1024;
+              throw new Exception(reason + (savedFootage
+                  ? " Any saved footage remains on this device. Use Recover saved video on the welcome screen."
+                  : " Reconnect the camera and try again."));
             }
             phase = "finalizing";
             message = "Saving the complete video…";
@@ -992,6 +1025,20 @@ final class Engine {
     }
   }
 
+  void retryLatestFailedUpload() {
+    if (busy) return;
+    JSONObject item = latestRecoverableRecording();
+    if (item.length() == 0) {
+      error = "There is no saved video to recover on this device.";
+      return;
+    }
+    error = "";
+    latestSavedSession = item.optString("id");
+    phase = "complete";
+    message = "Checking the saved video…";
+    retryUpload(item.optString("id"));
+  }
+
   private boolean belongsToCurrentDevice(JSONObject item) {
     JSONObject device = server.optJSONObject("device");
     String currentDevice = device == null ? "" : device.optString("id");
@@ -1021,6 +1068,17 @@ final class Engine {
       String status = item.optString("status", "saved_locally");
       if (java.util.Arrays.asList("saved_locally", "pending", "retrying", "uploading")
           .contains(status)) return true;
+    }
+    return false;
+  }
+
+  boolean hasRetryingUpload() {
+    JSONArray current = queue();
+    for (int index = 0; index < current.length(); index++) {
+      JSONObject item = current.optJSONObject(index);
+      if (item != null && item.optBoolean("localAvailable", true)
+          && belongsToCurrentDevice(item) && "retrying".equals(item.optString("status")))
+        return true;
     }
     return false;
   }
@@ -1221,7 +1279,7 @@ final class Engine {
           message =
               permanent
                   ? "Upload needs attention. Your video is still safe on this tablet."
-                  : "Upload paused by the connection. It will retry automatically; your video is safe.";
+                  : "Upload paused. Retrying automatically; your video remains saved on this device.";
         try {
           JSONObject failureReport =
               new JSONObject()

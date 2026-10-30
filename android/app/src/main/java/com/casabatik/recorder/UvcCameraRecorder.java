@@ -189,7 +189,7 @@ final class UvcCameraRecorder {
               failure.compareAndSet(
                   null,
                   new Exception(
-                      "The USB camera was disconnected. Reconnect it and run Device setup again."));
+                      "The USB camera was disconnected. Reconnect it before recording again."));
             opened.countDown();
             started.countDown();
             saved.countDown();

@@ -3,7 +3,7 @@ def environment = new Properties()
 def environmentFile = rootProject.file('../.env')
 if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
 def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
-def appVersionName = '0.5.28'
+def appVersionName = '0.5.29'
 def releaseKeystore = System.getenv('ANDROID_RELEASE_KEYSTORE')
 def releaseStorePassword = System.getenv('ANDROID_RELEASE_STORE_PASSWORD')
 def releaseKeyAlias = System.getenv('ANDROID_RELEASE_KEY_ALIAS')
@@ -18,7 +18,7 @@ android {
         applicationId 'com.casabatik.recorder'
         minSdk 26
         targetSdk 36
-        versionCode 34
+        versionCode 35
         versionName appVersionName
         buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'

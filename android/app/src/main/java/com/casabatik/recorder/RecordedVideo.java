@@ -48,6 +48,13 @@ final class RecordedVideo {
     return longest;
   }
 
+  static long audioDurationMillis(File file) throws Exception {
+    try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(file)) {
+      grabber.start();
+      return Math.round(streamDurationMicros(grabber, AVMEDIA_TYPE_AUDIO) / 1_000d);
+    }
+  }
+
   static long validate(File file, long expectedMillis, boolean expectAudio) throws Exception {
     if (!file.isFile() || file.length() < 1024)
       throw new Exception("No recoverable video was saved.");

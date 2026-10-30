@@ -172,6 +172,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         case "retry-upload":
           engine.retryUpload(value.trim());
           break;
+        case "recover-failed":
+          engine.retryLatestFailedUpload();
+          break;
         case "confirm-camera-test":
           engine.confirmCameraTest(true, false);
           break;

@@ -38,7 +38,7 @@ public final class RecorderService extends Service {
   }
 
   private Notification buildNotification(
-      boolean cameraActive, boolean uploadActive, int uploadPercent) {
+      boolean cameraActive, boolean uploadActive, int uploadPercent, boolean retrying) {
     PendingIntent open =
         PendingIntent.getActivity(
             this,
@@ -47,15 +47,17 @@ public final class RecorderService extends Service {
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     String detail =
         cameraActive && uploadActive
-            ? "Recording your match · background upload "
-                + Math.max(0, uploadPercent)
-                + "%"
+            ? (uploadPercent >= 0
+                ? "Recording your match · background upload " + uploadPercent + "%"
+                : retrying ? "Recording your match · upload retry scheduled"
+                    : "Recording your match · preparing upload")
             : cameraActive
                 ? "Recording your match"
                 : uploadActive
-                    ? (uploadPercent > 0
+                    ? (uploadPercent >= 0
                         ? "Uploading saved video · " + uploadPercent + "%"
-                        : "Preparing background upload")
+                        : retrying ? "Upload paused · retrying automatically"
+                            : "Preparing background upload")
                     : "Preparing your match";
     Notification.Builder builder =
         new Notification.Builder(this, "recording")
@@ -87,7 +89,7 @@ public final class RecorderService extends Service {
     service.uploadWork = true;
     service.ensurePowerLocks();
     service.notification =
-        service.buildNotification(service.cameraWork, true, Math.max(0, Math.min(100, percent)));
+        service.buildNotification(service.cameraWork, true, Math.max(0, Math.min(100, percent)), false);
     service.getSystemService(NotificationManager.class).notify(1, service.notification);
   }
 
@@ -99,7 +101,7 @@ public final class RecorderService extends Service {
     manager.createNotificationChannel(
         new NotificationChannel(
             "recording", "Match recording", NotificationManager.IMPORTANCE_LOW));
-    notification = buildNotification(false, false, -1);
+    notification = buildNotification(false, false, -1, false);
     // Android starts the foreground-service timeout before onStartCommand. Promote the service
     // immediately with the permission-safe connected-device type, then narrow/update the type
     // from the actual work flags in onStartCommand.
@@ -132,7 +134,8 @@ public final class RecorderService extends Service {
     cameraWork = requestedCamera || (cameraWork && engine.busy);
     uploadWork = requestedUpload || (uploadWork && engine.uploadWorkerRunning.get());
     if (cameraWork || uploadWork) ensurePowerLocks();
-    notification = buildNotification(cameraWork, uploadWork, engine.uploadPercent);
+    notification = buildNotification(cameraWork, uploadWork, engine.uploadPercent,
+        engine.hasRetryingUpload());
     try {
       if (Build.VERSION.SDK_INT >= 29)
         startForeground(
