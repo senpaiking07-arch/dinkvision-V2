@@ -17,6 +17,32 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class VideoBrandingTest {
   @Test
+  public void fullRecordingKeepsAudioThroughTheLastVideoFrame() throws Exception {
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    File source =
+        new File(instrumentation.getTargetContext().getCacheDir(), "branded-audio-tail.mp4");
+    try {
+      try (InputStream input =
+              instrumentation.getContext().getAssets().open("recording-sixty-five-seconds.mp4");
+          FileOutputStream output = new FileOutputStream(source)) {
+        input.transferTo(output);
+      }
+      long originalVideo = RecordedVideo.validate(source, -1, true);
+      long originalAudio = RecordedVideo.audioDurationMillis(source);
+      assertTrue("The source fixture must have audio through its final picture",
+          Math.abs(originalVideo - originalAudio) <= 350L);
+
+      long brandedVideo =
+          VideoBranding.apply(instrumentation.getTargetContext(), source, -1, true);
+      long brandedAudio = RecordedVideo.audioDurationMillis(source);
+      assertTrue("Branding must retain audio through the final picture",
+          Math.abs(brandedVideo - brandedAudio) <= 350L);
+    } finally {
+      source.delete();
+    }
+  }
+
+  @Test
   public void brandedCameraPreviewKeepsFullThreeSecondDuration() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
     File source =

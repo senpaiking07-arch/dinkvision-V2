@@ -7,7 +7,7 @@ device must reach the hosted backend.
 
 ## Install and configure
 
-1. Transfer `Dink-Vision-Recorder-0.5.29.apk` to a **64-bit Android 8 or newer** device.
+1. Transfer `Dink-Vision-Recorder-0.5.30.apk` to a **64-bit Android 8 or newer** device.
    Open it and allow installation from that file source when Android asks.
    This is a debug-signed testing build, not a Play Store release.
 2. In the hosted admin's **Devices & cameras**, add/edit the device, assign its
@@ -42,6 +42,8 @@ Recordings shorter than one minute are not uploaded. They remain in the APK’s
 private directory at
 `/data/user/0/com.casabatik.recorder/files/recordings/`. Offline and failed
 uploads stay there too. Clearing app data or uninstalling the APK deletes them.
+The recorder checks that audio reaches the final picture before upload; files
+with a missing audio tail remain local for review or recovery.
 When several tablets finish together, the venue uploads one saved video at a
 time. Waiting devices show the active upload and its progress. A failed first
 upload pauses the queue until that same device successfully retries, so later
@@ -73,7 +75,7 @@ video. Recovering that video later places it at the end of the queue.
   Apply `202610060015_admin_rtsp_setup.sql` and
   `202610070017_permanent_device_removal.sql` through
   `202610100025_camera_orientation.sql`, then deploy the web changes before
-  installing APK 0.5.29. Enrollment, authorization, upload, and email must still
+  installing APK 0.5.30. Enrollment, authorization, upload, and email must still
   be tested with the venue's real account/device.
 
 ## Build
@@ -87,8 +89,8 @@ SDK location in a gitignored `local.properties`. From this directory:
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`. Every `assembleDebug` build,
 including Android Studio's **Build APK(s)** action, copies that exact APK to
-`../Dink-Vision-Recorder-0.5.29.apk` and
-`../artifacts/Dink-Vision-Recorder-0.5.29.apk`. It contains arm64-v8a and x86_64
+`../Dink-Vision-Recorder-0.5.30.apk` and
+`../artifacts/Dink-Vision-Recorder-0.5.30.apk`. It contains arm64-v8a and x86_64
 native libraries. Gradle and native dependencies are pinned. The debug signing
 key lives in the developer's Android profile, not in this repository.
 

@@ -274,7 +274,9 @@ final class VideoBranding {
             if (previewMillis > 0
                 && frame.timestamp - sourceStart >= previewMillis * 1_000L)
               previewVideoComplete = true;
-          } else if (frame.samples != null && channels > 0 && sourceStart != Long.MIN_VALUE) {
+          } else if (frame.samples != null && channels > 0) {
+            // UVC files can decode audio before the first video frame. Keep it: dropping those
+            // samples makes the branded audio end early even when the source tracks align.
             if (!previewAudioComplete) {
               int frameChannels = frame.audioChannels > 0 ? frame.audioChannels : channels;
               int sampleFrames = frame.samples[0].remaining();

@@ -127,16 +127,20 @@ final class RecordedVideo {
       long audioStart = Long.MAX_VALUE;
       long videoDuration = 0;
       long audioDuration = 0;
+      long videoEnd = Long.MIN_VALUE;
+      long audioEnd = Long.MIN_VALUE;
       for (int index = 0; index < first.length; index++) {
         if (first[index] == Long.MAX_VALUE) continue;
         int kind = context.streams(index).codecpar().codec_type();
         if (kind == AVMEDIA_TYPE_VIDEO) {
           videoStart = first[index];
           videoDuration = end[index] - first[index];
+          videoEnd = end[index];
         }
         if (kind == AVMEDIA_TYPE_AUDIO) {
           audioStart = first[index];
           audioDuration = end[index] - first[index];
+          audioEnd = end[index];
         }
       }
       RecordingAccuracy.duration(
@@ -146,6 +150,9 @@ final class RecordedVideo {
         if (audioStart == Long.MAX_VALUE || Math.abs(audioStart - videoStart) > 1_500_000)
           throw new RecordingAccuracy.Failure(
               "Saved audio and video do not start together.");
+        if (Math.abs(audioEnd - videoEnd) > 500_000)
+          throw new RecordingAccuracy.Failure(
+              "Saved audio and video do not end together. The recording stays on this device.");
       }
       android.util.Log.i(
           "WPCRecording",
