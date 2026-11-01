@@ -294,8 +294,8 @@ function tick() {
       preview.load();
     }
     $('camera-test-help').textContent = state.testHasAudio
-      ? 'Turn the tablet volume up and confirm court sounds are clear. This test clip is not muted.'
-      : 'This configuration is video-only. Confirm that the picture is clear.';
+      ? 'Play all three seconds with the volume on. Confirm if picture and sound are clear; otherwise record another test.'
+      : 'Play all three seconds. Confirm if the picture is clear; otherwise record another test.';
     $('camera-test-confirm').textContent = state.testHasAudio ? 'I can see and hear the test' : 'The video looks clear';
   } else if (recordingFlow || (activeServerSession && state.phase !== 'complete')) {
     show('session');
@@ -319,6 +319,7 @@ function tick() {
   $('notice').textContent = !state.enabled
     ? state.enrolled ? 'Connection unavailable.' : ''
     : !state.cameraMode ? 'Camera setup is required.'
+    : state.testReady ? 'Review the clip and confirm the camera test.'
     : !state.tested ? 'Camera test is required.'
     : view === 'welcome' ? (state.message || '') : '';
   syncReenrollVisibility();

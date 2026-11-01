@@ -255,6 +255,19 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
       null,
     );
     assert.equal(await nativeTest(kiosk, rev), true);
+    await db.query(
+      "update recording_sessions set status='uploading' where id=$1",
+      [sid],
+    );
+    assert.equal(
+      await nativeTest(kiosk, rev),
+      true,
+      "a completed capture awaiting upload must not block a new camera test",
+    );
+    await db.query(
+      "update recording_sessions set status='ready' where id=$1",
+      [sid],
+    );
     await assert.rejects(
       () => start(randomUUID()),
       /configuration changed/,

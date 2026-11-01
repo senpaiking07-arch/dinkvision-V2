@@ -152,7 +152,9 @@ final class RecordedVideo {
               "Saved audio and video do not start together.");
         if (Math.abs(audioEnd - videoEnd) > 500_000)
           throw new RecordingAccuracy.Failure(
-              "Saved audio and video do not end together. The recording stays on this device.");
+              "Saved audio ends " + Math.abs(audioEnd - videoEnd) / 1_000L + " ms "
+                  + (audioEnd < videoEnd ? "before" : "after")
+                  + " the video. The recording stays on this device.");
       }
       android.util.Log.i(
           "WPCRecording",

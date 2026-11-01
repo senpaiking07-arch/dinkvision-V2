@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import pg from "pg";
+import { migrationChecksumMatches } from "./migration-checksums.mjs";
 
 const connectionString = process.env.MIGRATION_DATABASE_URL;
 if (!connectionString)
@@ -36,10 +37,12 @@ try {
       [name],
     );
     if (rows.length) {
-      if (rows[0].checksum !== checksum)
+      if (!migrationChecksumMatches(name, rows[0].checksum, checksum))
         throw new Error(
           "An applied migration was modified; restore it and add a new migration.",
         );
+      if (rows[0].checksum !== checksum)
+        console.log("Recognized historical checksum (ledger preserved):", name);
       console.log("Already applied:", name);
       currentMigration = undefined;
       continue;

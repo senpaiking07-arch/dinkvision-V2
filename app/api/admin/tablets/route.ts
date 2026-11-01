@@ -15,7 +15,7 @@ export async function GET() {
     db
       .from("browser_recordings")
       .select(
-        "session_id,device_id,job_id,safe_error,last_error,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,recording_sessions(id,court_id,status,created_at,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
+        "session_id,device_id,job_id,file_id,safe_error,last_error,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,recording_sessions(id,court_id,status,created_at,stopped_at,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
       )
       .order("last_seen_at", { ascending: false })
       .limit(100),

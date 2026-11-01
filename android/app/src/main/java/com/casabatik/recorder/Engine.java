@@ -55,9 +55,13 @@ final class Engine {
   volatile JSONObject server = new JSONObject();
 
   Engine(Context c) {
+    this(c, null);
+  }
+
+  Engine(Context c, Api.Connections connections) {
     context = c.getApplicationContext();
     vault = new Vault(context);
-    api = new Api(vault);
+    api = connections == null ? new Api(vault) : new Api(vault, connections);
     // A review is intentionally limited to the current app process. Remove a stale
     // cache clip after process death so it can never be mistaken for a new test.
     cameraTestFile().delete();
@@ -84,6 +88,7 @@ final class Engine {
             }
             if (!busy) {
               releaseCapturedRecordings();
+              reportPendingUploadFailures();
               refresh();
               reportFailedCaptureIfNeeded();
             }
@@ -369,20 +374,73 @@ final class Engine {
       String localFailureUpdate = local.optString("failureServerUpdatedAt");
       String remoteUpdate = remote.optString("upload_updated_at");
       if (!"failed".equals(local.optString("status"))
+          || local.optBoolean("failureReportPending")
+          || !belongsToCurrentDevice(local)
           || !local.optBoolean("localAvailable", true)
           || !file.isFile()
           || file.length() < 1024
-          || (!localFailureUpdate.isEmpty()
-              && (remoteUpdate.isEmpty() || remoteUpdate.compareTo(localFailureUpdate) <= 0))) continue;
+          || !newerServerUpdate(remoteUpdate, localFailureUpdate)) continue;
       try {
         local
             .put("status", "pending")
             .put("retryCount", 0)
             .put("serverRetryRequired", true)
+            .put("failureReportPending", false)
             .put("lastError", "")
             .put("nextRetryAt", 0);
         saveQueueItem(local);
       } catch (Exception ignored) {
+      }
+    }
+  }
+
+  private boolean newerServerUpdate(String current, String previous) {
+    if (previous.isEmpty()) return true; // Older APKs did not save an acknowledgement.
+    try {
+      return java.time.OffsetDateTime.parse(current).toInstant()
+          .isAfter(java.time.OffsetDateTime.parse(previous).toInstant());
+    } catch (java.time.format.DateTimeParseException invalid) {
+      return false;
+    }
+  }
+
+  private void reportUploadFailure(JSONObject item) throws Exception {
+    JSONObject response = api.tablet(
+        "upload-failed",
+        new JSONObject()
+            .put("id", item.getString("id"))
+            .put("retry_count", item.optInt("retryCount"))
+            .put("retrying", "retrying".equals(item.optString("status")))
+            .put("last_error", item.optString("lastError"))
+            .put("validation_failed", item.optBoolean("validationFailed"))
+            .put("branding_state", item.optString("brandingState")));
+    synchronized (vault) {
+      JSONObject current = queueItem(item.getString("id"));
+      if (!current.optBoolean("failureReportPending")
+          || current.optInt("retryCount") != item.optInt("retryCount")
+          || !current.optString("status").equals(item.optString("status"))) return;
+      current.put("failureReportPending", false);
+      // Use the server's acknowledged time, never the tablet's wall clock.
+      // A newer administrator request is the only remote state that resets a failure.
+      current.put("failureServerUpdatedAt",
+          "failed".equals(response.optString("upload_state"))
+              ? response.optString("upload_updated_at") : "");
+      saveQueueItem(current);
+    }
+  }
+
+  private void reportPendingUploadFailures() {
+    JSONArray current = queue();
+    for (int index = 0; index < current.length(); index++) {
+      JSONObject item = current.optJSONObject(index);
+      if (item == null || !item.optBoolean("failureReportPending")
+          || !belongsToCurrentDevice(item)
+          || !java.util.Arrays.asList("failed", "retrying").contains(item.optString("status")))
+        continue;
+      try {
+        reportUploadFailure(item);
+      } catch (Exception ignored) {
+        // Keep the pending report durable until the device can contact the server.
       }
     }
   }
@@ -724,6 +782,33 @@ final class Engine {
     message = accepted ? "Saving your camera confirmation…" : "Preparing another camera test…";
     final String revision = cameraTestRevision;
     final String camera = cameraTestCamera;
+    if (retry) {
+      work.execute(
+          () -> {
+            try {
+              api.call(
+                  "/api/tablet/camera",
+                  new JSONObject()
+                      .put("action", "tested")
+                      .put("revision", revision)
+                      .put("passed", false));
+            } catch (Exception e) {
+              // The old revision may already be invalid. A fresh configuration
+              // and capture are still the correct next steps.
+              Log.w("DinkVisionCamera", "Could not clear prior camera test before retry", e);
+            }
+            clearCameraCache();
+            clearCameraTestReview();
+            attemptedRevision = "";
+            error = "";
+            phase = "idle";
+            refresh();
+            busy = false;
+            if (visible) syncCamera();
+            else if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
+          });
+      return;
+    }
     work.execute(
         () -> {
           boolean updated = false;
@@ -758,7 +843,6 @@ final class Engine {
             if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
             refresh();
           }
-          if (updated && retry && visible) syncCamera();
         });
   }
 
@@ -1016,6 +1100,7 @@ final class Engine {
           .put("status", "pending")
           .put("retryCount", 0)
           .put("serverRetryRequired", true)
+          .put("failureReportPending", false)
           .put("lastError", "")
           .put("nextRetryAt", 0);
       saveQueueItem(item);
@@ -1148,6 +1233,8 @@ final class Engine {
               || item.optInt("retryCount", 0) > 0
               || "retrying".equals(item.optString("status"));
       UUID.fromString(sid);
+      item.put("failureReportPending", false);
+      saveQueueItem(item);
       if (!file.isFile() || file.length() < 1024)
         throw new Exception("The locally saved video is missing or incomplete.");
       try {
@@ -1259,8 +1346,13 @@ final class Engine {
         int retries = item.optInt("retryCount", 0) + 1;
         String failureMessage =
             failure.getMessage() == null ? "Upload temporarily unavailable." : failure.getMessage();
+        boolean validationFailed =
+            failure instanceof RecordingAccuracy.Failure
+                || failureMessage.contains("missing or incomplete")
+                || failureMessage.contains("not playable");
         boolean permanent =
-            retries >= 8
+            validationFailed
+                || retries >= 8
                 || failure instanceof UploadTransfer.CancelledException
                 || failureMessage.contains("missing or incomplete")
                 || failureMessage.contains("does not belong");
@@ -1269,6 +1361,8 @@ final class Engine {
             .put("status", permanent ? "failed" : "retrying")
             .put("retryCount", retries)
             .put("serverRetryRequired", true)
+            .put("failureReportPending", true)
+            .put("validationFailed", validationFailed)
             .put("lastError", failureMessage)
             .put("nextRetryAt", permanent ? 0 : System.currentTimeMillis() + delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L)));
         if (!item.optBoolean("branded", false) && item.has("brandingState"))
@@ -1281,19 +1375,7 @@ final class Engine {
                   ? "Upload needs attention. Your video is still safe on this tablet."
                   : "Upload paused. Retrying automatically; your video remains saved on this device.";
         try {
-          JSONObject failureReport =
-              new JSONObject()
-                  .put("id", sid)
-                  .put("retry_count", retries)
-                  .put("retrying", !permanent)
-                  .put("last_error", failureMessage)
-                  .put(
-                      "validation_failed",
-                      failureMessage.contains("missing or incomplete")
-                          || failureMessage.contains("not playable"));
-          if (item.has("brandingState"))
-            failureReport.put("branding_state", item.optString("brandingState"));
-          api.tablet("upload-failed", failureReport);
+          reportUploadFailure(item);
         } catch (Exception ignored) {
         }
       } catch (Exception ignored) {

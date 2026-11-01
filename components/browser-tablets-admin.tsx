@@ -1,16 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
-
-function canContinueUpload(recording: any) {
-  return (
-    recording?.upload_state === "failed" &&
-    Number(recording.bytes || 0) > 0 &&
-    ["uploading", "sharing", "failed"].includes(
-      recording.recording_sessions?.status,
-    )
-  );
-}
+import { videoRetryLabel } from "@/lib/upload-recovery";
 
 export default function BrowserTabletsAdmin() {
   const [data, setData] = useState<any>(null),
@@ -123,7 +114,7 @@ export default function BrowserTabletsAdmin() {
     ["queued", "uploading", "failed"].includes(
       selectedRecording.upload_state,
     );
-  const canRetrySelectedUpload = canContinueUpload(selectedRecording);
+  const selectedRetryLabel = videoRetryLabel(selectedRecording, selected?.recorder_mode === "android_rtsp");
   return (
     <section className="admin-card browser-devices">
       {notice && <p role="status" className="form-note">{notice}</p>}
@@ -185,7 +176,10 @@ export default function BrowserTabletsAdmin() {
                 item.upload_state,
               ),
             );
-            const visibleQueue = queueItems.slice(0, 4);
+            const visibleQueue = [
+              ...queueItems.slice(0, 4),
+              ...queueItems.slice(4).filter((item: any) => item.upload_state === "failed"),
+            ];
             const online =
               d.enabled &&
               d.kiosk_id &&
@@ -218,7 +212,7 @@ export default function BrowserTabletsAdmin() {
                 "cancelled",
                 "local_only",
               ].includes(recording.upload_state);
-            const canContinue = canContinueUpload(recording);
+            const retryLabel = videoRetryLabel(recording, d.recorder_mode === "android_rtsp");
             const readyFile = recording?.recording_sessions?.recording_files?.find(
               (file: any) => file.status === "ready" && file.drive_file_id,
             );
@@ -273,6 +267,7 @@ export default function BrowserTabletsAdmin() {
                 {visibleQueue.length > 0 && (
                   <span className="device-queue-items" aria-label={`${d.name} upload items`}>
                     {visibleQueue.map((item: any) => {
+                      const itemRetryLabel = videoRetryLabel(item, d.recorder_mode === "android_rtsp");
                       const percent = item.bytes
                         ? Math.min(
                             100,
@@ -283,8 +278,10 @@ export default function BrowserTabletsAdmin() {
                         : 0;
                       return (
                         <span className="device-queue-item" key={item.job_id || item.session_id}>
-                          <span>Video {item.session_id?.slice(0, 8)}</span>
-                          <span>
+                          <span className="device-queue-item-title">
+                            Video {item.session_id?.slice(0, 8)}
+                          </span>
+                          <span className="device-queue-item-state">
                             {item.upload_state.replaceAll("_", " ")}
                             {item.upload_state === "uploading" ? ` · ${percent}%` : ""}
                             {item.branding_state === "processing"
@@ -294,6 +291,37 @@ export default function BrowserTabletsAdmin() {
                                 ? " · logo added"
                                 : ""}
                           </span>
+                          {item.upload_state === "failed" && (
+                            <span className="device-queue-item-error">
+                              {item.branding_state
+                                ? `Logo: ${String(item.branding_state).replaceAll("_", " ")}. `
+                                : "Logo status unavailable. "}
+                              {item.last_error ||
+                                item.safe_error ||
+                                "No detailed error was reported by the device."}
+                            </span>
+                          )}
+                          {itemRetryLabel && (
+                            <button
+                              type="button"
+                              className="device-continue-upload device-queue-retry"
+                              disabled={busy}
+                              aria-label={`${itemRetryLabel} for video ${item.session_id?.slice(0, 8)}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void action({
+                                  action: "retry-upload",
+                                  id: d.id,
+                                  session_id: item.session_id,
+                                }).then((ok) => {
+                                  if (ok)
+                                    setNotice("Retry requested. The original tablet must connect to process and upload this video. Validation must pass before upload.");
+                                });
+                              }}
+                            >
+                              {busy ? "Requesting…" : itemRetryLabel}
+                            </button>
+                          )}
                         </span>
                       );
                     })}
@@ -313,7 +341,7 @@ export default function BrowserTabletsAdmin() {
                           : recording.upload_state === "uploading"
                           ? `Uploading to Google Drive · ${uploadPercent}%`
                           : recording.upload_state === "failed"
-                            ? recording.safe_error || (canContinue
+                            ? recording.safe_error || (retryLabel
                               ? "Upload paused"
                               : "Upload paused · check the original device")
                             : recording.upload_state === "cancelled"
@@ -337,7 +365,7 @@ export default function BrowserTabletsAdmin() {
                           ? "This clip will not be sent to Google Drive."
                           : "The original webpage or APK keeps the local backup until it verifies that the upload completed."}
                       </small>
-                      {canContinue && (
+                      {retryLabel && (
                         <button
                           type="button"
                           className="device-continue-upload"
@@ -351,7 +379,7 @@ export default function BrowserTabletsAdmin() {
                             });
                           }}
                         >
-                          {busy ? "Requesting…" : "Continue upload"}
+                          {busy ? "Requesting…" : retryLabel}
                         </button>
                       )}
                     </span>
@@ -561,7 +589,7 @@ export default function BrowserTabletsAdmin() {
                 </p>
               </div>
               <div className="save-row">
-                {canRetrySelectedUpload && (
+                {selectedRetryLabel && (
                   <button
                     type="button"
                     className="primary"
@@ -574,7 +602,7 @@ export default function BrowserTabletsAdmin() {
                       })
                     }
                   >
-                    {busy ? "Requesting…" : "Continue upload"}
+                    {busy ? "Requesting…" : selectedRetryLabel}
                   </button>
                 )}
                 <button

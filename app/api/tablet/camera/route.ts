@@ -74,16 +74,43 @@ export async function POST(request: Request) {
       });
     }
     if (b.action === "tested" && typeof b.passed === "boolean") {
+      const revision = uuid(b.revision);
+      if (revision !== t.device.config_revision)
+        return json(
+          { error: "Camera settings changed during the test. Tap Record another test." },
+          409,
+        );
+      if (t.kiosk.current_session_id) {
+        const current = await recorderDatabase()
+          .from("recording_sessions")
+          .select("status")
+          .eq("id", t.kiosk.current_session_id)
+          .eq("kiosk_id", t.kiosk.id)
+          .maybeSingle();
+        if (current.error) throw current.error;
+        if (current.data && activeCaptureStatuses.includes(current.data.status))
+          return json(
+            { error: "A match is still recording. Finish it before testing the camera again." },
+            409,
+          );
+      }
       const r = await recorderDatabase().rpc("native_camera_test", {
         p_kiosk: t.kiosk.id,
-        p_revision: uuid(b.revision),
+        p_revision: revision,
         p_passed: b.passed,
       });
-      if (r.error || !r.data)
+      if (r.error) {
+        console.error("Camera test confirmation failed", { code: r.error.code });
+        return json(
+          { error: "Could not save the camera test. Check the connection and try confirming again." },
+          503,
+        );
+      }
+      if (!r.data)
         return json(
           {
             error:
-              "Camera settings changed or a match is active. Retry the test when idle.",
+              "Camera setup or match status changed while saving. Tap Record another test when the court is idle.",
           },
           409,
         );

@@ -4,7 +4,7 @@
 
 The deployment branch is `codex/player-preview`. After reviewing and merging contributor changes, the Vercel project owner publishes the release using their linked Git identity. Keep contributor commits intact. Verify that the new Vercel deployment reaches **Ready**, then promote it to Production if it was created as a Preview. Redeploying an older deployment does not include newer branch commits.
 
-Latest local Android test build: **0.5.30** (debug-signed; [SHA-256 checksum](artifacts/Dink-Vision-Recorder-0.5.30.apk.sha256)). Gradle exports the APK to `artifacts/Dink-Vision-Recorder-0.5.30.apk`; APK binaries are ignored by Git. This update retains audio through the end of branded recordings and rejects files whose sound ends substantially before the picture. See the [audio-tail investigation](docs/testing/android-0.5.30-audio-tail-2026-10-30.md) and the [0.5.29 physical test notes](docs/testing/android-0.5.29-physical-checks-2026-10-30.md). Production signing and longer venue recordings remain separate release checks.
+Latest local Android test build: **0.5.31** (debug-signed; [SHA-256 checksum](artifacts/Dink-Vision-Recorder-0.5.31.apk.sha256)). Gradle exports the APK to `artifacts/Dink-Vision-Recorder-0.5.31.apk`; APK binaries are ignored by Git. This update fixes camera-test confirmation during older uploads, retries stale camera tests, and makes failed local processing recoverable from Admin. See the [recording and recovery workflow](docs/testing/Android_Recorder_Workflow_0.5.31.md). The court videos with audio/video end-time mismatches still require original-file inspection; this build does not bypass media validation. Production signing and physical venue validation remain release checks.
 
 Tablet guest recording with Google Drive upload, emailed playback links, and automatic retention cleanup. The tablet design preview is at `/preview` and cannot record.
 
@@ -90,7 +90,7 @@ npm run account:create -- owner@example.com admin "Venue owner"
 npm run account:create -- player@example.com player "Test player"
 ```
 
-The migration runner records checksums and applies each new file in a transaction. Never edit already applied migrations. It refuses modified checksums and serializes concurrent runs.
+The migration runner records checksums and applies each new file in a transaction. Never edit already applied migrations. It refuses modified checksums and serializes concurrent runs. One audited compatibility pair is recorded for migration 036: commit `9eb79ef` added only the migration-role membership grant required for fresh Supabase installations. A database with the exact earlier checksum keeps its original ledger entry and skips that already-applied migration; every other checksum mismatch remains an error.
 
 Account provisioning is a trusted local operation for explicitly confirmed owner/test emails. It auto-confirms seeded emails without sending mail, assigns the requested role server-side, and generates a random password in a git-ignored `.local/account-<id>.json` file. It does not reset existing users' passwords. Deliver these credentials privately; no public signup or email-based password reset UI is included yet. The owner must supply the lasting admin/test-player identities. Passwords and tokens must never enter Git.
 

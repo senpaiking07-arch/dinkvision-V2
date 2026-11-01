@@ -53,7 +53,7 @@ export async function browserTabletState(
         : Promise.resolve({ data: null, error: null }),
       db
         .from("browser_recordings")
-        .select("session_id,job_id,upload_state,uploaded_bytes,bytes,retry_count,last_error,client_created_at,duration_ms,local_available,recording_sessions(court_id,status,created_at)")
+        .select("session_id,job_id,upload_state,upload_updated_at,uploaded_bytes,bytes,retry_count,last_error,client_created_at,duration_ms,local_available,recording_sessions(court_id,status,created_at)")
         .eq("device_id", t.device.id)
         .order("client_created_at", { ascending: false })
         .limit(100),
@@ -333,12 +333,18 @@ export async function POST(request: Request) {
           : "Upload paused on this device.",
         safe_error: b.validation_failed === true
           ? "Video validation failed. Check the saved video on the original device."
+          : b.branding_state === "failed"
+          ? "Logo processing failed. The original video remains on the device."
           : b.retrying === true
           ? "Connection interrupted. Automatic retry scheduled."
           : "Upload paused on this device.",
       }).eq("session_id", id).eq("device_id", t.device.id).eq("upload_state", "failed");
       if (updated.error) throw updated.error;
-      return json({ ok: true });
+      const acknowledged = await db.from("browser_recordings")
+        .select("upload_state,upload_updated_at")
+        .eq("session_id", id).eq("device_id", t.device.id).single();
+      if (acknowledged.error) throw acknowledged.error;
+      return json({ ok: true, ...acknowledged.data });
     }
     if (
       ["upload", "finish", "restart-upload", "retry-upload"].includes(

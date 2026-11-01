@@ -443,6 +443,30 @@ test("all devices in a tenant share one global FIFO upload queue", async () => {
       { status: "uploading", upload_state: "pending", local_available: true },
     );
 
+    // A native clip can fail validation before `saved` creates an upload file.
+    // The administrator must still be able to ask its original tablet to retry.
+    const rawKiosk = randomUUID(), rawDevice = randomUUID(), rawSession = randomUUID();
+    await db.query("insert into kiosk_devices(id,token_hash,created_by) values($1,'raw-retry-token',$2)", [rawKiosk,admin]);
+    await db.query("insert into browser_devices(id,name,court_id,kiosk_id,recorder_mode,video_device) values($1,'Raw clip tablet',$2,$3,'android_rtsp','android-camera-v1')", [rawDevice,courts[0],rawKiosk]);
+    await db.query("insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email,stopped_at) values($1,$2,$3,gen_random_uuid(),'uploading','{}','raw@gmail.com',now())", [rawSession,rawKiosk,courts[0]]);
+    await db.query("insert into browser_recordings(session_id,device_id,upload_state,branding_state,retry_count,local_available) values($1,$2,'failed','failed',8,true)", [rawSession,rawDevice]);
+    const retryRaw = async (device = rawDevice) => (await db.query<{ok:boolean}>("select retry_browser_upload($1,$2) ok", [rawSession,device])).rows[0].ok;
+    assert.equal(await retryRaw(devices[0]), false, "a different tablet cannot retry another device's raw clip");
+    await db.query("update browser_recordings set local_available=false where session_id=$1", [rawSession]);
+    assert.equal(await retryRaw(), false, "a missing local copy cannot be processed again");
+    await db.query("update browser_recordings set local_available=true where session_id=$1", [rawSession]);
+    assert.equal(await retryRaw(), true, "validation failure can be retried before an upload file exists");
+    assert.equal(await retryRaw(), true, "repeating the administrator request is idempotent");
+    assert.deepEqual((await db.query("select upload_state,retry_count,file_id,bytes from browser_recordings where session_id=$1", [rawSession])).rows[0],
+      {upload_state:"retrying",retry_count:0,file_id:null,bytes:null});
+    assert.equal((await db.query<{allowed:boolean}>("select allowed from browser_upload_turn($1,$2,true)", [rawSession,rawDevice])).rows[0].allowed, false,
+      "raw processing never enters the cloud upload queue before validation succeeds");
+    await db.query("update recording_sessions set status='recording',stopped_at=null where id=$1", [rawSession]);
+    await db.query("update browser_recordings set upload_state='failed' where session_id=$1", [rawSession]);
+    assert.equal(await retryRaw(), false, "a failed flag cannot retry a clip that is still recording");
+    await db.query("update recording_sessions set status='ready',stopped_at=now() where id=$1", [rawSession]);
+    assert.equal(await retryRaw(), false, "late failure flags cannot reopen a completed session");
+
     const stale = randomUUID();
     await db.query(`insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email)
       values($1,$2,$3,gen_random_uuid(),'recording','{}','stale@example.com')`, [stale,kiosks[0],courts[0]]);

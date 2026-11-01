@@ -1698,13 +1698,25 @@ summary {
   display: grid;
 }
 .device-queue-item {
+  align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   display: flex;
 }
-.device-queue-item span:last-child {
+.device-queue-item-state {
   text-transform: capitalize;
   color: #38635b;
+}
+.device-queue-item-error {
+  flex: 1 0 100%;
+  color: #805347;
+  overflow-wrap: anywhere;
+}
+.device-queue-retry {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: 6px 9px;
 }
 .device-queue-more {
   color: #87938a;
