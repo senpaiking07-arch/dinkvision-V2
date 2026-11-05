@@ -2,9 +2,13 @@
 
 ## Publishing merged updates
 
-The deployment branch is `codex/player-preview`. After reviewing and merging contributor changes, the Vercel project owner publishes the release using their linked Git identity. Keep contributor commits intact. Verify that the new Vercel deployment reaches **Ready**, then promote it to Production if it was created as a Preview. Redeploying an older deployment does not include newer branch commits.
+After reviewing and merging contributor changes, the Vercel project owner publishes the selected deployment branch using their linked Git identity. Keep contributor commits intact. Verify that the new Vercel deployment reaches **Ready**, then promote it to Production if it was created as a Preview. Redeploying an older deployment does not include newer branch commits.
 
-Latest local Android test build: **0.5.31** (debug-signed; [SHA-256 checksum](artifacts/Dink-Vision-Recorder-0.5.31.apk.sha256)). Gradle exports the APK to `artifacts/Dink-Vision-Recorder-0.5.31.apk`; APK binaries are ignored by Git. This update fixes camera-test confirmation during older uploads, retries stale camera tests, and makes failed local processing recoverable from Admin. See the [recording and recovery workflow](docs/testing/Android_Recorder_Workflow_0.5.31.md). The court videos with audio/video end-time mismatches still require original-file inspection; this build does not bypass media validation. Production signing and physical venue validation remain release checks.
+Latest Android source release: **0.5.43** (build 49, debug-signed test candidate). New USB and Camera2 recordings include the logo during capture: **record with logo → finalize and validate → upload to Drive**. Older unbranded saved videos retain their processing/recovery path. See the [0.5.43 HONOR verification report and remaining checks](docs/testing/Android_Recorder_Workflow_0.5.43.md), including the measured frame rates, background capture, upload recovery and physical-test limitations.
+
+Gradle exports shareable APKs to the sibling `DinkVision-APKs` directory, outside this checkout, with SHA-256 checksums. Android Studio retains its managed build output. Android video chunks go directly to Google Drive; authorization, queue order, confirmed progress, completion verification and email stay on the backend. Deploy the matching backend before distributing the APK. When moving to another site, configure its canonical `APP_ORIGIN`, register its Google OAuth callback, and rebuild the standard APK for that origin. Required-update enforcement stays off until the approved signed APK is available at a working HTTPS download URL. The separate local-test package uses ADB reverse to port 3000. See the [direct-upload rollout instructions](docs/testing/Android_Recorder_Workflow_0.5.38.md). Media validation remains enabled.
+
+The HONOR 0.5.40 processing-timeout fix, project-local signing, approved waiting-queue expiry migration and physical verification are documented in [the 0.5.40 test report](docs/testing/Android_Recorder_Workflow_0.5.40.md). The local-test APK uses `com.casabatik.recorder.dev` and ADB reverse to port 3000; its export ends in `-local.apk`.
 
 Tablet guest recording with Google Drive upload, emailed playback links, and automatic retention cleanup. The tablet design preview is at `/preview` and cannot record.
 
@@ -208,3 +212,7 @@ Validation: 32 automated tests, production build, API authorization/origin/sessi
 ## Unified camera setup
 
 Admin → Camera setup now keeps the venue computer selector, pairing/discovery controls, camera list, and court/audio form together. The connected computer is selected initially; switching computers scopes the devices and camera list and clears the previous edit. Camera forms inherit this selected computer. Add/edit computer remains inline, and saving a new computer selects it for pairing. No advanced-settings area is introduced in this phase.
+
+## Earlier Android recorder verification
+
+Historical enrollment, local-file/export reporting, Admin presence, workflow and physical Samsung/EMEET results are tracked in [the 0.5.34 verification report](docs/testing/Android_Recorder_Workflow_0.5.34.md). Follow the latest candidate report linked above for current changes and remaining release checks. The ordinary APK uses the configured hosted HTTPS backend; the localhost test variant is a separate package. Publishing/deploying these local changes requires the user's explicit instruction.

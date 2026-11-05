@@ -53,6 +53,9 @@ export async function PUT(request: Request) {
     const contentRange = request.headers.get("content-range") || "";
     const mimeType = (request.headers.get("content-type") || "").split(";")[0];
     const chunk = await readChunk(request);
+    const contact=await recorderDatabase().from("browser_devices").update({last_seen_at:new Date().toISOString()})
+      .eq("id",tablet.device.id).eq("tenant_id",tablet.kiosk.tenant_id);
+    if(contact.error) throw contact.error;
     return json(
       await browserUploadChunk(
         id,

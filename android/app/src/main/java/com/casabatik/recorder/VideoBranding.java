@@ -16,6 +16,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntConsumer;
 import org.bytedeco.javacv.FFmpegFrameGrabber;
 import org.bytedeco.javacv.FFmpegFrameRecorder;
 import org.bytedeco.javacv.Frame;
@@ -65,6 +66,11 @@ final class VideoBranding {
     return apply(context, source, expectedMillis, expectAudio, pauseRequested, -1);
   }
 
+  static long apply(Context context, File source, long expectedMillis, boolean expectAudio,
+      BooleanSupplier pauseRequested, IntConsumer progress) throws Exception {
+    return apply(context, source, expectedMillis, expectAudio, pauseRequested, -1, progress);
+  }
+
   static long applyPreview(
       Context context,
       File source,
@@ -84,6 +90,12 @@ final class VideoBranding {
       BooleanSupplier pauseRequested,
       long previewMillis)
       throws Exception {
+    return apply(context, source, expectedMillis, expectAudio, pauseRequested, previewMillis, ignored -> {});
+  }
+
+  private static long apply(Context context, File source, long expectedMillis, boolean expectAudio,
+      BooleanSupplier pauseRequested, long previewMillis, IntConsumer progress) throws Exception {
+    progress.accept(0);
     long sourceMillis = RecordedVideo.validate(source, expectedMillis, expectAudio);
     if (previewMillis > 0 && sourceMillis < previewMillis)
       throw new RecordingAccuracy.Failure(
@@ -94,6 +106,7 @@ final class VideoBranding {
     if (isBranded(source)) {
       temporary.delete();
       backup.delete();
+      progress.accept(100);
       return sourceMillis;
     }
     if (temporary.exists() && !temporary.delete())
@@ -109,7 +122,9 @@ final class VideoBranding {
           sourceMillis,
           expectAudio,
           pauseRequested,
-          previewMillis);
+          previewMillis,
+          progress);
+      progress.accept(99);
       long brandedMillis =
           RecordedVideo.validate(
               temporary, previewMillis > 0 ? -1 : expectedMillis, expectAudio);
@@ -135,6 +150,7 @@ final class VideoBranding {
       Log.i(
           "DinkVisionVideo",
           "Logo saved durationMs=" + confirmedMillis + " bytes=" + source.length());
+      progress.accept(100);
       return confirmedMillis;
     } catch (Exception failure) {
       temporary.delete();
@@ -147,6 +163,7 @@ final class VideoBranding {
       if (failure instanceof ProcessingPausedException
           || failure instanceof RecordingAccuracy.Failure) throw failure;
       Log.e("DinkVisionVideo", "Logo processing failed; the source video was preserved", failure);
+      diagnostic(context, "failure file=" + source.getName() + " cause=" + failure.getClass().getSimpleName() + ": " + failure.getMessage());
       throw new Exception(
           "The Dink Vision logo could not be added. The original video was preserved. Please retry.",
           failure);
@@ -154,6 +171,7 @@ final class VideoBranding {
   }
 
   private static boolean isBranded(File source) {
+    if (LiveLogoEvidence.verified(source)) return true;
     try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(source)) {
       grabber.start();
       String comment = grabber.getMetadata("comment");
@@ -193,11 +211,13 @@ final class VideoBranding {
       long sourceMillis,
       boolean expectAudio,
       BooleanSupplier pauseRequested,
-      long previewMillis)
+      long previewMillis,
+      IntConsumer progress)
       throws Exception {
     Bitmap original = null, scaled = null, mark = null;
-    long timeoutMillis = Math.max(180_000L, Math.min(2_700_000L, sourceMillis * 3L + 60_000L));
-    long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+    long startedNanos = System.nanoTime(), lastDiagnosticNanos = startedNanos;
+    BrandingProgress health = new BrandingProgress(startedNanos);
+    long encodedFrames = 0;
     try (InputStream stream = context.getAssets().open(ASSET);
         FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(source)) {
       original = BitmapFactory.decodeStream(stream);
@@ -225,12 +245,14 @@ final class VideoBranding {
       double fps = grabber.getFrameRate();
       if (!Double.isFinite(fps) || fps <= 0 || fps > 120)
         throw new Exception("The saved video frame rate is invalid.");
+      diagnostic(context, "start file=" + source.getName() + " width=" + width + " height=" + height
+          + " sourceFps=" + fps + " durationMs=" + sourceMillis + " freeBytes=" + source.getUsableSpace());
 
       try (FFmpegFrameRecorder recorder = new FFmpegFrameRecorder(output, width, height, channels)) {
         recorder.setFormat("mp4");
         recorder.setVideoCodecName("libopenh264");
         int bitrate = grabber.getVideoBitrate();
-        recorder.setVideoBitrate(bitrate > 0 ? Math.max(2_000_000, Math.min(8_000_000, bitrate)) : 4_000_000);
+        recorder.setVideoBitrate(bitrate > 0 ? Math.max(2_000_000, Math.min(32_000_000, bitrate)) : 4_000_000);
         recorder.setFrameRate(fps);
         recorder.setGopSize(Math.max(1, (int) Math.round(fps)));
         recorder.setPixelFormat(AV_PIX_FMT_YUV420P);
@@ -246,13 +268,12 @@ final class VideoBranding {
         long sourceStart = Long.MIN_VALUE, lastVideo = Long.MIN_VALUE;
         long audioSampleFrames = 0;
         int outputFrameNumber = -1;
+        int reportedPercent = -1;
         boolean wroteVideo = false, wroteAudio = false;
         boolean previewVideoComplete = false, previewAudioComplete = channels == 0;
         Frame frame;
         while ((frame = grabber.grabFrame(channels > 0, true, true, false)) != null) {
           if (pauseRequested.getAsBoolean()) throw new ProcessingPausedException();
-          if (System.nanoTime() > deadline)
-            throw new Exception("Adding the logo took too long. The original video was preserved.");
           if (output.getParentFile().getUsableSpace() < 50_000_000L)
             throw new Exception("Tablet storage is nearly full. The original video was preserved.");
           if (frame.image != null) {
@@ -260,17 +281,24 @@ final class VideoBranding {
             if (previewVideoComplete) continue;
             if (frame.timestamp <= lastVideo)
               throw new Exception("The saved video timestamps do not advance.");
+            lastVideo = frame.timestamp;
+            int frameNumber = nextFrameNumber(frame.timestamp, sourceStart, fps, outputFrameNumber);
+            // Quantization can place several jittery camera frames in one output slot.
+            // Skip duplicates; advancing their clock would stretch the picture beyond audio.
+            if (frameNumber <= outputFrameNumber) {
+              // Consuming a valid, intentionally dropped quantized frame is progress too.
+              health.advanced(frame.timestamp - sourceStart, System.nanoTime());
+              continue;
+            }
             blend(frame, pixels, mark.getWidth(), mark.getHeight(), rotation);
-            // JavaCV converts setTimestamp() to a rounded frame number. Two valid source
-            // timestamps can therefore round to the same frame and make FFmpeg reject the
-            // second packet as non-monotonic. Assign the closest strictly increasing frame
-            // number instead so every device produces valid MP4 packet timestamps.
-            outputFrameNumber =
-                nextFrameNumber(frame.timestamp, sourceStart, fps, outputFrameNumber);
+            outputFrameNumber = frameNumber;
             recorder.setFrameNumber(outputFrameNumber);
             recorder.record(frame);
-            lastVideo = frame.timestamp;
+            encodedFrames++;
+            health.advanced(frame.timestamp - sourceStart, System.nanoTime());
             wroteVideo = true;
+            int percent = processingPercent(frame.timestamp - sourceStart, previewMillis > 0 ? previewMillis : sourceMillis);
+            if (percent != reportedPercent) { reportedPercent = percent; progress.accept(percent); }
             if (previewMillis > 0
                 && frame.timestamp - sourceStart >= previewMillis * 1_000L)
               previewVideoComplete = true;
@@ -283,11 +311,21 @@ final class VideoBranding {
               if (frame.samples.length == 1) sampleFrames /= frameChannels;
               audioSampleFrames += sampleFrames;
               recorder.record(frame);
+              health.advancedAudio(audioSampleFrames * 1_000_000L / sampleRate, System.nanoTime());
               wroteAudio = true;
               if (previewMillis > 0
                   && audioSampleFrames * 1_000L >= previewMillis * sampleRate)
                 previewAudioComplete = true;
             }
+          }
+          long nowNanos = System.nanoTime();
+          health.check(nowNanos);
+          if (nowNanos - lastDiagnosticNanos >= 10_000_000_000L) {
+            double elapsedSeconds = (nowNanos - startedNanos) / 1_000_000_000.0;
+            diagnostic(context, "progress file=" + source.getName() + " percent=" + reportedPercent
+                + " elapsedSeconds=" + elapsedSeconds + " encodedFrames=" + encodedFrames
+                + " processingFps=" + encodedFrames / elapsedSeconds);
+            lastDiagnosticNanos = nowNanos;
           }
           if (previewMillis > 0 && previewVideoComplete && previewAudioComplete) break;
         }
@@ -305,11 +343,27 @@ final class VideoBranding {
     }
   }
 
+  // HONOR firmware can hide Logcat output. Keep bounded, credential-free media
+  // diagnostics in app-private storage as well; never include API requests.
+  private static synchronized void diagnostic(Context context, String detail) {
+    Log.i("DinkVisionVideo", detail);
+    File log = new File(context.getFilesDir(), "branding-diagnostics.log");
+    try (java.io.FileWriter writer = new java.io.FileWriter(log, log.length() < 262_144L)) {
+      writer.write(System.currentTimeMillis() + " " + detail + "\n");
+    } catch (java.io.IOException ignored) { }
+  }
+
   static void requirePreviewDuration(long actualMillis, long expectedMillis)
       throws RecordingAccuracy.Failure {
     if (actualMillis < expectedMillis - 250L || actualMillis > expectedMillis + 500L)
       throw new RecordingAccuracy.Failure(
           "The saved camera test duration is incomplete. Reconnect the camera and retry.");
+  }
+
+  // Reserve completion for output validation and the safe replacement, not EOF alone.
+  static int processingPercent(long processedUs, long durationMillis) {
+    if (durationMillis < 1) throw new IllegalArgumentException("Video duration must be positive.");
+    return (int) Math.max(0, Math.min(98, processedUs * 98.0 / (durationMillis * 1000.0)));
   }
 
   static int nextFrameNumber(
@@ -319,7 +373,7 @@ final class VideoBranding {
       throw new Exception("The saved video frame rate is invalid.");
     long relativeTimestampUs = Math.max(0L, sourceTimestampUs - sourceStartUs);
     long timestampFrame = Math.round(relativeTimestampUs * frameRate / 1_000_000.0);
-    long nextFrame = Math.max(timestampFrame, (long) previousFrameNumber + 1L);
+    long nextFrame = timestampFrame;
     if (nextFrame > Integer.MAX_VALUE)
       throw new Exception("The saved video is too long to finish safely.");
     return (int) nextFrame;

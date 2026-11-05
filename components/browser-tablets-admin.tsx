@@ -2,6 +2,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { videoRetryLabel } from "@/lib/upload-recovery";
+import { recordingDisplayLabel } from "@/lib/recording-label";
+import { recordingIsConfirmed } from "@/lib/recording-status";
+import type { DeviceInfo } from "@/lib/device-info";
+import { localProcessingLabel, reportedBrandingProgress, recordingStageLabel } from "@/lib/local-video-status";
+import { devicePresence } from "@/lib/device-presence";
+import {recordingSizeMb,uploadSizeMb} from "@/lib/recording-size";
+import {deviceQueueOrder,isQueuedWork,visibleDeviceQueueItem,isLocalOnlyHistory} from "@/lib/device-queue-order";
 
 export default function BrowserTabletsAdmin() {
   const [data, setData] = useState<any>(null),
@@ -15,6 +22,8 @@ export default function BrowserTabletsAdmin() {
     [cancellingUpload, setCancellingUpload] = useState<any>(null),
     [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
   const [newTabletVersion, setNewTabletVersion] = useState(0);
+  const [connectionNotice, setConnectionNotice] = useState("");
+  const [replacingEnrollment,setReplacingEnrollment]=useState<object|null>(null);
   const tabletEditor = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (!newTabletVersion) return;
@@ -29,12 +38,16 @@ export default function BrowserTabletsAdmin() {
   async function refresh() {
     try {
       const r = await fetch("/api/admin/tablets");
+      setConnectionNotice(navigator.onLine ? "" : "No internet connection detected. Displayed device states may be stale.");
       const d = await r.json();
       if (!r.ok) throw Error(d.error);
-      setData(d);
+      setData({...d,receivedAt:Date.now()});
       return d;
     } catch (e) {
-      setError((e as Error).message);
+      if (e instanceof TypeError) setConnectionNotice(navigator.onLine
+        ? "Network available, but the application server cannot be reached. Internet access is not verified. Retrying automatically."
+        : "No internet connection detected. Displayed device states may be stale.");
+      else setError((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -42,7 +55,9 @@ export default function BrowserTabletsAdmin() {
   useEffect(() => {
     void refresh();
     const t = setInterval(() => void refresh(), 3000);
-    return () => clearInterval(t);
+    const offline = () => setConnectionNotice("No internet connection detected. Displayed device states may be stale.");
+    window.addEventListener("offline", offline);
+    return () => { clearInterval(t); window.removeEventListener("offline", offline); };
   }, []);
   async function action(body: object) {
     setBusy(true);
@@ -55,6 +70,7 @@ export default function BrowserTabletsAdmin() {
         body: JSON.stringify(body),
       });
       const d = await r.json();
+      if(r.status===409 && d.replacementRequired){setReplacingEnrollment(body);return false;}
       if (!r.ok) throw Error(d.error);
       if (d.code) {
         setCode(d.code);
@@ -117,6 +133,7 @@ export default function BrowserTabletsAdmin() {
   const selectedRetryLabel = videoRetryLabel(selectedRecording, selected?.recorder_mode === "android_rtsp");
   return (
     <section className="admin-card browser-devices">
+      {connectionNotice && <p role="status" className="form-note">{connectionNotice}</p>}
       {notice && <p role="status" className="form-note">{notice}</p>}
       <div className="section-heading">
         <div>
@@ -161,58 +178,26 @@ export default function BrowserTabletsAdmin() {
             </div>
           )}
           {!loading && data?.devices?.map((d: any) => {
-            const recording = data.recordings.find(
-              (r: any) => r.device_id === d.id,
-            );
+            const now=(Date.parse(data.serverTime||"")||Date.now())+Math.max(0,Date.now()-(data.receivedAt||Date.now()));
             const deviceQueue = data.recordings.filter(
-              (r: any) => r.device_id === d.id,
+              (r: any) => r.device_id === d.id && visibleDeviceQueueItem(r,now),
             );
+            const recording = deviceQueue[0];
             const queueSummary = (status: string) =>
               deviceQueue.filter((r: any) => r.upload_state === status).length;
             const activeQueueCount =
-              queueSummary("pending") + queueSummary("retrying");
-            const queueItems = deviceQueue.filter((item: any) =>
-              ["saved_locally", "pending", "retrying", "uploading", "failed"].includes(
+              queueSummary("pending") + queueSummary("queued") + queueSummary("retrying");
+            const queueItems = deviceQueueOrder(deviceQueue.filter((item: any) =>
+              ["saved_locally", "pending", "queued", "retrying", "uploading", "failed", "local_only","uploaded"].includes(
                 item.upload_state,
               ),
-            );
-            const visibleQueue = [
-              ...queueItems.slice(0, 4),
-              ...queueItems.slice(4).filter((item: any) => item.upload_state === "failed"),
-            ];
-            const online =
-              d.enabled &&
-              d.kiosk_id &&
-              Date.now() - Date.parse(d.last_seen_at || "") < 45000;
-            const deviceStatus = !d.enabled
-              ? "Disabled"
-              : !d.kiosk_id
-                ? "Awaiting enrollment"
-                : "Offline";
-            const uploadPercent = recording?.bytes
-              ? Math.min(
-                  100,
-                  Math.round(
-                    (Number(recording.uploaded_bytes || 0) /
-                      Number(recording.bytes)) *
-                      100,
-                  ),
-                )
-              : 0;
-            const uploadVisible =
-              recording &&
-              recording.recording_sessions?.status !== "ready" &&
-              [
-                "queued",
-                "saved_locally",
-                "pending",
-                "retrying",
-                "uploading",
-                "failed",
-                "cancelled",
-                "local_only",
-              ].includes(recording.upload_state);
-            const retryLabel = videoRetryLabel(recording, d.recorder_mode === "android_rtsp");
+            ));
+            const historyQueue=queueItems.filter(isLocalOnlyHistory);
+            const visibleQueue=queueItems.filter(item=>!isLocalOnlyHistory(item));
+            const queuePositions=new Map(queueItems.filter(isQueuedWork).map((item,index)=>[item.session_id,index+1]));
+            const presence=devicePresence(d,now),online=presence.connected,deviceStatus=presence.label;
+            const captureUnconfirmed = recording?.recording_sessions?.status === "recording" &&
+              !recordingIsConfirmed(recording.recording_sessions, recording, now);
             const readyFile = recording?.recording_sessions?.recording_files?.find(
               (file: any) => file.status === "ready" && file.drive_file_id,
             );
@@ -221,6 +206,7 @@ export default function BrowserTabletsAdmin() {
               setSelected(d);
               setCode("");
             };
+            const hardware = d.device_info as DeviceInfo | null;
             return (
               <div
                 className={`browser-device-card ${selected?.id === d.id ? "selected" : ""}`}
@@ -254,20 +240,40 @@ export default function BrowserTabletsAdmin() {
                 </span>
                 <small>
                   {d.camera_name || "No camera selected"}
-                  {recording ? ` · ${recording.upload_state === "failed" ? "needs attention" : recording.recording_sessions.status}` : ""}
-                  {recording?.branding_state === "processing" ? " · adding logo" : ""}
+                  {recording ? ` · ${captureUnconfirmed ? "recording unconfirmed" : recording.upload_state === "local_only" ? "local clip saved" : recording.upload_state === "failed" ? "needs attention" : recording.recording_sessions.status}` : ""}
+                  {recording && localProcessingLabel(recording, now) ? ` · ${localProcessingLabel(recording, now)}` : ""}
                 </small>
+                <details className="device-hardware-details" onClick={event => event.stopPropagation()}>
+                  <summary>Device details</summary>
+                  {hardware ? <dl>
+                    <dt>Device</dt><dd>{hardware.manufacturer} {hardware.model}</dd>
+                    <dt>Android</dt><dd>{hardware.android_version} · API {hardware.android_sdk}</dd>
+                    <dt>APK</dt><dd>{hardware.app_version} · build {hardware.app_version_code}</dd>
+                    <dt>USB cameras attached</dt><dd>{hardware.usb_cameras.length ? hardware.usb_cameras.map(camera => camera.name).join(", ") : "None reported"}</dd>
+                    <dt>Camera configuration</dt><dd>{d.camera_name || "Not configured"}</dd>
+                    <dt>Microphone (last report)</dt><dd>{hardware.microphone_input || "Not reported yet"}</dd>
+                    <dt>Camera mode (last report)</dt><dd>{hardware.recording_profile || "Run the camera check to report resolution and target frame rate"}</dd>
+                    <dt>Last report</dt><dd>{new Date(hardware.reported_at).toLocaleString()}</dd>
+                  </dl> : <p>Device details have not been reported yet.</p>}
+                  <small>Reported by the device. Attached cameras still require a successful recording test.</small>
+                </details>
                 <span className="device-queue-overview">
                   <strong>Upload queue</strong>
-                  <span>{queueSummary("saved_locally")} saved</span>
+                  <span>{deviceQueue.filter((item:any)=>item.local_available!==false&&["saved_locally","local_only"].includes(item.upload_state)).length} saved</span>
                   <span>{activeQueueCount} pending</span>
                   <span>{queueSummary("uploading")} uploading</span>
                   <span>{queueSummary("failed")} failed</span>
                 </span>
-                {visibleQueue.length > 0 && (
-                  <span className="device-queue-items" aria-label={`${d.name} upload items`}>
-                    {visibleQueue.map((item: any) => {
+                {[{history:false,items:visibleQueue},{history:true,items:historyQueue}].map(group => {
+                  const Wrapper = group.history ? 'details' : 'div';
+                  return group.items.length > 0 && (
+                  <Wrapper key={String(group.history)} className="device-queue-items" aria-label={`${d.name} ${group.history ? 'local-only history' : 'upload items'}`} onClick={event=>event.stopPropagation()}>
+                    {group.history && <summary>Local-only videos ({historyQueue.length})</summary>}
+                    {group.items.map((item: any) => {
                       const itemRetryLabel = videoRetryLabel(item, d.recorder_mode === "android_rtsp");
+                      const label = recordingDisplayLabel(item.recording_sessions, item.client_created_at, data.timeZone);
+                      const brandingPercent=reportedBrandingProgress(item);
+                      const brandingLive=localProcessingLabel(item,now)==="Adding logo";
                       const percent = item.bytes
                         ? Math.min(
                             100,
@@ -277,20 +283,32 @@ export default function BrowserTabletsAdmin() {
                           )
                         : 0;
                       return (
-                        <span className="device-queue-item" key={item.job_id || item.session_id}>
-                          <span className="device-queue-item-title">
-                            Video {item.session_id?.slice(0, 8)}
-                          </span>
+                        <span className="device-queue-item" key={item.job_id || item.session_id} data-session-id={item.session_id}>
+                          {queuePositions.has(item.session_id) && <span className="device-queue-number" aria-label={`Queue position ${queuePositions.get(item.session_id)}`}>{queuePositions.get(item.session_id)}</span>}
+                          <a className="device-queue-item-title" href={`/admin?recording=${encodeURIComponent(item.session_id)}`}
+                            title={`${label.full} · Open recording log`} aria-label={`Open recording log for ${label.full}`}
+                            onClick={event => event.stopPropagation()}>
+                            <span className="device-queue-item-date">{label.date}</span>
+                            <span className="device-queue-item-recipients">{label.recipients}</span>
+                          </a>
                           <span className="device-queue-item-state">
-                            {item.upload_state.replaceAll("_", " ")}
-                            {item.upload_state === "uploading" ? ` · ${percent}%` : ""}
-                            {item.branding_state === "processing"
-                              ? " · adding logo"
-                              : item.branding_state === "complete" &&
-                                  item.upload_state === "saved_locally"
-                                ? " · logo added"
-                                : ""}
+                            {recordingStageLabel(item, now, d.recorder_mode === "android_rtsp")}
                           </span>
+                          <span className="device-queue-item-size">{item.upload_state==="uploading"
+                            ? uploadSizeMb(item.uploaded_bytes,item.bytes)
+                            : `${item.branding_state==="processing"?"Source video":"Video size"}: ${recordingSizeMb(item.bytes)}`}</span>
+                          {item.upload_state === "uploading" && item.branding_state !== "processing" && <span className="device-upload-meter" role="progressbar"
+                            aria-label={`Upload progress for ${label.full}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+                            <i style={{width:`${percent}%`}} />
+                          </span>}
+                          {item.branding_state === "processing" && <span className="device-logo-progress">
+                            <span>{brandingPercent === null ? brandingLive ? "Device has not reported a percentage yet" : "Waiting for device to report progress"
+                              : brandingLive ? `Adding logo · ${brandingPercent}%`
+                              : `Last reported · ${brandingPercent}%`}</span>
+                            {brandingPercent !== null ? <progress max={100} value={brandingPercent} aria-label="Logo processing progress" />
+                              : <span className="device-progress-unreported" aria-hidden="true" />}
+                          </span>}
+                          {item.device_copy_saved_at && <span className="device-queue-item-copy">Copy exported to Gallery / Files · {new Date(item.device_copy_saved_at).toLocaleString()}</span>}
                           {item.upload_state === "failed" && (
                             <span className="device-queue-item-error">
                               {item.branding_state
@@ -306,7 +324,7 @@ export default function BrowserTabletsAdmin() {
                               type="button"
                               className="device-continue-upload device-queue-retry"
                               disabled={busy}
-                              aria-label={`${itemRetryLabel} for video ${item.session_id?.slice(0, 8)}`}
+                              aria-label={`${itemRetryLabel} for ${label.full}`}
                               onClick={(event) => {
                                 event.stopPropagation();
                                 void action({
@@ -325,76 +343,8 @@ export default function BrowserTabletsAdmin() {
                         </span>
                       );
                     })}
-                    {queueItems.length > visibleQueue.length && (
-                      <span className="device-queue-more">
-                        +{queueItems.length - visibleQueue.length} more on this device
-                      </span>
-                    )}
-                  </span>
-                )}
-                {uploadVisible && (
-                  <span className="device-upload-status">
-                    <span>
-                      <strong>
-                        {recording.branding_state === "processing"
-                          ? "Adding Dink Vision logo · preparing upload"
-                          : recording.upload_state === "uploading"
-                          ? `Uploading to Google Drive · ${uploadPercent}%`
-                          : recording.upload_state === "failed"
-                            ? recording.safe_error || (retryLabel
-                              ? "Upload paused"
-                              : "Upload paused · check the original device")
-                            : recording.upload_state === "cancelled"
-                              ? "Upload cancelled · recover on this device"
-                              : recording.upload_state === "local_only"
-                                ? recording.recording_sessions.failure_stage ===
-                                  "unsupported_format"
-                                  ? "Local only · older WebM clip"
-                                  : "Local only · clip under one minute"
-                              : recording.upload_state === "retrying"
-                                ? "Connection interrupted · retrying automatically"
-                              : recording.upload_state === "saved_locally" &&
-                                  recording.branding_state === "complete"
-                                ? "Logo attached · waiting in the upload queue"
-                            : "Waiting in the upload queue"}
-                      </strong>
-                      <small>
-                        {recording.branding_state === "processing"
-                          ? "The saved video is being edited to attach the Dink Vision logo before upload."
-                          : recording.upload_state === "local_only"
-                          ? "This clip will not be sent to Google Drive."
-                          : "The original webpage or APK keeps the local backup until it verifies that the upload completed."}
-                      </small>
-                      {retryLabel && (
-                        <button
-                          type="button"
-                          className="device-continue-upload"
-                          disabled={busy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void action({
-                              action: "retry-upload",
-                              id: d.id,
-                              session_id: recording.session_id,
-                            });
-                          }}
-                        >
-                          {busy ? "Requesting…" : retryLabel}
-                        </button>
-                      )}
-                    </span>
-                    <span
-                      className="device-upload-meter"
-                      role="progressbar"
-                      aria-label={`${d.name} upload progress`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={uploadPercent}
-                    >
-                      <i style={{ width: `${uploadPercent}%` }} />
-                    </span>
-                  </span>
-                )}
+                  </Wrapper>
+                );})}
                 {readyFile && (
                   <span className="device-upload-status">
                     <span>
@@ -785,6 +735,12 @@ export default function BrowserTabletsAdmin() {
           </section>
         </div>
       )}
+      {replacingEnrollment && <div className="modal-backdrop" role="presentation"><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="replace-enrollment-title">
+        <h2 id="replace-enrollment-title">Replace the current registration?</h2>
+        <p>The existing device will be disconnected when this new code is used. Keep the current registration to continue using it. Each code can enroll only one installation.</p>
+        <div className="confirm-modal-actions"><button type="button" className="sign-in" disabled={busy} onClick={()=>setReplacingEnrollment(null)}>Keep current registration</button>
+          <button type="button" className="primary" disabled={busy} onClick={()=>{const pending=replacingEnrollment;setReplacingEnrollment(null);void action({...pending,replace_enrollment:true});}}>Create replacement code</button></div>
+      </section></div>}
       {code && showEnrollmentModal && (
         <div
           className="modal-backdrop"

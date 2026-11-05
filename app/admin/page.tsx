@@ -5,13 +5,18 @@ import AdminDashboard from "@/components/admin-dashboard";
 import AccountControls from "@/components/account-controls";
 import AppVersionFooter from "@/components/app-version-footer";
 import type { AdminData } from "@/lib/admin-types";
+import { uuid } from "@/lib/validation";
+import { sessionCaptureReport } from "@/lib/recording-status";
+import { recorderDatabase } from "@/lib/recorder-server";
 
 // The dashboard is a live operational view. Do not let the route cache an
 // earlier recording state between client refreshes.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function AdminPage() {
+export default async function AdminPage({ searchParams }: {
+  searchParams: Promise<{ recording?: string | string[] }>;
+}) {
   const { account } = await getAccount();
   if (!account) redirect("/admin/login");
   if (account.role !== "admin")
@@ -27,6 +32,8 @@ export default async function AdminPage() {
       </main>
     );
   const db = await serverSupabase();
+  let focusedId = "";
+  try { focusedId = uuid((await searchParams).recording); } catch { }
   const [
     courts,
     cameras,
@@ -58,7 +65,7 @@ export default async function AdminPage() {
     db
       .from("recording_sessions")
       .select(
-        "id,court_id,status,recipient_email,created_at,started_at,stopped_at,stop_reason,failure_stage,configuration_snapshot",
+        "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available),capture_jobs(last_seen_at)",
       )
       .order("created_at", { ascending: false })
       .limit(100),
@@ -79,7 +86,29 @@ export default async function AdminPage() {
       .order("created_at", { ascending: false })
       .limit(30),
   ]);
-  const failed = [
+  const sessionRows = sessions.data || [];
+  const selected = focusedId && !sessionRows.some(session => session.id === focusedId)
+    ? await db.from("recording_sessions")
+        .select("id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available),capture_jobs(last_seen_at)")
+        .eq("id", focusedId).maybeSingle()
+    : { data: null, error: null };
+  const visibleSessions = selected.data ? [...sessionRows, selected.data] : sessionRows;
+  const browserSessionIds = visibleSessions
+    .filter(session => session.configuration_snapshot?.capture_mode === "browser")
+    .map(session => session.id);
+  // Browser capture reports intentionally have no authenticated SELECT policy.
+  // Read only reports for sessions this admin has already been allowed to see
+  // through RLS; never accept session IDs from the URL as authorization.
+  const browserReports = browserSessionIds.length
+    ? await recorderDatabase().from("browser_recordings")
+        .select("session_id,last_seen_at,last_error,safe_error,upload_state,branding_state,local_available")
+        .in("session_id", browserSessionIds)
+    : { data: [], error: null };
+  const reportBySession = new Map((browserReports.data || []).map(report => [report.session_id, report]));
+  const dashboardSessions = visibleSessions.map(session => session.configuration_snapshot?.capture_mode === "browser"
+    ? { ...session, browser_recordings: reportBySession.get(session.id) || null }
+    : session);
+  const failed = !!selected.error || !!browserReports.error || [
     courts,
     cameras,
     recorders,
@@ -115,13 +144,16 @@ export default async function AdminPage() {
         </main>
       ) : (
         <AdminDashboard
+          key={focusedId || "dashboard"}
+          initialRecordingId={focusedId}
           data={
             {
               courts: courts.data,
               cameras: cameras.data,
               recorders: recorders.data,
               settings: settings.data,
-              sessions: sessions.data,
+              sessions: dashboardSessions,
+              captureReports: dashboardSessions.map(sessionCaptureReport),
               events: events.data,
               devices: devices.data,
               commands: commands.data,

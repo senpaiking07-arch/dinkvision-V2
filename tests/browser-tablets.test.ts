@@ -85,6 +85,21 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     await assert.rejects(() => enroll("wrong"), /invalid or expired/);
     const kiosk = await enroll();
     await assert.rejects(() => enroll(), /invalid or expired/);
+    await db.query("update browser_devices set enrollment_expires_at=now()-interval '1 year' where id=$1",[device]);
+    assert.equal((await db.query<any>("select k.active from kiosk_devices k join browser_devices d on d.kiosk_id=k.id where d.id=$1 and k.token_hash='token'",[device])).rows[0].active,true,
+      "Expiration of the consumed enrollment code must not expire an enrolled device's persistent credential");
+    await db.query("update browser_devices set enrollment_hash='rotate-same',enrollment_expires_at=now()+interval '10 minutes' where id=$1", [device]);
+    const rotated = await db.query<{id:string}>("select enroll_browser('rotate-same','rotated-token','rotated-setup',$1,$2) id",[admin,kiosk]);
+    assert.equal(rotated.rows[0].id,kiosk,"Re-enrollment preserves the kiosk and queue owner");
+    assert.equal((await db.query<any>("select active from kiosk_devices where id=$1",[kiosk])).rows[0].active,true,"Rotating the same registration must not disable it");
+    const oldDevice=randomUUID();
+    await db.query("insert into browser_devices(id,name,enrollment_hash,enrollment_expires_at) values($1,'Previous phone slot','old-slot',now()+interval '10 minutes')",[oldDevice]);
+    const oldKiosk=(await db.query<{id:string}>("select enroll_browser('old-slot','old-token','old-setup',$1) id",[admin])).rows[0].id;
+    await db.query("update browser_devices set enrollment_hash='move-slot',enrollment_expires_at=now()+interval '10 minutes' where id=$1",[device]);
+    await db.query("select enroll_browser('move-slot','moved-token','moved-setup',$1,$2)",[admin,oldKiosk]);
+    assert.equal((await db.query<any>("select active from kiosk_devices where id=$1",[oldKiosk])).rows[0].active,false);
+    assert.equal((await db.query<any>("select enabled from browser_devices where id=$1",[oldDevice])).rows[0].enabled,false,"Previous Admin slot must not remain a second active connection");
+    assert.equal((await db.query<any>("select active from kiosk_devices where id=$1",[kiosk])).rows[0].active,true);
     const key = randomUUID();
     const start = async (k = key) =>
       (
@@ -152,6 +167,11 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     assert.ok(stopped.started_at);
     assert.ok(stopped.stopped_at);
     assert.equal(await event("failed"), true);
+    await assert.rejects(
+      () => event("saved", kiosk, 32_000_000_001, "video/webm"),
+      /Invalid recording/,
+      "a video over the bounded upload ceiling is rejected without replacing local footage",
+    );
     assert.equal(
       await event("saved", kiosk, 1024, "video/webm"),
       true,
@@ -328,6 +348,13 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
       kiosk,
       nativeSession,
     ]);
+    await assert.rejects(()=>db.query("select browser_event($1,$2,'saved',32000000001,'video/mp4')",[kiosk,nativeSession]),/Invalid recording/);
+    assert.equal((await db.query<any>("select browser_event($1,$2,'saved',5000000000,'video/mp4') ok",[randomUUID(),nativeSession])).rows[0].ok,false,
+      "A large file must still belong to the authenticated device");
+    assert.equal((await db.query<any>("select browser_event($1,$2,'saved',5000000000,'video/mp4') ok",[kiosk,nativeSession])).rows[0].ok,true,
+      "Higher camera quality may exceed 4 GB without creating an invalid upload");
+    assert.equal((await db.query<any>("select browser_event($1,$2,'saved',5000000000,'video/mp4') ok",[kiosk,nativeSession])).rows[0].ok,true,
+      "Repeating a large-file save is idempotent");
     await db.query("delete from browser_devices where id=$1", [device]);
     assert.equal(
       (

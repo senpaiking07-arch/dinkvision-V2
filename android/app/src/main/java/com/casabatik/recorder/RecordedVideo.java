@@ -18,6 +18,27 @@ import org.bytedeco.javacv.Frame;
 final class RecordedVideo {
   private RecordedVideo() {}
 
+  static double measuredFrameRate(File file) throws Exception {
+    android.media.MediaExtractor extractor = new android.media.MediaExtractor();
+    try {
+      extractor.setDataSource(file.getAbsolutePath());
+      int track = -1;
+      for (int n = 0; n < extractor.getTrackCount(); n++)
+        if (extractor.getTrackFormat(n).getString(android.media.MediaFormat.KEY_MIME).startsWith("video/")) { track=n; break; }
+      if (track < 0) throw new Exception("No video frames are available for the camera rate check.");
+      extractor.selectTrack(track);
+      long first = -1, last = -1, frames = 0;
+      while (extractor.getSampleTime() >= 0) {
+        long timestamp=extractor.getSampleTime();
+        if(first<0)first=timestamp;
+        last=Math.max(last,timestamp);frames++;
+        if(!extractor.advance())break;
+      }
+      if(frames<2||last<=first)throw new Exception("The camera test has too few frames.");
+      return (frames-1)*1_000_000.0/(last-first);
+    } finally { extractor.release(); }
+  }
+
   static void validate(File file) throws Exception {
     validate(file, -1, false);
   }
@@ -152,7 +173,8 @@ final class RecordedVideo {
               "Saved audio and video do not start together.");
         if (Math.abs(audioEnd - videoEnd) > 500_000)
           throw new RecordingAccuracy.Failure(
-              "Saved audio ends " + Math.abs(audioEnd - videoEnd) / 1_000L + " ms "
+              "Saved audio and video do not end together: audio ends "
+                  + Math.abs(audioEnd - videoEnd) / 1_000L + " ms "
                   + (audioEnd < videoEnd ? "before" : "after")
                   + " the video. The recording stays on this device.");
       }

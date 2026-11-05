@@ -11,6 +11,13 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class RecorderTest {
+  @Test public void storagePreflightBudgetsOneLiveBrandedFile() {
+    assertEquals(1_105_840_000L,Engine.requiredRecordingBytes(900));
+    assertTrue(Engine.requiredRecordingBytes(900,32_000_000)>Engine.requiredRecordingBytes(900));
+    assertTrue(Engine.requiredRecordingBytes(1500)>Engine.requiredRecordingBytes(1200));
+    assertTrue(Engine.requiredRecordingBytes(7200)>Integer.MAX_VALUE);
+    for(int invalid:new int[]{0,-1,7201})try{Engine.requiredRecordingBytes(invalid);fail();}catch(IllegalArgumentException expected){}
+  }
   @Test
   public void sourceClockDoesNotStretchDelayedVideo() throws Exception {
     var clock = new RecordingAccuracy.Timeline();
@@ -86,15 +93,15 @@ public class RecorderTest {
                     ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
                         .getChildAt(0);
             w.evaluateJavascript(
-                "document.getElementById('begin').textContent.trim()==='' &&"
-                    + " document.getElementById('begin').getAttribute('aria-label')==='Start' &&"
-                    + " document.getElementById('begin').childElementCount===0 &&"
+                "document.getElementById('begin').textContent.trim()==='TAP ANYWHERE TO START' &&"
+                    + " document.getElementById('begin').getAttribute('aria-label')==='Tap anywhere to start' &&"
+                    + " document.querySelector('#begin svg')!==null &&"
                     + " document.querySelector('.backdrop') !== null &&"
                     + " document.querySelectorAll('.brand img').length===1 &&"
                     + " document.querySelectorAll('.watermark').length===0 &&"
                     + " document.getElementById('setup')===null &&"
                     + " document.getElementById('reenroll')!==null &&"
-                    + " getComputedStyle(document.querySelector('.backdrop')).backgroundImage.includes('Tablet-Background.png') &&"
+                    + " getComputedStyle(document.querySelector('.backdrop')).backgroundImage.includes(innerWidth<=700&&innerHeight>innerWidth?'Kiosk-Background-Phone.png':'Kiosk-Background-Tablet.png') &&"
                     + " document.getElementById('queue-indicator') === null &&"
                     + " document.getElementById('camera-test-video') !== null &&"
                     + " document.getElementById('camera-test-confirm').textContent.includes('see and hear') &&"
@@ -130,6 +137,62 @@ public class RecorderTest {
           });
       assertTrue(backLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
       assertEquals("true", backResult.get());
+
+      java.util.concurrent.CountDownLatch recipientsLoaded =
+          new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> recipientsResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "(()=>{"
+                    + "const original=state;state={...state,enabled:true,tested:true,cameraMode:'device',busy:false};"
+                    + "const input=document.getElementById('player-email');"
+                    + "const manual=input.autocomplete==='off'&&input.autocapitalize==='none'&&input.spellcheck===false;"
+                    + "input.value='First.Player@GMAIL.COM';const first=addEmail();"
+                    + "const normalized=emails.length===1&&emails[0]==='first.player@gmail.com';"
+                    + "document.getElementById('email-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));"
+                    + "const saved=[...document.querySelectorAll('#confirmation-recipients span')].map(e=>e.textContent).join(',')==='first.player@gmail.com';"
+                    + "show('form');emails=[];renderEmails();input.value='first.player@gmail.com';const reused=addEmail();"
+                    + "input.value='wrong.address@gmail.com';const wrong=addEmail();"
+                    + "document.querySelector('[aria-label=\"Remove wrong.address@gmail.com\"]').click();"
+                    + "input.value='correct.address@gmail.com';const corrected=addEmail();"
+                    + "const finalState=emails.join(',')==='first.player@gmail.com,correct.address@gmail.com';"
+                    + "emails=[];renderEmails();state=original;return manual&&first&&normalized&&saved&&reused&&wrong&&corrected&&finalState;"
+                    + "})()",
+                value -> {
+                  recipientsResult.set(value);
+                  recipientsLoaded.countDown();
+                });
+          });
+      assertTrue(recipientsLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", recipientsResult.get());
+
+      java.util.concurrent.CountDownLatch durationLoaded =
+          new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<String> durationResult =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      i.runOnMainSync(
+          () -> {
+            android.webkit.WebView w =
+                (android.webkit.WebView)
+                    ((android.view.ViewGroup) activity.findViewById(android.R.id.content))
+                        .getChildAt(0);
+            w.evaluateJavascript(
+                "formatRecordingTime(900,0)==='00:00'&&"
+                    + "formatRecordingTime(1200,1200000)==='20:00'&&"
+                    + "formatRecordingTime(1500,1500000)==='25:00'",
+                value -> {
+                  durationResult.set(value);
+                  durationLoaded.countDown();
+                });
+          });
+      assertTrue(durationLoaded.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals("true", durationResult.get());
       android.graphics.Bitmap formImage = i.getUiAutomation().takeScreenshot();
       if (formImage != null)
         try (java.io.FileOutputStream out =
@@ -233,7 +296,7 @@ public class RecorderTest {
             w.evaluateJavascript(
                 "document.getElementById('queue-indicator')===null &&"
                     + " typeof renderUploadStatus==='undefined' &&"
-                    + " [0,1000,2000,3000].map(value=>formatRemainingTime(5,value)).join(',')==='00:05,00:04,00:03,00:02' &&"
+                    + " [0,1000,2000,3000].map(value=>formatRecordingTime(5,value)).join(',')==='00:00,00:01,00:02,00:03' &&"
                     + " getComputedStyle(document.getElementById('timer')).fontVariantNumeric.includes('tabular-nums')",
                 value -> {
                   timerUiResult.set(value);
@@ -324,13 +387,27 @@ public class RecorderTest {
             .put("tested_at", "2026-10-06")
             .put("config_revision", "revision-1")
             .put("tested_revision", "revision-1");
+    engine.requireCameraCheck();
+    assertFalse("A saved server test must not bypass the launch camera check", engine.cameraReady(d));
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    instrumentation.getUiAutomation().grantRuntimePermission(c.getPackageName(), android.Manifest.permission.CAMERA);
+    instrumentation.getUiAutomation().grantRuntimePermission(c.getPackageName(), android.Manifest.permission.RECORD_AUDIO);
+    engine.cameraCheckedThisLaunch = true;
+    engine.confirmedCameraConnection = UvcCameraRecorder.connectionKey(c);
     assertTrue(engine.cameraReady(d));
+    engine.requireCameraCheck();
+    assertFalse("A reconnect must invalidate the test", engine.cameraReady(d));
+    engine.cameraCheckedThisLaunch = true;
+    engine.confirmedCameraConnection = "another USB connection";
+    assertFalse(engine.cameraReady(d));
+    engine.confirmedCameraConnection = UvcCameraRecorder.connectionKey(c);
     d.put("config_revision", "revision-2");
     assertFalse(engine.cameraReady(d));
     d.put("config_revision", "revision-1").put("tested_revision", org.json.JSONObject.NULL);
     assertFalse(engine.cameraReady(d));
     engine.vault.put("camera", "");
     engine.vault.put("camera-revision", "");
+    engine.requireCameraCheck();
   }
 
   @Test

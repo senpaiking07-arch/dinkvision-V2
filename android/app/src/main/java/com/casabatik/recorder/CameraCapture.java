@@ -15,6 +15,10 @@ final class CameraCapture {
 
     default void camera(String label) {}
 
+    default void audio(String label) {}
+    default void profile(int width, int height, int fps, int bitrate) throws Exception {}
+    default void modes(java.util.List<RecordingProfile> modes) throws Exception {}
+
     default void finalizing() {}
   }
 }

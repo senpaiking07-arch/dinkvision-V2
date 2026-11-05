@@ -25,13 +25,19 @@ test("settings reject invalid limits, fractional values, and invalid time zones"
       venue_time_zone: "Not/AZone",
     }),
   );
-  const result = settingsInput({
-    duration_minutes: 15,
-    retention_hours: 24,
-    venue_time_zone: "Asia/Manila",
-  });
-  assert.equal(result.max_duration_seconds, 900);
-  assert.equal(result.retention_seconds, 86400);
+  for (const [minutes, seconds] of [
+    [15, 900],
+    [20, 1200],
+    [25, 1500],
+  ] as const) {
+    const result = settingsInput({
+      duration_minutes: minutes,
+      retention_hours: 24,
+      venue_time_zone: "Asia/Manila",
+    });
+    assert.equal(result.max_duration_seconds, seconds);
+    assert.equal(result.retention_seconds, 86400);
+  }
 });
 test("camera registration rejects connection secrets and invalid assignments", () => {
   const valid = {

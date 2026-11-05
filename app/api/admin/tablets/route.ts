@@ -15,13 +15,13 @@ export async function GET() {
     db
       .from("browser_recordings")
       .select(
-        "session_id,device_id,job_id,file_id,safe_error,last_error,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,recording_sessions(id,court_id,status,created_at,stopped_at,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
+        "session_id,device_id,job_id,file_id,safe_error,last_error,last_seen_at,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_progress,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,device_copy_saved_at,device_copy_bytes,recording_sessions(id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,configuration_snapshot,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
       )
       .order("last_seen_at", { ascending: false })
       .limit(100),
     db
       .from("venue_settings")
-      .select("browser_worker_at")
+      .select("browser_worker_at,venue_time_zone")
       .eq("id", true)
       .single(),
   ]);
@@ -31,10 +31,12 @@ export async function GET() {
       503,
     );
   return json({
+    serverTime:new Date().toISOString(),
     devices: devices.data.map(publicTablet),
     courts: courts.data,
     recordings: recordings.data,
     workerAt: worker.data?.browser_worker_at,
+    timeZone: worker.data?.venue_time_zone || "Asia/Manila",
   });
 }
 export async function POST(request: Request) {
@@ -151,6 +153,15 @@ export async function POST(request: Request) {
     }
     if (b.action !== "save" && b.action !== "enroll")
       throw new InputError("Unknown action.");
+    if (id && b.action === "enroll" && b.replace_enrollment !== true) {
+      const previous=await db.from("browser_devices").select("kiosk_id").eq("id",id).single();
+      if(previous.error) throw previous.error;
+      if(previous.data.kiosk_id){
+        const registration=await db.from("kiosk_devices").select("active").eq("id",previous.data.kiosk_id).single();
+        if(registration.error) throw registration.error;
+        if(registration.data.active) return json({replacementRequired:true,error:"This device is already registered. Confirm replacement before creating a new enrollment code."},409);
+      }
+    }
     const name = String(b.name || "").trim();
     if (!name || name.length > 100)
       throw new InputError("Enter a tablet name (up to 100 characters).");

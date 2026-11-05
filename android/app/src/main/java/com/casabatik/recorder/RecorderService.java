@@ -18,6 +18,9 @@ public final class RecorderService extends Service {
   private Notification notification;
   private boolean cameraWork;
   private boolean uploadWork;
+  private boolean exportWork;
+  private int exportProgress;
+  private int brandingProgress = -1;
 
   static int foregroundTypes(
       int sdk, boolean deviceCamera, boolean cameraActive, boolean uploadActive) {
@@ -59,6 +62,12 @@ public final class RecorderService extends Service {
                         : retrying ? "Upload paused · retrying automatically"
                             : "Preparing background upload")
                     : "Preparing your match";
+    if (exportWork)
+      detail = (cameraActive ? "Recording your match · " : "")
+          + "Saving video to device · " + exportProgress + "%";
+    else if (brandingProgress >= 0)
+      detail = (cameraActive ? "Recording your match · " : "")
+          + (brandingProgress >= 99 ? "Checking logo video · 99%" : "Adding logo · " + brandingProgress + "%");
     Notification.Builder builder =
         new Notification.Builder(this, "recording")
             .setSmallIcon(com.casabatik.recorder.R.drawable.ic_camera)
@@ -67,7 +76,9 @@ public final class RecorderService extends Service {
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
             .setOngoing(true);
-    if (uploadActive)
+    if (exportWork) builder.setProgress(100, exportProgress, exportProgress == 0);
+    else if (brandingProgress >= 0) builder.setProgress(100, Math.min(99, brandingProgress), false);
+    else if (uploadActive)
       builder.setProgress(100, Math.max(0, Math.min(100, uploadPercent)), uploadPercent <= 0);
     if (cameraActive) {
       PendingIntent stop =
@@ -84,12 +95,48 @@ public final class RecorderService extends Service {
   static void updateUploadProgress(int percent) {
     RecorderService service = running;
     if (service == null) return;
+    service.brandingProgress = -1;
     Engine engine = Engine.get(service);
     service.cameraWork = service.cameraWork && engine.busy;
     service.uploadWork = true;
     service.ensurePowerLocks();
     service.notification =
         service.buildNotification(service.cameraWork, true, Math.max(0, Math.min(100, percent)), false);
+    service.getSystemService(NotificationManager.class).notify(1, service.notification);
+  }
+
+  static void updateBrandingProgress(int percent) {
+    RecorderService service = running;
+    if (service == null) return;
+    service.brandingProgress = Math.max(0, Math.min(99, percent));
+    Engine engine = Engine.get(service);
+    service.notification = service.buildNotification(service.cameraWork && engine.busy, true, -1, false);
+    service.getSystemService(NotificationManager.class).notify(1, service.notification);
+  }
+
+  static void finishBranding() {
+    RecorderService service = running;
+    if (service == null) return;
+    service.brandingProgress = -1;
+  }
+
+  static void updateExportProgress(int percent) {
+    RecorderService service = running;
+    if (service == null) return;
+    service.exportWork = true;
+    service.exportProgress = Math.max(0, Math.min(100, percent));
+    service.ensurePowerLocks();
+    service.notification = service.buildNotification(service.cameraWork, service.uploadWork, -1, false);
+    service.getSystemService(NotificationManager.class).notify(1, service.notification);
+  }
+
+  static void finishExport() {
+    RecorderService service = running;
+    if (service == null) return;
+    service.exportWork = false;
+    Engine engine = Engine.get(service);
+    service.notification = service.buildNotification(service.cameraWork && engine.busy,
+        engine.uploadWorkerRunning.get(), engine.uploadPercent, engine.hasRetryingUpload());
     service.getSystemService(NotificationManager.class).notify(1, service.notification);
   }
 
@@ -132,7 +179,8 @@ public final class RecorderService extends Service {
     boolean requestedUpload = i != null && i.getBooleanExtra(EXTRA_UPLOAD_ACTIVE, false);
     Engine engine = Engine.get(this);
     cameraWork = requestedCamera || (cameraWork && engine.busy);
-    uploadWork = requestedUpload || (uploadWork && engine.uploadWorkerRunning.get());
+    exportWork = engine.exportWorkerRunning.get();
+    uploadWork = requestedUpload || (uploadWork && engine.uploadWorkerRunning.get()) || exportWork;
     if (cameraWork || uploadWork) ensurePowerLocks();
     notification = buildNotification(cameraWork, uploadWork, engine.uploadPercent,
         engine.hasRetryingUpload());
@@ -143,7 +191,9 @@ public final class RecorderService extends Service {
             notification,
             foregroundTypes(
                 Build.VERSION.SDK_INT,
-                engine.usesDeviceCamera(),
+                // Camera work is an explicit native capture request. Do not
+                // downgrade microphone protection while server state is loading.
+                true,
                 cameraWork,
                 uploadWork));
       else startForeground(1, notification);
@@ -157,7 +207,8 @@ public final class RecorderService extends Service {
       stopSelf(id);
       return START_NOT_STICKY;
     }
-    if (!engine.busy && !engine.uploadWorkerRunning.get() && !engine.hasPendingUploadWork())
+    if (!engine.busy && !engine.uploadWorkerRunning.get() && !engine.hasPendingUploadWork()
+        && !engine.exportWorkerRunning.get())
       stopSelf(id);
     return START_NOT_STICKY;
   }
@@ -165,7 +216,7 @@ public final class RecorderService extends Service {
   @Override
   public void onTaskRemoved(Intent rootIntent) {
     Engine engine = Engine.get(this);
-    if (cameraWork || uploadWork || engine.busy || engine.uploadWorkerRunning.get())
+    if (cameraWork || uploadWork || engine.busy || engine.uploadWorkerRunning.get() || engine.exportWorkerRunning.get())
       ensurePowerLocks();
     super.onTaskRemoved(rootIntent);
   }
@@ -177,7 +228,7 @@ public final class RecorderService extends Service {
 
   static void stopWhenIdle() {
     RecorderService service = running;
-    if (service != null) service.stopSelf();
+    if (service != null && !Engine.get(service).exportWorkerRunning.get()) service.stopSelf();
   }
 
   @Override

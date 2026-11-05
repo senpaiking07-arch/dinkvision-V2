@@ -2,7 +2,7 @@ package com.casabatik.recorder;
 
 import org.json.JSONObject;
 
-/** Uses only server-confirmed offsets; never needs a Google upload URL. */
+/** Sends bytes through its transport and resumes only from Drive-confirmed offsets. */
 final class UploadTransfer {
   static final class CancelledException extends Exception {
     CancelledException() {

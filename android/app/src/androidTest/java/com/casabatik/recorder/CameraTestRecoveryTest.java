@@ -21,6 +21,17 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class CameraTestRecoveryTest {
+  @Test public void activityRecreationPreservesApprovalUntilTheCameraReconnects() throws Exception {
+    Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+    Engine engine=Engine.get(context);assertFalse("Do not interrupt an active capture",engine.busy);
+    boolean original=engine.cameraCheckedThisLaunch;String connection=engine.confirmedCameraConnection;
+    try(var activity=androidx.test.core.app.ActivityScenario.launch(MainActivity.class)){
+      engine.cameraCheckedThisLaunch=true;engine.confirmedCameraConnection=UvcCameraRecorder.connectionKey(context);
+      activity.recreate();
+      assertTrue("Recreating the screen must not reset the current process camera approval",engine.cameraCheckedThisLaunch);
+      engine.cameraConnectionChanged();assertFalse("A real reconnect must still require a fresh test",engine.cameraCheckedThisLaunch);
+    }finally{engine.cameraCheckedThisLaunch=original;engine.confirmedCameraConnection=connection;}
+  }
   @Test public void staleConfirmationDoesNotTrapRecordAnotherTest() throws Exception {
     checkReviewRecovery(false);
   }
@@ -30,6 +41,14 @@ public class CameraTestRecoveryTest {
   }
 
   private void checkReviewRecovery(boolean accepting) throws Exception {
+    checkReviewRecovery(accepting, false);
+  }
+
+  @Test public void changingModeInvalidatesNativeConfirmationEvenAfterSwitchingBack() throws Exception {
+    checkReviewRecovery(true, true);
+  }
+
+  private void checkReviewRecovery(boolean accepting, boolean changeMode) throws Exception {
     Context base = InstrumentationRegistry.getInstrumentation().getTargetContext();
     String namespace = "camera-review-test-" + UUID.randomUUID();
     File root = new File(base.getCacheDir(), namespace);
@@ -60,14 +79,37 @@ public class CameraTestRecoveryTest {
       }
     });
     engine.heartbeat.shutdownNow();
+    assertFalse("A new process starts without camera approval",engine.cameraCheckedThisLaunch);
     try {
       engine.visible = true;
       engine.phase = "review";
       engine.cameraTestReady = true;
       engine.cameraTestRevision = UUID.randomUUID().toString();
       engine.cameraTestCamera = "{}";
+      engine.cameraTestMode = engine.selectedModeKey;
+    engine.cameraTestConnection = UvcCameraRecorder.connectionKey(context);
+    engine.cameraTestGeneration = engine.cameraConnectionGeneration;
       engine.vault.put("camera", "old camera");
       engine.vault.put("camera-revision", "old revision");
+      if (changeMode) {
+        assertTrue(engine.canConfirmCameraTest());
+        engine.cameraTestToken = "current-test";
+        engine.confirmCameraTestRequest(new JSONObject().put("mode","auto").put("token","stale-test").toString());
+        assertFalse(engine.busy);
+        assertTrue(engine.error.contains("test changed"));
+        engine.recordingModes = new org.json.JSONArray().put(new JSONObject().put("key", "1920x1080-60").put("supported", true));
+        assertTrue(engine.selectRecordingMode("1920x1080-60"));
+        assertFalse(engine.canConfirmCameraTest());
+        assertTrue(engine.selectRecordingMode("auto"));
+        assertFalse(engine.canConfirmCameraTest());
+        engine.confirmCameraTest(true, false);
+        assertFalse(engine.busy);
+        assertTrue(engine.error.contains("Record another test"));
+        engine.cameraTestMode = "auto";
+        engine.cameraTestGeneration--;
+        assertFalse(engine.canConfirmCameraTest());
+        return;
+      }
       engine.confirmCameraTest(accepting, !accepting);
       engine.work.submit(() -> {}).get(5, TimeUnit.SECONDS);
       assertFalse(engine.busy);

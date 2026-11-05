@@ -8,6 +8,7 @@ import {
   browserUploadStatus,
 } from "@/lib/browser-upload";
 import { after } from "next/server";
+import { deviceInfoInput } from "@/lib/device-info";
 import { deliverNextEmail } from "@/lib/email-server";
 import {
   cameraTransform,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/camera-transform";
 import { normalizeRecipients } from "@/lib/team-recipients";
 import { venueStateError } from "@/lib/venue-errors";
+import { androidUpdateRequired } from "@/lib/android-release";
 export const maxDuration = 60;
 const activeCaptureStatuses = [
   "requested",
@@ -53,7 +55,7 @@ export async function browserTabletState(
         : Promise.resolve({ data: null, error: null }),
       db
         .from("browser_recordings")
-        .select("session_id,job_id,upload_state,upload_updated_at,uploaded_bytes,bytes,retry_count,last_error,client_created_at,duration_ms,local_available,recording_sessions(court_id,status,created_at)")
+        .select("session_id,job_id,upload_state,upload_updated_at,uploaded_bytes,bytes,retry_count,last_error,branding_state,client_created_at,duration_ms,local_available,recording_sessions(court_id,status,created_at,recipient_email,configuration_snapshot)")
         .eq("device_id", t.device.id)
         .order("client_created_at", { ascending: false })
         .limit(100),
@@ -68,6 +70,7 @@ export async function browserTabletState(
         : null;
     return json({
       enabled: true,
+      capabilities: {deviceCopyReporting: true,brandingProgressReporting:true,localFileSizeReporting:true,queuePresenceReporting:true},
       browser: true,
       device: publicTablet(t.device),
       canSetup: includeSetupAccess ? await canSetup(t.device) : false,
@@ -92,7 +95,11 @@ export async function browserTabletState(
           }
         : null,
       uploadQueue,
-      queue: queue.data || [],
+      queue: (queue.data || []).map((row: any) => {
+        const session = Array.isArray(row.recording_sessions) ? row.recording_sessions[0] : row.recording_sessions;
+        return {...row, recording_sessions: session ? {court_id: session.court_id, status: session.status,
+          created_at: session.created_at, recipient_emails: normalizeRecipients(session.configuration_snapshot?.recipient_emails, session.recipient_email) || []} : null};
+      }),
     });
 }
 export async function GET(request: Request) {
@@ -115,11 +122,25 @@ export async function POST(request: Request) {
     if (!t) return json({ error: "Enroll this browser first." }, 401);
     const b = await readBody(request),
       db = recorderDatabase();
+    if (b.action === "start") {
+      const update = androidUpdateRequired(request, t.device.recorder_mode === "android_camera");
+      if (update) return json(update, 426);
+    }
+    const deviceInfo = b.device_info === undefined ? undefined : deviceInfoInput(b.device_info);
+    {
+      // Every authenticated action proves device contact, including queue/branding
+      // reports and retries. Activity must not appear offline while a heartbeat waits.
+      const report = await db.from("browser_devices").update({ ...(deviceInfo ? {device_info: deviceInfo} : {}), last_seen_at: new Date().toISOString() })
+        .eq("id", t.device.id).eq("tenant_id", t.kiosk.tenant_id);
+      // Older databases still accept capture heartbeats while the additive migration is pending.
+      if (report.error) {
+        if (deviceInfo && ["42703", "PGRST204"].includes(report.error.code)) {
+          const fallback=await db.from("browser_devices").update({last_seen_at:new Date().toISOString()}).eq("id",t.device.id).eq("tenant_id",t.kiosk.tenant_id);
+          if (fallback.error) throw fallback.error;
+        } else throw report.error;
+      }
+    }
     if (b.action === "heartbeat") {
-      await db
-        .from("browser_devices")
-        .update({ last_seen_at: new Date().toISOString() })
-        .eq("id", t.device.id);
       if (t.kiosk.current_session_id) {
         const current = await db
           .from("recording_sessions")
@@ -250,7 +271,7 @@ export async function POST(request: Request) {
     const id = uuid(b.id);
     const owned = await db
       .from("browser_recordings")
-      .select("session_id")
+      .select("session_id,upload_state")
       .eq("session_id", id)
       .eq("device_id", t.device.id)
       .maybeSingle();
@@ -259,10 +280,31 @@ export async function POST(request: Request) {
         { error: "This recording does not belong to this tablet." },
         403,
       );
+    if (b.action === "queue-presence") {
+      // Presence is not a state transition: never reset confirmed Drive bytes,
+      // backoff, retry counts, leases, FIFO position or an administrator action.
+      const presence = await db.from("browser_recordings")
+        .update({last_seen_at: new Date().toISOString()})
+        .eq("session_id", id).eq("device_id", t.device.id)
+        .eq("local_available", true)
+        .in("upload_state", ["saved_locally", "pending", "queued", "retrying"]);
+      if (presence.error) throw presence.error;
+      return json({ok: true});
+    }
+    if (b.action === "device-copy") {
+      const bytes=Number(b.bytes);
+      if (typeof b.bytes!=="number" || !Number.isSafeInteger(bytes) || bytes<1 || bytes>1_000_000_000_000) throw new InputError("Invalid saved-copy size.");
+      const copy=await db.from("browser_recordings").update({device_copy_saved_at:new Date().toISOString(),device_copy_bytes:bytes})
+        .eq("session_id",id).eq("device_id",t.device.id);
+      if (copy.error) throw copy.error;
+      return json({ok:true});
+    }
     if (b.action === "queue-report") {
       const status = String(b.status || "");
-      if (!["saved_locally", "pending", "uploading", "retrying", "uploaded", "failed"].includes(status))
+      if (!["saved_locally", "pending", "uploading", "retrying", "uploaded", "failed", "local_only"].includes(status))
         throw new InputError("Invalid local queue status.");
+      if(status==="local_only"&&owned.data.upload_state!=="local_only")
+        throw new InputError("The local-only policy must be confirmed by the server first.");
       const progress = Number(b.progress || 0), retries = Number(b.retry_count || 0);
       if (!Number.isInteger(progress) || progress < 0 || progress > 100 || !Number.isInteger(retries) || retries < 0 || retries > 100)
         throw new InputError("Invalid local queue report.");
@@ -275,7 +317,13 @@ export async function POST(request: Request) {
       if (brandingState !== undefined && brandingState !== null &&
         !["processing", "complete", "failed"].includes(brandingState))
         throw new InputError("Invalid logo status.");
-      const updated = await db.from("browser_recordings").update({
+      const brandingProgress=b.branding_progress==null?undefined:Number(b.branding_progress);
+      if(brandingProgress!==undefined&&(typeof b.branding_progress!=="number"||!Number.isInteger(brandingProgress)||brandingProgress<0||brandingProgress>100))
+        throw new InputError("Invalid logo progress.");
+      const reportedBytes=b.bytes==null?undefined:Number(b.bytes);
+      if(reportedBytes!==undefined&&(typeof b.bytes!=="number"||!Number.isSafeInteger(reportedBytes)||reportedBytes<0||reportedBytes>32_000_000_000))
+        throw new InputError("Invalid saved video size.");
+      let update = db.from("browser_recordings").update({
         upload_state: status,
         uploaded_bytes: b.bytes ? Math.min(Number(b.bytes), Math.max(0, Number(b.uploaded_bytes || 0))) : 0,
         retry_count: retries,
@@ -284,10 +332,17 @@ export async function POST(request: Request) {
         client_created_at: b.created_at ? new Date(Number(b.created_at)).toISOString() : undefined,
         duration_ms: b.duration_ms == null ? null : Number(b.duration_ms),
         upload_updated_at: new Date().toISOString(),
+        ...(brandingProgress===undefined?{}:{branding_progress:brandingProgress}),
+        ...(reportedBytes&&reportedBytes>0?{bytes:reportedBytes}:{}),
         ...(brandingState === undefined
           ? {}
           : { branding_state: brandingState, branding_updated_at: new Date().toISOString() }),
       }).eq("session_id", id).eq("device_id", t.device.id);
+      // Finalization reports this snapshot asynchronously. A transfer can
+      // already own the recording by the time its earlier saved report arrives.
+      if (status === "saved_locally" && brandingState === "complete")
+        update = update.in("upload_state", ["idle", "saved_locally"]);
+      const updated = await update;
       if (updated.error) throw updated.error;
       return json({ ok: true });
     }
@@ -328,6 +383,7 @@ export async function POST(request: Request) {
               branding_updated_at: new Date().toISOString(),
             }),
         retry_count: retries,
+        ...(b.local_available === undefined ? {} : {local_available: b.local_available !== false}),
         last_error: b.last_error
           ? String(b.last_error).slice(0, 300)
           : "Upload paused on this device.",
@@ -373,6 +429,7 @@ export async function POST(request: Request) {
         id,
         t.device.id,
         b.action === "finish",
+        b.direct_upload === true,
       );
       if (r.ready)
         after(async () => {
@@ -408,6 +465,7 @@ export async function POST(request: Request) {
         .from("browser_recordings")
         .update({
           branding_state: brandingState,
+          ...(brandingState==="complete"?{branding_progress:100}:{}),
           branding_updated_at: new Date().toISOString(),
         })
         .eq("session_id", id)
@@ -501,7 +559,7 @@ export async function POST(request: Request) {
               ? e.message
               : "Recording request failed. Please retry.",
       },
-      503,
+      e instanceof InputError ? 400 : 503,
     );
   }
 }

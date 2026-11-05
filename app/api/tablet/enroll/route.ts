@@ -3,9 +3,12 @@ import { cookies } from "next/headers";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { hashKiosk, kioskCookie, kioskDevice } from "@/lib/kiosk";
 import { recorderDatabase } from "@/lib/recorder-server";
+import { androidUpdateRequired } from "@/lib/android-release";
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({ error: "Invalid origin." }, 403);
   try {
+    const update = androidUpdateRequired(request);
+    if (update) return json(update, 426);
     const b = await readBody(request),
       code = String(b.code || "").trim();
     if (!/^[A-Za-z0-9_-]{24}$/.test(code))
@@ -71,17 +74,16 @@ export async function POST(request: Request) {
       p_token: hashKiosk(token),
       p_setup: hashKiosk(setup),
       p_admin: audit.data.actor_id,
+      p_previous_kiosk: old?.id || null,
     });
     if (r.error)
       return json(
         {
           error:
-            "Code expired, already used, or this tablet has an unfinished recording.",
+              "Code expired, already used, or a device has unfinished videos. Finish its recording and uploads before changing registrations.",
         },
         409,
       );
-    if (old)
-      await db.from("kiosk_devices").update({ active: false }).eq("id", old.id);
     const store = await cookies(),
       options = {
         httpOnly: true,

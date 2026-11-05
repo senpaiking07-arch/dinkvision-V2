@@ -51,6 +51,9 @@ export type Settings = {
   venue_time_zone: string | null;
 };
 export type Session = {
+  duration_seconds?: number | null;
+  browser_recordings?: BrowserRecordingReport | BrowserRecordingReport[] | null;
+  capture_jobs?: { last_seen_at: string | null } | { last_seen_at: string | null }[] | null;
   configuration_snapshot?: {
     capture_mode?: string;
     device_id?: string;
@@ -68,8 +71,10 @@ export type Session = {
   stop_reason: string | null;
   failure_stage: string | null;
 };
+export type BrowserRecordingReport={last_seen_at:string|null;last_error?:string|null;safe_error?:string|null;upload_state?:string|null;branding_state?:string|null;local_available?:boolean};
 export type Audit = { id: number; action: string; created_at: string };
 export type AdminData = {
+  captureReports?: import("./recording-status").CaptureReport[];
   courts: Court[];
   cameras: Camera[];
   recorders: Recorder[];

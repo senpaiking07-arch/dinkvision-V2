@@ -3,7 +3,14 @@ def environment = new Properties()
 def environmentFile = rootProject.file('../.env')
 if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
 def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
-def appVersionName = '0.5.31'
+def recorderRelease = new groovy.json.JsonSlurper().parse(rootProject.file('recorder-release.json'))
+def appVersionName = recorderRelease.versionName
+// Project-local override for updating an APK signed on another workstation.
+// The keystore itself stays outside the checkout; never replace ~/.android/debug.keystore.
+def localSigning = new Properties()
+def localSettings = rootProject.file('local.properties')
+if (localSettings.exists()) localSettings.withInputStream { localSigning.load(it) }
+def debugKeystore = System.getenv('DINKVISION_DEBUG_KEYSTORE') ?: localSigning.getProperty('dinkvision.debugKeystore')
 def releaseKeystore = System.getenv('ANDROID_RELEASE_KEYSTORE')
 def releaseStorePassword = System.getenv('ANDROID_RELEASE_STORE_PASSWORD')
 def releaseKeyAlias = System.getenv('ANDROID_RELEASE_KEY_ALIAS')
@@ -18,14 +25,23 @@ android {
         applicationId 'com.casabatik.recorder'
         minSdk 26
         targetSdk 36
-        versionCode 37
+        versionCode recorderRelease.versionCode
         versionName appVersionName
         buildConfigField 'String', 'APP_ORIGIN', '"' + appOrigin + '"'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
     }
     buildFeatures { buildConfig true }
+    testBuildType project.hasProperty('localRecorderTests') ? 'debugLocal' : 'debug'
     signingConfigs {
+        if (debugKeystore) {
+            debug {
+                storeFile file(debugKeystore)
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
+        }
         if (releaseSigningReady) {
             release {
                 storeFile file(releaseKeystore)
@@ -36,6 +52,12 @@ android {
         }
     }
     buildTypes {
+        debugLocal {
+            initWith debug
+            applicationIdSuffix '.dev'
+            matchingFallbacks = ['debug']
+            buildConfigField 'String', 'APP_ORIGIN', '"http://127.0.0.1:3000"'
+        }
         release {
             minifyEnabled true
             shrinkResources true
@@ -48,11 +70,61 @@ android {
 }
 if (!releaseSigningReady)
     logger.lifecycle('Android release signing is not configured; release APK/AAB outputs will be unsigned.')
-configurations { nativeBundles }
+configurations { nativeBundles; uvcOriginal }
+
+// Retain the upstream drivers/resources but compile the single recorder class
+// with its public AudioRecord hook. Check the downloaded input before replacing it.
+def routedUvc = layout.buildDirectory.file('uvc-routing/UVCAndroid-1.0.13-routed.aar')
+def prepareRoutedUvc = tasks.register('prepareRoutedUvc') {
+    inputs.files(configurations.uvcOriginal)
+    outputs.file(routedUvc)
+    doLast {
+        def original = configurations.uvcOriginal.singleFile
+        def hash = java.security.MessageDigest.getInstance('SHA-256').digest(original.bytes).encodeHex().toString()
+        if (hash != '4f1295a6c6b5e8590fb7dde3c60f30a94166db45c2d07efa63c85d5da8bfff17')
+            throw new GradleException('Unexpected UVCAndroid 1.0.13 AAR. Review the vendored audio hook before updating it.')
+        def destination = routedUvc.get().asFile
+        destination.parentFile.mkdirs()
+        new java.util.zip.ZipFile(original).withCloseable { archive ->
+            new java.util.zip.ZipOutputStream(new FileOutputStream(destination)).withCloseable { output ->
+                archive.entries().each { entry ->
+                    output.putNextEntry(new java.util.zip.ZipEntry(entry.name))
+                    byte[] contents = archive.getInputStream(entry).withCloseable { it.bytes }
+                    if (entry.name == 'classes.jar') {
+                        def replacement = new ByteArrayOutputStream()
+                        new java.util.zip.ZipInputStream(new ByteArrayInputStream(contents)).withCloseable { input ->
+                            new java.util.zip.ZipOutputStream(replacement).withCloseable { jar ->
+                                java.util.zip.ZipEntry item
+                                while ((item = input.nextEntry) != null) {
+                                    if (item.name == 'com/herohan/uvcapp/VideoCapture.class' || item.name.startsWith('com/herohan/uvcapp/VideoCapture$')) continue
+                                    jar.putNextEntry(new java.util.zip.ZipEntry(item.name))
+                                    jar.write(input.readAllBytes())
+                                    jar.closeEntry()
+                                }
+                            }
+                        }
+                        contents = replacement.toByteArray()
+                    }
+                    output.write(contents)
+                    output.closeEntry()
+                }
+            }
+        }
+    }
+}
+android.sourceSets.main.java.srcDir(rootProject.file('third_party/uvcandroid/src'))
+android.sourceSets.main.assets.srcDir(rootProject.file('third_party/uvcandroid/licenses'))
 dependencies {
     implementation 'androidx.activity:activity:1.10.1'
     implementation 'androidx.webkit:webkit:1.14.0'
-    implementation 'com.herohan:UVCAndroid:1.0.13'
+    uvcOriginal('com.herohan:UVCAndroid:1.0.13') { transitive = false }
+    implementation files(prepareRoutedUvc)
+    // Exact runtime dependencies from the upstream 1.0.13 POM.
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.annotation:annotation:1.8.0'
+    implementation 'cn.hutool:hutool-core:5.8.35'
     implementation('org.bytedeco:javacv:1.5.12') { transitive = false }
     implementation 'org.bytedeco:javacpp:1.5.12'
     implementation 'org.bytedeco:ffmpeg:7.1.1-1.5.12'
@@ -117,12 +189,12 @@ tasks.register('verifyAppLogo') {
 tasks.named('preBuild').configure { dependsOn 'verifyAppLogo' }
 
 def publicPlayerBackgrounds = [
-    rootProject.file('../public/Phone-Background.png'),
-    rootProject.file('../public/Tablet-Background.png')
+    rootProject.file('../public/Kiosk-Background-Phone.png'),
+    rootProject.file('../public/Kiosk-Background-Tablet.png')
 ]
 def packagedPlayerBackgrounds = [
-    file('src/main/assets/Phone-Background.png'),
-    file('src/main/assets/Tablet-Background.png')
+    file('src/main/assets/Kiosk-Background-Phone.png'),
+    file('src/main/assets/Kiosk-Background-Tablet.png')
 ]
 tasks.register('verifyPlayerBackgrounds') {
     inputs.files(publicPlayerBackgrounds)
@@ -138,34 +210,28 @@ tasks.register('verifyPlayerBackgrounds') {
 }
 tasks.named('preBuild').configure { dependsOn 'verifyPlayerBackgrounds' }
 
-// Keep Android Studio's APK and the named local copies synchronized. The
-// Build APK(s) action runs assembleDebug, so this always exports that exact
-// output instead of leaving an older manually copied APK behind.
+// Export one shareable APK outside the checkout. Android Studio retains its
+// managed build output; do not create extra root/artifacts APK copies.
 def debugApk = layout.buildDirectory.file('outputs/apk/debug/app-debug.apk')
 def exportedApkName = "Dink-Vision-Recorder-${appVersionName}.apk"
+def exportedApkDirectory = rootProject.file('../../DinkVision-APKs')
 def exportDebugApk = tasks.register('exportDebugApk') {
     doNotTrackState('Copies the assembled APK outside the Android Gradle project.')
     inputs.file(debugApk)
     doLast {
-        def rootCopy = rootProject.file("../${exportedApkName}")
-        def artifactCopy = rootProject.file("../artifacts/${exportedApkName}")
-        artifactCopy.parentFile.mkdirs()
+        def exportedApk = new File(exportedApkDirectory, exportedApkName)
+        exportedApkDirectory.mkdirs()
         java.nio.file.Files.copy(
             debugApk.get().asFile.toPath(),
-            rootCopy.toPath(),
-            java.nio.file.StandardCopyOption.REPLACE_EXISTING
-        )
-        java.nio.file.Files.copy(
-            debugApk.get().asFile.toPath(),
-            artifactCopy.toPath(),
+            exportedApk.toPath(),
             java.nio.file.StandardCopyOption.REPLACE_EXISTING
         )
         def digest = java.security.MessageDigest.getInstance('SHA-256')
-        rootCopy.eachByte(8192) { buffer, count -> digest.update(buffer, 0, count) }
+        exportedApk.eachByte(8192) { buffer, count -> digest.update(buffer, 0, count) }
         def checksum = digest.digest().encodeHex().toString()
-        rootProject.file("../artifacts/${exportedApkName}.sha256").text =
+        new File(exportedApkDirectory, "${exportedApkName}.sha256").text =
             "${checksum}  ${exportedApkName}\n"
-        println "Latest debug APK: ${rootCopy}"
+        println "Latest debug APK: ${exportedApk}"
     }
 }
 tasks.configureEach {

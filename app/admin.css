@@ -175,6 +175,9 @@
   background: #fff3ef;
   border-color: #e7bbb2;
 }
+.live-recording-indicator.is-unconfirmed{background:#fff8e9;border-color:#e6c885;color:#79551e}
+.live-recording-indicator.is-unconfirmed .live-recording-dot{background:#b48027;animation:none}
+.live-recording-indicator a{display:inline-block;margin-top:6px;color:inherit;font-weight:600;text-underline-offset:3px}
 .live-recording-indicator > div {
   flex-wrap: wrap;
   align-items: baseline;
@@ -1708,11 +1711,19 @@ summary {
   text-transform: capitalize;
   color: #38635b;
 }
+.device-queue-item-title{display:grid;gap:3px;flex:1 1 180px;min-width:0;max-width:100%;color:#154f4d;text-decoration:none}
+.device-queue-item-title:hover{text-decoration:underline}.device-queue-item-title:focus-visible{outline:2px solid #105b61;outline-offset:3px;border-radius:3px}
+.device-queue-item-date{font-size:11px;color:#5d7770}.device-queue-item-recipients{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .device-queue-item-error {
   flex: 1 0 100%;
   color: #805347;
   overflow-wrap: anywhere;
 }
+.device-hardware-details{margin-top:8px;color:#315f5a;font-size:12px}
+.device-hardware-details summary{padding:8px 0;cursor:pointer;font-weight:600}
+.device-hardware-details dl{display:grid;grid-template-columns:minmax(95px,auto) minmax(0,1fr);gap:6px 12px;margin:4px 0 10px}
+.device-hardware-details dt{color:#6b7c72}.device-hardware-details dd{margin:0;overflow-wrap:anywhere}
+.device-hardware-details>small{display:block;line-height:1.5}
 .device-queue-retry {
   flex: 0 0 auto;
   margin-top: 0;
@@ -1722,3 +1733,11 @@ summary {
   color: #87938a;
   font-style: italic;
 }
+.device-logo-progress{display:grid;gap:5px;flex:1 0 100%;font-size:11px;color:#38635b}
+.device-logo-progress progress{width:100%;height:7px;accent-color:#105b61}
+.device-queue-item-copy{flex:1 0 100%;font-size:11px;color:#38635b}
+.device-queue-item-size{display:block;flex:1 0 100%;font-size:11px;color:#5d7770}
+.device-queue-item > .device-upload-meter{flex:1 0 100%;width:100%;margin-top:2px}
+.device-queue-item + .device-queue-item{border-top:1px solid #dce3d7;padding-top:12px;margin-top:4px}
+.device-queue-number{display:inline-flex;align-items:center;justify-content:center;flex:0 0 22px;height:22px;border-radius:6px;background:#105b61;color:#fff;font-size:12px;font-weight:700}
+.device-progress-unreported{display:block;height:7px;background:#dce3d7;border-radius:7px}

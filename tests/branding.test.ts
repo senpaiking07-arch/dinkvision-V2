@@ -72,7 +72,7 @@ test("Android launcher and splash use the square logo without changing player br
 });
 
 test("Android player backgrounds match their public artwork and player shell stays scroll-free", () => {
-  for (const name of ["Phone-Background.png", "Tablet-Background.png"]) {
+  for (const name of ["Kiosk-Background-Phone.png", "Kiosk-Background-Tablet.png"]) {
     assert.deepEqual(
       readFileSync(resolve(root, `android/app/src/main/assets/${name}`)),
       readFileSync(resolve(root, `public/${name}`)),
@@ -90,9 +90,9 @@ test("Android player backgrounds match their public artwork and player shell sta
   assert.match(css, /\.reenroll\{[^}]*position:fixed[^}]*left:max\(12px/);
   assert.match(app, /call\('setup-reenroll'\)/);
   assert.doesNotMatch(html, />Tap to start</);
-  assert.match(html, /id="begin"[^>]*aria-label="Start"/);
+  assert.match(html, /id="begin"[^>]*aria-label="Tap anywhere to start"/);
   assert.doesNotMatch(html, /class="ripple-dot"/);
-  assert.match(css, /\.tap:before,\.tap:after\{[^}]*background:transparent/);
+  assert.match(html, />TAP ANYWHERE TO START</);
   assert.match(css, /html,body\{[^}]*overflow:hidden/);
   assert.match(css, /\*\{[^}]*-webkit-tap-highlight-color:transparent/);
   assert.match(css, /\*\{[^}]*user-select:none/);
@@ -103,11 +103,11 @@ test("Android player backgrounds match their public artwork and player shell sta
   assert.match(css, /#timer\{[^}]*color:var\(--on-image\)/);
   assert.match(app, /document\.addEventListener\('selectstart'/);
   assert.match(app, /document\.addEventListener\('contextmenu'/);
-  assert.match(css, /url\('Tablet-Background\.png'\)/);
-  assert.match(css, /url\('Phone-Background\.png'\)/);
+  assert.match(css, /url\('Kiosk-Background-Tablet\.png'\)/);
+  assert.match(css, /url\('Kiosk-Background-Phone\.png'\)/);
   assert.match(css, /h1\{[^}]*-webkit-text-stroke:[^}]*text-shadow:/);
   assert.match(css, /\.intro\{[^}]*-webkit-text-stroke:[^}]*text-shadow:/);
-  assert.match(css, /@keyframes start-ripple/);
+  assert.doesNotMatch(css, /start-ripple/);
   assert.match(html, /id="back" class="player-back"/);
   assert.match(html, /viewBox="0 0 24 24"/);
   assert.match(css, /\.player-back svg\{[^}]*stroke:currentColor/);

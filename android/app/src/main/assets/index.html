@@ -3,25 +3,33 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-src 'none'; form-action 'none'">
-    <meta name="theme-color" content="#fcfcf8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; media-src 'self'; font-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+    <meta name="theme-color" content="#041d38">
     <title>Dink Vision recorder</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="kiosk-theme.css">
   </head>
   <body>
+    <svg class="brand-filter" aria-hidden="true" width="0" height="0"><defs><filter id="brand-on-navy" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="1.508 -3.153 1.645 0 1  .241 -.504 .263 0 1  .362 -.757 .395 0 1  0 0 0 1 0"/></filter></defs></svg>
     <div class="backdrop" aria-hidden="true"></div>
     <header>
       <div class="brand"><img src="dink-vision-logo.png" alt="Dink Vision"></div>
+      <div class="header-status" aria-live="polite"><span id="camera-status" class="camera-status">Checking camera</span><span id="header-court" hidden></span></div>
     </header>
+    <div id="connection-notice" hidden><span id="connection-text" role="status"></span><button id="connection-retry" type="button" hidden>Retry connection</button></div>
     <main>
       <div id="count-in" class="count-in" hidden><div><span>Recording starts in</span><strong id="count-number">3</strong><small>Get ready</small></div></div>
       <section id="welcome">
         <div class="hero">
-          <p class="eyebrow">GOOD GAMES DESERVE A REPLAY</p>
-          <h1>Your court.<br>Your <em>moment.</em></h1>
-          <p class="intro">The rallies. The close calls. That winning shot.<br>Record your match and take a little of the court home.</p>
+          <h1>Your game.<br><em>On replay.</em></h1>
+          <p class="intro">Your court. Your moment.</p>
         </div>
-        <button class="tap" id="begin" type="button" aria-label="Start"></button>
+        <button class="tap" id="begin" type="button" aria-label="Tap anywhere to start">
+          <svg aria-hidden="true" viewBox="0 0 54 60" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+            <path stroke="#0be998" d="M9 37a21 21 0 1 1 36-7M14 32a15 15 0 1 1 25-6"/>
+            <path stroke="currentColor" d="M22 39V23a3 3 0 0 1 6 0v11-3a3 3 0 0 1 6 0v3a3 3 0 0 1 6 0v2a3 3 0 0 1 6 0v8c0 9-5 13-13 13-5 0-8-2-11-5l-9-10a3 3 0 0 1 5-4l4 4z"/>
+          </svg><span>TAP ANYWHERE TO START</span>
+        </button>
       </section>
       <section id="form" hidden>
         <div class="form-heading">
@@ -67,12 +75,54 @@
         <h1>Review your test clip</h1>
         <video id="camera-test-video" class="test-preview" controls playsinline preload="metadata"></video>
         <p class="note" id="camera-test-help">Play the saved clip before confirming this camera.</p>
+        <label class="camera-quality-label" for="camera-quality">Video quality
+          <select id="camera-quality"><option value="auto">Auto · best supported quality</option></select>
+        </label>
         <div class="actions"><button id="camera-test-retry" class="quiet" type="button">Record another test</button><button id="camera-test-confirm" class="primary" type="button">I can see and hear the test</button></div>
       </section>
-      <div id="error" role="alert" hidden><p id="error-message"></p><button id="recover" class="recover" type="button" hidden>Recover saved video</button></div>
-      <p id="notice" role="status"></p>
+      <section id="saved-videos" hidden aria-labelledby="saved-title">
+        <div class="saved-heading">
+          <button id="saved-back" class="player-back" type="button" aria-label="Back to welcome">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 12H5M11 18l-6-6 6-6"></path></svg>
+          </button>
+          <h1 id="saved-title">Saved videos</h1>
+          <span class="form-heading-spacer" aria-hidden="true"></span>
+        </div>
+        <p id="saved-empty" class="subtitle" hidden>No videos are saved inside this app. Completed uploads may already be on Google Drive.</p>
+        <div id="saved-panel" class="saved-panel">
+          <div class="saved-media">
+            <video id="saved-player" controls playsinline preload="metadata" poster="video-placeholder.svg" aria-label="Saved video preview"></video>
+            <div id="saved-processing" class="saved-processing" role="status" hidden><strong id="saved-processing-label">Adding logo…</strong><progress id="saved-processing-progress" max="100" aria-label="Logo processing progress"></progress></div>
+            <p id="saved-preview-warning" hidden>Preview unavailable. You can still save the original for inspection.</p>
+          </div>
+          <div class="saved-info">
+            <strong id="saved-video-name"></strong>
+            <p id="saved-video-meta"></p>
+            <p id="saved-video-status" role="status"></p>
+            <button id="saved-details" class="saved-details quiet" type="button" aria-label="View video error details" hidden>Details</button>
+            <div class="saved-actions">
+              <button id="saved-save" class="primary" type="button">Save to device</button>
+              <button id="saved-retry" class="quiet" type="button" hidden>Retry upload</button>
+            </div>
+            <p id="saved-action-result" role="status"></p>
+            <div class="saved-pagination">
+              <button id="saved-previous" class="quiet" type="button">Previous</button>
+              <span id="saved-position" aria-live="polite"></span>
+              <button id="saved-next" class="quiet" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+        <p class="note saved-help">Save to Gallery / Files first, then remove the app copy to free space. Recording history stays in Admin.</p>
+      </section>
     </main>
-    <button id="reenroll" class="reenroll" type="button" hidden>Re-enroll device</button>
+    <div id="notifications">
+      <div id="error" role="alert" hidden><p id="error-message"></p><button id="recover" class="recover" type="button" hidden>Saved videos</button></div>
+      <p id="notice" role="status" hidden></p>
+    </div>
+    <div class="device-tools">
+      <button id="reenroll" class="reenroll" type="button" hidden>Re-enroll device</button>
+      <button id="saved-open" class="reenroll" type="button" hidden>Saved videos</button>
+    </div>
     <footer><span id="app-version">Android recorder</span></footer>
     <div id="modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="modal-title">
       <div class="modal-card">
@@ -82,6 +132,18 @@
         <div id="modal-content" class="modal-content"></div>
         <div id="modal-error" class="modal-error" role="alert" hidden></div>
         <div id="modal-actions" class="modal-actions"></div>
+      </div>
+    </div>
+    <div id="required-update" class="required-update" role="dialog" aria-modal="true" aria-labelledby="update-title" hidden>
+      <div class="modal-card">
+        <div class="modal-kicker">APP UPDATE</div>
+        <h2 id="update-title">Checking for updates</h2>
+        <p id="update-copy" class="modal-copy"></p>
+        <p id="update-error" role="alert" hidden></p>
+        <div class="modal-actions">
+          <button id="update-install" class="primary" type="button" hidden>Download update</button>
+          <button id="update-check" class="quiet" type="button">Check again</button>
+        </div>
       </div>
     </div>
     <script src="app.js"></script>

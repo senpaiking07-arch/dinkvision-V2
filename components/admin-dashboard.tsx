@@ -23,6 +23,8 @@ import type {
 } from "@/lib/admin-types";
 
 import { cameraOnline } from "@/lib/recorder-status";
+import { recordingIsConfirmed } from "@/lib/recording-status";
+import {recordingDiagnostics} from "@/lib/recording-diagnostics";
 
 type Tab = "overview" | "courts" | "cameras" | "settings" | "logs";
 function SaveForm({
@@ -254,8 +256,8 @@ function CourtForm({
   );
 }
 
-export default function AdminDashboard({ data }: { data: AdminData }) {
-  const [tab, setTab] = useState<Tab>("overview");
+export default function AdminDashboard({ data, initialRecordingId = "" }: { data: AdminData; initialRecordingId?: string }) {
+  const [tab, setTab] = useState<Tab>(initialRecordingId ? "logs" : "overview");
   const [courtId, setCourtId] = useState("");
   const [newCourtVersion, setNewCourtVersion] = useState(0);
   const courtEditor = useRef<HTMLElement>(null);
@@ -275,7 +277,7 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
     const t = setInterval(load, 10000);
     return () => clearInterval(t);
   }, []);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialRecordingId);
   const [status, setStatus] = useState("");
   const [date, setDate] = useState("");
   const [logPage, setLogPage] = useState(1);
@@ -329,7 +331,7 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
       (!date || localDate(session.created_at) === date) &&
       `${recordingRecipients(session)} ${recordingCourtName(session)} ${session.id}`
         .toLowerCase()
-        .includes(search.toLowerCase()),
+        .includes(search.trim().toLowerCase()),
   );
   const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -343,11 +345,11 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
     logScroll.current?.scrollTo({ top: 0, left: 0 });
   }, [currentPage, search, status, date]);
   const activeCourts = data.courts.filter((court) => court.active);
-  const recordingCourtIds = new Set(
-    data.sessions
-      .filter((session) => session.status === "recording")
-      .map((session) => session.court_id),
-  );
+  const pendingCaptures = data.sessions.filter(session => session.status === "recording");
+  const confirmed = (session: AdminData["sessions"][number]) => recordingIsConfirmed(
+    session, data.captureReports?.find(report => report.session_id === session.id), Date.now());
+  const unconfirmed = pendingCaptures.filter(session => !confirmed(session));
+  const recordingCourtIds = new Set(pendingCaptures.filter(confirmed).map(session => session.court_id));
   const recordingCourts = activeCourts.filter((court) =>
     recordingCourtIds.has(court.id),
   );
@@ -385,20 +387,22 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
       </nav>
 
       <div
-        className={`live-recording-indicator ${recordingCourts.length ? "is-recording" : ""}`}
+        className={`live-recording-indicator ${unconfirmed.length ? "is-unconfirmed" : recordingCourts.length ? "is-recording" : ""}`}
         role="status"
         aria-live="polite"
       >
         <span className="live-recording-dot" aria-hidden="true" />
         <div>
           <strong>
-            {recordingCourts.length ? "Recording now" : "No live recordings"}
+            {unconfirmed.length ? "Recording unconfirmed" : recordingCourts.length ? "Recording now" : "No live recordings"}
           </strong>
           <span>
-            {recordingCourts.length
+            {unconfirmed.length ? `${unconfirmed.map(recordingCourtName).join(", ")}: the last capture report is stale or its recording limit has passed. Reconnect the original device to reconcile its saved video.` : recordingCourts.length
               ? recordingCourts.map((court) => court.name).join(", ")
               : "All courts are currently idle."}
           </span>
+          {unconfirmed.length > 0 && <a href={`/admin?recording=${encodeURIComponent(unconfirmed[0].id)}`}>View recording log</a>}
+          {unconfirmed.length > 0 && recordingCourts.length > 0 && <span>Confirmed recording: {recordingCourts.map(court => court.name).join(", ")}</span>}
         </div>
       </div>
 
@@ -508,7 +512,7 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
                         </small>
                       </span>
                       <span className={`status-tag ${recording ? "recording" : ""}`}>
-                        {recording ? "Recording now" : "Active"}
+                        {unconfirmed.some(session => session.court_id === court.id) ? "Recording unconfirmed" : recording ? "Recording now" : "Active"}
                       </span>
                     </button>
                   );
@@ -607,7 +611,7 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
         <section className="admin-card">
           <h2>Every match has a story.</h2>
           <p className="form-note">
-            Latest 100 sessions, newest first. Times in {zone}.
+            Latest 100 sessions{initialRecordingId ? " plus the selected recording" : ""}, newest first. Times in {zone}.
           </p>
           <div className="log-filters">
             <label>
@@ -673,7 +677,7 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
                       <td>{recordingRecipients(session)}</td>
                       <td>
                         <span className="status-tag">
-                          {session.status === "local_ready"
+                          {session.status === "recording" && !confirmed(session) ? "Recording unconfirmed" : session.status === "local_ready"
                             ? "Saved locally"
                             : session.status}
                         </span>
@@ -682,6 +686,7 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
                         <details>
                           <summary>View</summary>
                           <p>ID: {session.id}</p>
+                          {session.status === "recording" && !confirmed(session) && <p>The server still holds this capture open. Its last report is stale or its recording limit has passed. Reconnect the original device; preserve its saved videos while reconciling this session.</p>}
                           {session.configuration_snapshot?.capture_mode ===
                             "browser" && (
                             <p>
@@ -695,9 +700,6 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
                               <br />
                               Camera:{" "}
                               {session.configuration_snapshot.camera_name}
-                              <br />
-                              For interrupted uploads, open player mode on the
-                              original tablet and choose Recover / retry upload.
                             </p>
                           )}
                           <p>
@@ -712,8 +714,11 @@ export default function AdminDashboard({ data }: { data: AdminData }) {
                               ? timestamp(session.stopped_at)
                               : "—"}
                           </p>
-                          <p>Reason: {session.stop_reason || "—"}</p>
-                          <p>Failure stage: {session.failure_stage || "—"}</p>
+                          <p>Reason: {recordingDiagnostics(session).reason}</p>
+                          <p>Failure stage: {recordingDiagnostics(session).stage}</p>
+                          {recordingDiagnostics(session).detail && <p>Device report: {recordingDiagnostics(session).detail}</p>}
+                          {recordingDiagnostics(session).help && <p>What to do: {recordingDiagnostics(session).help}</p>}
+                          <p className="muted">Recorded codes: reason {session.stop_reason || "not reported"}; stage {session.failure_stage || "not reported"}.</p>
                           {(session.status === "local_ready" ||
                             ["upload", "sharing"].includes(
                               session.failure_stage || "",

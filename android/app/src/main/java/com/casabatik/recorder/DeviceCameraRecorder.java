@@ -10,7 +10,6 @@ import android.os.*;
 import android.util.Size;
 import java.io.File;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -25,17 +24,21 @@ final class DeviceCameraRecorder {
             == PackageManager.PERMISSION_GRANTED;
   }
 
-  private static Size recordingSize(CameraCharacteristics details) throws Exception {
+  private static RecordingProfile recordingProfile(CameraCharacteristics details, long max60Pixels, long maxFallbackPixels, String preferred, CameraCapture.Listener listener) throws Exception {
     android.hardware.camera2.params.StreamConfigurationMap map =
         details.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
     Size[] sizes = map == null ? null : map.getOutputSizes(MediaRecorder.class);
     if (sizes == null || sizes.length == 0) throw new Exception("No recordable camera size found.");
-    for (Size size : sizes)
-      if (size.getWidth() == 1280 && size.getHeight() == 720) return size;
-    return java.util.Arrays.stream(sizes)
-        .filter(size -> size.getWidth() <= 1920 && size.getHeight() <= 1080)
-        .max(Comparator.comparingLong(size -> (long) size.getWidth() * size.getHeight()))
-        .orElse(sizes[0]);
+    java.util.List<RecordingProfile> candidates = new java.util.ArrayList<>();
+    var ranges = details.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+    if (ranges != null) for (Size size : sizes) for (var range : ranges) {
+      int fps = range.getUpper();
+      long minNs = map.getOutputMinFrameDuration(MediaRecorder.class, size);
+      if (fps < 1 || fps > 60 || (minNs > 0 && minNs * (double) fps > 1_010_000_000L)) continue;
+      candidates.add(new RecordingProfile(size.getWidth(), size.getHeight(), fps, 0));
+    }
+    listener.modes(candidates);
+    return RecordingProfile.choose(candidates, RecordingProfile::encoderSupports, max60Pixels, maxFallbackPixels, preferred);
   }
 
   private static String[] selectCamera(CameraManager manager) throws Exception {
@@ -55,12 +58,15 @@ final class DeviceCameraRecorder {
   }
 
   static android.util.Range<Integer> recordingRate(android.util.Range<Integer>[] ranges, long minFrameNs) throws Exception {
+    return recordingRate(ranges, minFrameNs, 30);
+  }
+  static android.util.Range<Integer> recordingRate(android.util.Range<Integer>[] ranges, long minFrameNs, int target) throws Exception {
     if (ranges == null || ranges.length == 0)
       throw new RecordingAccuracy.Failure("Camera does not report supported recording frame rates.");
-    int ceiling = minFrameNs > 0 ? (int)(1_000_000_000L / minFrameNs) : 30;
+    int ceiling = minFrameNs > 0 ? (int)(1_010_000_000L / minFrameNs) : target;
     android.util.Range<Integer> best = null;
     for (var range : ranges) {
-      if (range.getUpper() > Math.min(30, ceiling) || range.getLower() < 1) continue;
+      if (range.getUpper() > Math.min(target, ceiling) || range.getLower() < 1) continue;
       if (best == null || range.getUpper() > best.getUpper()
           || (range.getUpper().equals(best.getUpper()) && range.getLower() > best.getLower())) best = range;
     }
@@ -77,6 +83,11 @@ final class DeviceCameraRecorder {
       BooleanSupplier stop,
       CameraCapture.Listener listener)
       throws Exception {
+    return capture(context, file, seconds, countInSeconds, stop, listener, Long.MAX_VALUE, Long.MAX_VALUE, "");
+  }
+  @SuppressLint("MissingPermission")
+  static long capture(Context context, File file, int seconds, int countInSeconds,
+      BooleanSupplier stop, CameraCapture.Listener listener, long max60Pixels, long maxFallbackPixels, String preferred) throws Exception {
     if (!hasPermissions(context))
       throw new Exception("Allow camera and microphone permissions in the Android app.");
 
@@ -87,24 +98,28 @@ final class DeviceCameraRecorder {
     } catch (Exception noPlatformCamera) {
       if (UvcCameraRecorder.hasAttachedCamera(context))
         return UvcCameraRecorder.capture(
-            context, file, seconds, countInSeconds, stop, listener);
+            context, file, seconds, countInSeconds, stop, listener, max60Pixels, maxFallbackPixels, preferred);
       throw noPlatformCamera;
     }
     String cameraId = selection[0];
     if (!"USB camera".equals(selection[1]) && UvcCameraRecorder.hasAttachedCamera(context))
       return UvcCameraRecorder.capture(
-          context, file, seconds, countInSeconds, stop, listener);
+          context, file, seconds, countInSeconds, stop, listener, max60Pixels, maxFallbackPixels, preferred);
     listener.camera(selection[1]);
     CameraCharacteristics details = manager.getCameraCharacteristics(cameraId);
-    Size size = recordingSize(details);
+    RecordingProfile profile = recordingProfile(details, max60Pixels, maxFallbackPixels, preferred, listener);
+    Size size = new Size(profile.width, profile.height);
     var map = details.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
     var rate = recordingRate(details.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES),
-        map.getOutputMinFrameDuration(MediaRecorder.class, size));
+        map.getOutputMinFrameDuration(MediaRecorder.class, size), profile.fps);
+    listener.profile(profile.width, profile.height, profile.fps, profile.bitrate());
     HandlerThread thread = new HandlerThread("wpc-device-camera");
     thread.start();
     Handler handler = new Handler(thread.getLooper());
     MediaRecorder recorder =
         Build.VERSION.SDK_INT >= 31 ? new MediaRecorder(context) : new MediaRecorder();
+    LiveLogoProcessor logo = null;
+    android.view.Surface encoderSurface = null;
     CameraDevice camera = null;
     CameraCaptureSession session = null;
     long capturedMillis = 0;
@@ -115,7 +130,7 @@ final class DeviceCameraRecorder {
       recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
       recorder.setOutputFile(file.getAbsolutePath());
       recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
-      recorder.setVideoEncodingBitRate(6_000_000);
+      recorder.setVideoEncodingBitRate(profile.bitrate());
       recorder.setVideoFrameRate(rate.getUpper());
       recorder.setVideoSize(size.getWidth(), size.getHeight());
       recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
@@ -124,6 +139,14 @@ final class DeviceCameraRecorder {
       Integer orientation = details.get(CameraCharacteristics.SENSOR_ORIENTATION);
       if (orientation != null) recorder.setOrientationHint(orientation);
       recorder.prepare();
+      android.hardware.usb.UsbDevice usbCamera = null;
+      if ("USB camera".equals(selection[1])) {
+        var usbManager = context.getSystemService(android.hardware.usb.UsbManager.class);
+        if (usbManager != null) for (var device : usbManager.getDeviceList().values())
+          if (UvcCameraRecorder.isUvcDevice(device)) { usbCamera = device; break; }
+      }
+      RecordingAudioInput audio = new RecordingAudioInput(context, usbCamera);
+      audio.prefer(recorder);
 
       CountDownLatch opened = new CountDownLatch(1);
       AtomicReference<CameraDevice> openedCamera = new AtomicReference<>();
@@ -157,7 +180,10 @@ final class DeviceCameraRecorder {
       camera = openedCamera.get();
       if (camera == null) throw new Exception("Android camera could not be opened.");
 
-      android.view.Surface surface = recorder.getSurface();
+      encoderSurface = recorder.getSurface();
+      logo = new LiveLogoProcessor(context, encoderSurface, profile.width, profile.height,
+          orientation == null ? 0 : orientation, false, error -> failure.compareAndSet(null, error));
+      android.view.Surface surface = logo.input();
       CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
       request.addTarget(surface);
       request.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
@@ -211,15 +237,20 @@ final class DeviceCameraRecorder {
 
       recorder.start();
       recording = true;
+      logo.startEncoding();
       long start = System.nanoTime();
       lastFrame.set(start);
       // Keep "1" visible while MediaRecorder performs its native startup.
       // Clear the countdown only once capture has actually begun.
       listener.countdown(0);
       listener.started();
+      long targetNanos = TimeUnit.SECONDS.toNanos(seconds);
+      if (countInSeconds == 0 && seconds == 3) targetNanos += TimeUnit.MILLISECONDS.toNanos(350);
       while (!stop.getAsBoolean()
-          && (System.nanoTime() - start) / 1_000_000_000L < seconds) {
+          && System.nanoTime() - start < targetNanos) {
         if (failure.get() != null) throw failure.get();
+        audio.observe(recorder, start);
+        if (audio.isVerified()) listener.audio(audio.label());
         if (System.nanoTime() - lastFrame.get() > 3_000_000_000L)
           throw new RecordingAccuracy.Failure("Device camera stopped delivering frames. Available footage remains on this device.");
         listener.frame((int) ((System.nanoTime() - start) / 1_000_000_000L));
@@ -228,15 +259,22 @@ final class DeviceCameraRecorder {
         Thread.sleep(100);
       }
       capturedMillis = Math.max(1, (System.nanoTime() - start) / 1_000_000L);
+      audio.requireVerified();
+      listener.audio(audio.label());
       listener.finalizing();
+      session.stopRepeating();
+      logo.stop();
       recorder.stop();
       recording = false;
+      logo.completed(file);
     } catch (RuntimeException e) {
       throw new Exception("Android camera could not save a complete recording.", e);
     } finally {
       if (recording) try { recorder.stop(); } catch (Exception ignored) {}
       if (session != null) session.close();
       if (camera != null) camera.close();
+      if (logo != null) logo.close();
+      if (encoderSurface != null) encoderSurface.release();
       try {
         recorder.reset();
       } catch (Exception ignored) {

@@ -2,7 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { recorderDatabase } from "./recorder-server";
 import { connectedDrive } from "./google-server";
-import { DriveError, localDay, recordingFileName } from "./google-drive";
+import { DriveError, localDay, recordingFileName, uploadUri } from "./google-drive";
 import { encryptSecret, decryptSecret } from "./google-crypto";
 
 export type BrowserUploadQueue = {
@@ -185,6 +185,7 @@ export async function browserUpload(
   sessionId: string,
   deviceId: string,
   finish = false,
+  direct = false,
 ) {
   const queue = await browserUploadQueue(sessionId, deviceId, true);
   if (["complete", "uploaded"].includes(queue.state)) return { ready: true, queued: false, queue };
@@ -198,12 +199,25 @@ export async function browserUpload(
       lease_until: new Date(Date.now() + 60000).toISOString(),
     })
     .eq("session_id", sessionId)
+    .eq("device_id", deviceId)
     .or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
     .select("*")
     .maybeSingle();
   if (claimed.error || !claimed.data)
     throw new Error("Upload is busy. Retry shortly.");
   const b = claimed.data;
+  const prepared = () => ({
+    ready: false,
+    queued: false,
+    queue,
+    // This URL is a bearer capability for this one upload. It is returned only
+    // after ownership/queue checks, never stored by the APK or exposed in state.
+    ...(direct ? { directUpload: {
+      url: uploadUri(decryptSecret(b.upload_uri_encrypted)),
+      bytes: Number(b.bytes),
+      mime: b.mime_type,
+    } } : {}),
+  });
   try {
     const s = await db
       .from("recording_sessions")
@@ -324,15 +338,16 @@ export async function browserUpload(
         Number(b.bytes),
         b.mime_type,
       );
+      b.upload_uri_encrypted = encryptSecret(uri);
       const r = await db
         .from("browser_recordings")
-        .update({ upload_uri_encrypted: encryptSecret(uri) })
+        .update({ upload_uri_encrypted: b.upload_uri_encrypted })
         .eq("session_id", sessionId)
         .eq("lease_token", token);
       if (r.error) throw r.error;
-      return { ready: false, queued: false, queue };
+      return prepared();
     }
-    return { ready: false, queued: false, queue };
+    return prepared();
   } finally {
     await db
       .from("browser_recordings")

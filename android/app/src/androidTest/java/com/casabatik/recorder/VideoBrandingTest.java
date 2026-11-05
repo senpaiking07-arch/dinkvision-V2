@@ -16,6 +16,24 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class VideoBrandingTest {
+  @Test public void measuredProgressCompletesOnlyWithAValidatedSavedVideo() throws Exception {
+    var instrumentation=InstrumentationRegistry.getInstrumentation();
+    File source=new File(instrumentation.getTargetContext().getCacheDir(),"measured-branding.mp4");
+    java.util.List<Integer> values=new java.util.ArrayList<>();
+    try {
+      try(InputStream in=instrumentation.getContext().getAssets().open("recording-one-second.mp4");FileOutputStream out=new FileOutputStream(source)){in.transferTo(out);}
+      VideoBranding.apply(instrumentation.getTargetContext(),source,-1,true,()->false,percent->{
+        values.add(percent);
+        if(percent==100)try{assertTrue(RecordedVideo.validate(source,-1,true)>0);}catch(Exception e){throw new AssertionError(e);}
+      });
+      assertEquals(Integer.valueOf(0),values.get(0));assertEquals(Integer.valueOf(100),values.get(values.size()-1));
+      assertTrue(values.stream().anyMatch(p->p>0&&p<99));
+      for(int n=1;n<values.size();n++)assertTrue("Measured progress must advance monotonically",values.get(n)>=values.get(n-1));
+      assertEquals(49,VideoBranding.processingPercent(5_000_000,10_000));
+      assertEquals(98,VideoBranding.processingPercent(20_000_000,10_000));
+    }finally{source.delete();}
+  }
+
   @Test
   public void fullRecordingKeepsAudioThroughTheLastVideoFrame() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
@@ -104,21 +122,37 @@ public class VideoBrandingTest {
   }
 
   @Test
-  public void roundedVideoTimestampsAlwaysProduceIncreasingFrameNumbers() throws Exception {
+  public void roundedVideoTimestampsNeverStretchTheSourceTimeline() throws Exception {
     double frameRate = 30.0;
     long sourceStart = 1_000_000L;
     int first = VideoBranding.nextFrameNumber(sourceStart, sourceStart, frameRate, -1);
-    // Both timestamps normally round to frame zero at 30 fps. The second output frame must
-    // still advance or FFmpeg rejects the MP4 packet with av_interleaved_write_frame error -22.
+    // Frames within one output time slot must be skipped, not moved into the future.
     int second = VideoBranding.nextFrameNumber(sourceStart + 8_000L, sourceStart, frameRate, first);
     int third = VideoBranding.nextFrameNumber(sourceStart + 16_000L, sourceStart, frameRate, second);
     int afterGap =
         VideoBranding.nextFrameNumber(sourceStart + 200_000L, sourceStart, frameRate, third);
 
     assertEquals(0, first);
-    assertEquals(1, second);
-    assertEquals(2, third);
+    assertEquals(0, second);
+    assertEquals(0, third);
     assertEquals(6, afterGap);
+  }
+
+  @Test public void unevenCameraFramesKeepOriginalDurationAndAudio() throws Exception {
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    File source = new File(instrumentation.getTargetContext().getCacheDir(), "variable-timing.mp4");
+    try {
+      // Black picture and silent audio; only timestamps from the failing capture are retained.
+      try (InputStream in = instrumentation.getContext().getAssets().open("recording-variable-timing.mp4");
+          FileOutputStream out = new FileOutputStream(source)) { in.transferTo(out); }
+      long duration = RecordedVideo.validate(source, 93_226L, true);
+      double measured = RecordedVideo.measuredFrameRate(source);
+      assertTrue("Rate comes from real frame samples", measured > 27 && measured < 28);
+      assertFalse("A declared 60 fps target cannot turn 27 fps footage into verified 60 fps",RecordingProfile.sustains60(measured));
+      long branded = VideoBranding.apply(instrumentation.getTargetContext(), source, 93_226L, true);
+      assertTrue("Branding must preserve source timing", Math.abs(branded - duration) <= 200);
+      assertTrue("Sound must end with the picture", Math.abs(branded - RecordedVideo.audioDurationMillis(source)) <= 350);
+    } finally { source.delete(); }
   }
 
   @Test
@@ -149,12 +183,14 @@ public class VideoBrandingTest {
   @Test
   public void markIsPlacedAtTheDisplayedBottomRight() throws Exception {
     try (Frame frame = new Frame(100, 60, Frame.DEPTH_UBYTE, 3)) {
+      ByteBuffer background=((ByteBuffer)frame.image[0]).duplicate();
+      for(int i=0;i<background.capacity();i++)background.put(i,(byte)17);
       int[] red = {0xffff0000, 0xffff0000, 0xffff0000, 0xffff0000};
       VideoBranding.blend(frame, red, 2, 2, 0);
       ByteBuffer pixels = ((ByteBuffer) frame.image[0]).duplicate();
       int offset = (60 - 12 - 2) * frame.imageStride + (100 - 12 - 2) * 3;
       assertTrue((pixels.get(offset + 2) & 0xff) > 200);
-      assertEquals(0, pixels.get(0));
+      assertEquals(17, pixels.get(0));
     }
   }
 

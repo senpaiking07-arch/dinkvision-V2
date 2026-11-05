@@ -54,4 +54,8 @@ Automated database tests cover confirmation during an older upload, rejection du
 
 An emulator does not validate the court's USB camera, power supply, cable, sustained capture performance, or these original videos. Those remain physical-device checks.
 
-Checks completed on 2026-11-01: 120 Node/database tests passed, 15 selected Android instrumentation tests passed on the API 35 Pixel Tablet emulator, Next.js production build passed, and Android `assembleDebug` / `lintDebug` passed. Version 0.5.31 uses version code 37. The APK is a debug-signed test build; these checks do not establish production stability on the court hardware.
+Checks completed on 2026-11-01: all 124 tests in the full Node/database suite passed. A total of 38 selected Android instrumentation tests passed on the API 35 Pixel Tablet emulator, including logo processing of a 65-second fixture, three-second preview duration, audio-tail validation, upload resume, recovery, and the player UI. The upload-worker timing-failure test confirms that validation stops after one attempt, reports a media error, and preserves every byte of the original. Next.js production build and Android `assembleDebug` / `lintDebug` passed. Version 0.5.31 uses version code 37. The APK is a debug-signed test build; these checks do not establish production stability on the court hardware.
+
+## Publication record
+
+Commit `ad6f6f2` was pushed and the two 2026-11-01 database-function migrations were applied before the user explicitly required a fresh instruction for every GitHub upload. Vercel reported that automatic deployment as failed, so the corresponding web changes were not confirmed live. Further local test additions and diagnostic-message adjustments remain unpushed. No additional GitHub upload or deployment is authorized until the user requests it.

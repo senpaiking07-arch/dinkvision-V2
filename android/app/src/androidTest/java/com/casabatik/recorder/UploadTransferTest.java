@@ -10,7 +10,7 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class UploadTransferTest {
   @Test
-  public void chunkTransportUsesPairedEndpointAndExactFileRange() throws Exception {
+  public void chunkTransportUsesDriveWithoutForwardingAppCredentials() throws Exception {
     android.content.Context base =
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().getTargetContext();
     String preferenceName = "upload-transfer-test-" + java.util.UUID.randomUUID();
@@ -61,13 +61,14 @@ public class UploadTransferTest {
                                   .getBytes(java.nio.charset.StandardCharsets.UTF_8));
                         }
                       });
-      String id = "12345678-1234-1234-1234-123456789abc";
-      assertTrue(api.uploadChunk(id, file, 2, 3).getBoolean("accepted"));
+      String address = "https://www.googleapis.com/upload/drive/v3/files?upload_id=fixture-only";
+      assertTrue(api.uploadDriveChunk(address, file, 2, 3).getBoolean("accepted"));
       assertEquals(
-          Api.ORIGIN + "/api/tablet/upload-chunk?id=" + id, request[0].getURL().toString());
+          address, request[0].getURL().toString());
       assertEquals("PUT", request[0].getRequestMethod());
-      assertEquals(Api.ORIGIN, request[0].getRequestProperty("Origin"));
-      assertEquals("cb-kiosk=fixture-device-token", request[0].getRequestProperty("Cookie"));
+      assertNull(request[0].getRequestProperty("Origin"));
+      assertNull(request[0].getRequestProperty("Cookie"));
+      assertNull(request[0].getRequestProperty("Authorization"));
       assertEquals("bytes 2-4/5", request[0].getRequestProperty("Content-Range"));
       assertEquals("video/mp4", request[0].getRequestProperty("Content-Type"));
       assertArrayEquals(new byte[] {3, 4, 5}, sent.toByteArray());

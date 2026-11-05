@@ -1,0 +1,4 @@
+UVCAndroid 1.0.13
+https://github.com/shiyinghan/UVCAndroid
+Apache License 2.0, included in UVCAndroid-LICENSE.txt.
+DinkVision modifications: public callback at AudioRecord creation for microphone selection and live-route verification; caller permission-check lint annotation.

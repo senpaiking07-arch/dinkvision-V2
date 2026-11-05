@@ -18,3 +18,12 @@ test-results/
 *.keystore
 *.jks
 /android/.test-tools/
+/supabase/.temp/
+
+# Workstation attachments, private test captures and publishing metadata.
+.codex-attachments/
+.vercel/
+/artifacts/testing/
+/docs/testing/*.docx
+/build.log
+/all_ts_files.txt
