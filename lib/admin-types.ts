@@ -70,8 +70,10 @@ export type Session = {
   stopped_at: string | null;
   stop_reason: string | null;
   failure_stage: string | null;
+  capture_interruption_code?: string | null;
+  capture_interrupted_at?: string | null;
 };
-export type BrowserRecordingReport={last_seen_at:string|null;last_error?:string|null;safe_error?:string|null;upload_state?:string|null;branding_state?:string|null;local_available?:boolean};
+export type BrowserRecordingReport={last_seen_at:string|null;last_error?:string|null;safe_error?:string|null;upload_state?:string|null;branding_state?:string|null;local_available?:boolean;duration_ms?:number|null};
 export type Audit = { id: number; action: string; created_at: string };
 export type AdminData = {
   captureReports?: import("./recording-status").CaptureReport[];

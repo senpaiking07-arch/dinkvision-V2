@@ -3,7 +3,7 @@ export const TENANT_COOKIE = "dinkvision-tenant";
 export const TENANT_HEADER = "x-dinkvision-tenant-id";
 export const tenantTables = new Set([
   "venue_settings", "courts", "recorders", "cameras", "recording_sessions",
-  "recording_files", "delivery_attempts", "audit_events", "recorder_credentials",
+  "recording_files", "delivery_attempts", "audit_events", "recorder_credentials", "recorder_diagnostics",
   "recorder_devices", "recorder_commands", "capture_jobs", "google_integration",
   "google_oauth_states", "drive_folders", "drive_upload_jobs", "email_jobs",
   "cleanup_jobs", "kiosk_devices", "browser_devices", "browser_recordings",

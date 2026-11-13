@@ -93,7 +93,7 @@ public class DirectDriveUploadTest {
   @Test public void lostDriveResponseResumesAtConfirmedOffsetAfterTransportRecreation() throws Exception {
     try(Fixture f=new Fixture()){
       f.loseResponse=true;
-      IOException failure=assertThrows(IOException.class,f::send);
+      Api.RequestFailure failure=assertThrows(Api.RequestFailure.class,f::send);
       assertFalse(failure.getMessage().contains("upload_id"));assertFalse(failure.getMessage().contains("https:"));
       assertEquals(4L*1024*1024,f.offset);assertTrue(f.file.exists());
       f.send();assertEquals(2,f.chunks);assertEquals(4L*1024*1024,(long)f.ranges.get(1));

@@ -1,7 +1,10 @@
 "use client";
+import {RecorderTimeline} from "@/components/recorder-timeline";
+import { EnrollmentQrDetails, enrollmentQrFromResponse, reserveEnrollmentTab, showEnrollmentTab, type EnrollmentQr } from "@/components/admin-enrollment-qr";
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { videoRetryLabel } from "@/lib/upload-recovery";
+import { captureInterruptionLabel } from "@/lib/capture-interruption";
 import { recordingDisplayLabel } from "@/lib/recording-label";
 import { recordingIsConfirmed } from "@/lib/recording-status";
 import type { DeviceInfo } from "@/lib/device-info";
@@ -10,20 +13,21 @@ import { devicePresence } from "@/lib/device-presence";
 import {recordingSizeMb,uploadSizeMb} from "@/lib/recording-size";
 import {deviceQueueOrder,isQueuedWork,visibleDeviceQueueItem,isLocalOnlyHistory} from "@/lib/device-queue-order";
 
+type AdminTabletAction = {action: string; id?: string; [key: string]: unknown};
+
 export default function BrowserTabletsAdmin() {
   const [data, setData] = useState<any>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
-    [code, setCode] = useState(""),
+    [qrEnrollment, setQrEnrollment] = useState<EnrollmentQr | null>(null),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [selected, setSelected] = useState<any>(null),
     [removing, setRemoving] = useState<any>(null),
-    [cancellingUpload, setCancellingUpload] = useState<any>(null),
-    [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
+    [cancellingUpload, setCancellingUpload] = useState<any>(null);
   const [newTabletVersion, setNewTabletVersion] = useState(0);
   const [connectionNotice, setConnectionNotice] = useState("");
-  const [replacingEnrollment,setReplacingEnrollment]=useState<object|null>(null);
+  const [replacingEnrollment,setReplacingEnrollment]=useState<AdminTabletAction|null>(null);
   const tabletEditor = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (!newTabletVersion) return;
@@ -59,10 +63,13 @@ export default function BrowserTabletsAdmin() {
     window.addEventListener("offline", offline);
     return () => { clearInterval(t); window.removeEventListener("offline", offline); };
   }, []);
-  async function action(body: object) {
+  async function action(body: AdminTabletAction) {
+    const opensQr = body.action === "enroll" || (body.action === "save" && !body.id);
+    const qrTab = opensQr ? reserveEnrollmentTab() : null;
+    let openedInvitation = false;
     setBusy(true);
     setError("");
-    setCode("");
+    setQrEnrollment(null);
     try {
       const r = await fetch("/api/admin/tablets", {
         method: "POST",
@@ -72,9 +79,11 @@ export default function BrowserTabletsAdmin() {
       const d = await r.json();
       if(r.status===409 && d.replacementRequired){setReplacingEnrollment(body);return false;}
       if (!r.ok) throw Error(d.error);
-      if (d.code) {
-        setCode(d.code);
-        setShowEnrollmentModal(true);
+      if (opensQr) {
+        const invitation = enrollmentQrFromResponse(d);
+        if (!invitation) throw Error("The enrollment invitation is unavailable. Create a new QR.");
+        openedInvitation = showEnrollmentTab(qrTab, invitation);
+        if (!openedInvitation) setQrEnrollment(invitation);
       }
       const updated = await refresh();
       const selectedId = d.id || selected?.id;
@@ -87,6 +96,7 @@ export default function BrowserTabletsAdmin() {
       setError((e as Error).message);
       return false;
     } finally {
+      if (!openedInvitation) qrTab?.close();
       setBusy(false);
     }
   }
@@ -146,7 +156,6 @@ export default function BrowserTabletsAdmin() {
           disabled={busy || loading}
           onClick={() => {
             setSelected(null);
-            setCode("");
             setError("");
             setNewTabletVersion((v) => v + 1);
           }}
@@ -154,6 +163,7 @@ export default function BrowserTabletsAdmin() {
           Add device
         </button>
       </div>
+      <p><a className="secondary" href="/admin/pair-device">Pair device</a></p>
       <div className="browser-device-grid">
         <section className="browser-device-column" aria-busy={loading}>
           <div className="tablet-panel-heading">
@@ -191,7 +201,7 @@ export default function BrowserTabletsAdmin() {
               ["saved_locally", "pending", "queued", "retrying", "uploading", "failed", "local_only","uploaded"].includes(
                 item.upload_state,
               ),
-            ));
+            ), now);
             const historyQueue=queueItems.filter(isLocalOnlyHistory);
             const visibleQueue=queueItems.filter(item=>!isLocalOnlyHistory(item));
             const queuePositions=new Map(queueItems.filter(isQueuedWork).map((item,index)=>[item.session_id,index+1]));
@@ -204,7 +214,6 @@ export default function BrowserTabletsAdmin() {
             const emailStatus = readyFile?.email_jobs?.status;
             const selectDevice = () => {
               setSelected(d);
-              setCode("");
             };
             const hardware = d.device_info as DeviceInfo | null;
             return (
@@ -256,6 +265,7 @@ export default function BrowserTabletsAdmin() {
                     <dt>Last report</dt><dd>{new Date(hardware.reported_at).toLocaleString()}</dd>
                   </dl> : <p>Device details have not been reported yet.</p>}
                   <small>Reported by the device. Attached cameras still require a successful recording test.</small>
+                    <RecorderTimeline deviceId={d.id}/>
                 </details>
                 <span className="device-queue-overview">
                   <strong>Upload queue</strong>
@@ -271,20 +281,25 @@ export default function BrowserTabletsAdmin() {
                     {group.history && <summary>Local-only videos ({historyQueue.length})</summary>}
                     {group.items.map((item: any) => {
                       const itemRetryLabel = videoRetryLabel(item, d.recorder_mode === "android_rtsp");
+                      const interruption = captureInterruptionLabel(item.recording_sessions?.capture_interruption_code);
                       const label = recordingDisplayLabel(item.recording_sessions, item.client_created_at, data.timeZone);
                       const brandingPercent=reportedBrandingProgress(item);
                       const brandingLive=localProcessingLabel(item,now)==="Adding logo";
                       const percent = item.bytes
                         ? Math.min(
                             100,
-                            Math.round(
+                            Math.floor(
                               (Number(item.uploaded_bytes || 0) / Number(item.bytes)) * 100,
                             ),
                           )
                         : 0;
+                      const errorDetail = item.recording_sessions?.capture_inspection_required && item.local_available !== false
+                        ? "Save the original from Saved videos on the tablet for inspection."
+                        : (item.branding_state ? `Logo: ${String(item.branding_state).replaceAll("_", " ")}. ` : "Logo status unavailable. ") +
+                          (item.last_error || item.safe_error || "No detailed error was reported by the device.");
                       return (
                         <span className="device-queue-item" key={item.job_id || item.session_id} data-session-id={item.session_id}>
-                          {queuePositions.has(item.session_id) && <span className="device-queue-number" aria-label={`Queue position ${queuePositions.get(item.session_id)}`}>{queuePositions.get(item.session_id)}</span>}
+                          {queuePositions.has(item.session_id) && <span className="device-queue-number" aria-label={`Device queue order ${queuePositions.get(item.session_id)}`}>{queuePositions.get(item.session_id)}</span>}
                           <a className="device-queue-item-title" href={`/admin?recording=${encodeURIComponent(item.session_id)}`}
                             title={`${label.full} · Open recording log`} aria-label={`Open recording log for ${label.full}`}
                             onClick={event => event.stopPropagation()}>
@@ -294,6 +309,7 @@ export default function BrowserTabletsAdmin() {
                           <span className="device-queue-item-state">
                             {recordingStageLabel(item, now, d.recorder_mode === "android_rtsp")}
                           </span>
+                          {interruption && <span className="device-queue-item-copy">Capture ended early · {interruption}</span>}
                           <span className="device-queue-item-size">{item.upload_state==="uploading"
                             ? uploadSizeMb(item.uploaded_bytes,item.bytes)
                             : `${item.branding_state==="processing"?"Source video":"Video size"}: ${recordingSizeMb(item.bytes)}`}</span>
@@ -310,14 +326,7 @@ export default function BrowserTabletsAdmin() {
                           </span>}
                           {item.device_copy_saved_at && <span className="device-queue-item-copy">Copy exported to Gallery / Files · {new Date(item.device_copy_saved_at).toLocaleString()}</span>}
                           {item.upload_state === "failed" && (
-                            <span className="device-queue-item-error">
-                              {item.branding_state
-                                ? `Logo: ${String(item.branding_state).replaceAll("_", " ")}. `
-                                : "Logo status unavailable. "}
-                              {item.last_error ||
-                                item.safe_error ||
-                                "No detailed error was reported by the device."}
-                            </span>
+                            <span className="device-queue-item-error">{errorDetail}</span>
                           )}
                           {itemRetryLabel && (
                             <button
@@ -458,8 +467,8 @@ export default function BrowserTabletsAdmin() {
             </div>
           )}
           <div className="tablet-primary-action">
-            <button className="primary" disabled={busy || loading}>
-              {selected ? "Save changes" : "Create enrollment code"}
+            <button className="primary" type="submit" disabled={busy || loading}>
+              {selected ? "Save changes" : "Create pairing invitation"}
             </button>
           </div>
           {selected && selected.enabled && (
@@ -502,7 +511,7 @@ export default function BrowserTabletsAdmin() {
               <div>
                 <strong>Device disabled</strong>
                 <p>
-                  Re-enabling creates a fresh one-time code. Enter it on the
+                  Re-enabling creates a fresh one-time QR. Scan it on the
                   physical device to reconnect securely.
                 </p>
               </div>
@@ -519,7 +528,7 @@ export default function BrowserTabletsAdmin() {
                   })
                 }
               >
-                {busy ? "Re-enabling…" : "Re-enable device & get code"}
+                {busy ? "Re-enabling…" : "Re-enable device & get QR"}
               </button>
               {!selected.court_id && (
                 <p className="form-note">
@@ -737,16 +746,16 @@ export default function BrowserTabletsAdmin() {
       )}
       {replacingEnrollment && <div className="modal-backdrop" role="presentation"><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="replace-enrollment-title">
         <h2 id="replace-enrollment-title">Replace the current registration?</h2>
-        <p>The existing device will be disconnected when this new code is used. Keep the current registration to continue using it. Each code can enroll only one installation.</p>
+        <p>The current device disconnects when the replacement is verified. Each invitation can enroll one installation.</p>
         <div className="confirm-modal-actions"><button type="button" className="sign-in" disabled={busy} onClick={()=>setReplacingEnrollment(null)}>Keep current registration</button>
-          <button type="button" className="primary" disabled={busy} onClick={()=>{const pending=replacingEnrollment;setReplacingEnrollment(null);void action({...pending,replace_enrollment:true});}}>Create replacement code</button></div>
+          <button type="button" className="primary" disabled={busy} onClick={()=>{const pending=replacingEnrollment;setReplacingEnrollment(null);void action({...pending,replace_enrollment:true});}}>Create replacement invitation</button></div>
       </section></div>}
-      {code && showEnrollmentModal && (
+      {qrEnrollment && (
         <div
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setShowEnrollmentModal(false);
+            if (event.target === event.currentTarget) setQrEnrollment(null);
           }}
         >
           <section
@@ -757,32 +766,21 @@ export default function BrowserTabletsAdmin() {
             aria-describedby="enroll-desc"
           >
             <h2 id="enroll-title">Enroll your device</h2>
-            <p id="enroll-desc">
-              Open this website’s <code>/tablet/setup</code> page or Device setup
-              in the Android APK and enter this code. Choose and test the camera
-              on that physical device. {" "}
-              Single use · expires in 10 minutes.
-            </p>
-            <code className="enrollment-code">{code}</code>
-            <p>
-              Replacing enrollment disconnects the old device after the code is
-              used.
-            </p>
+            <p id="enroll-desc">Scan this QR in DinkVision or enter the pairing code below. Single use · expires in 10 minutes.</p>
+            <EnrollmentQrDetails invitation={qrEnrollment} />
             <div className="confirm-modal-actions">
-              <button
-                type="button"
-                className="sign-in"
+              <button type="button" className="sign-in" disabled={busy}
                 onClick={() => {
-                  navigator.clipboard.writeText(code).catch(() => {});
-                  setShowEnrollmentModal(false);
-                }}
-              >
-                Copy code
+                  if (showEnrollmentTab(reserveEnrollmentTab(), qrEnrollment)) {
+                    setQrEnrollment(null);
+                  }
+                }}>
+                Open QR tab
               </button>
               <button
                 type="button"
                 className="primary"
-                onClick={() => setShowEnrollmentModal(false)}
+                onClick={() => setQrEnrollment(null)}
               >
                 Done
               </button>

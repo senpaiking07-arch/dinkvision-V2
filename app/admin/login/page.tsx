@@ -1,4 +1,10 @@
 import LoginPage from "@/components/login-page";
-export default function Page() {
-  return <LoginPage admin />;
+import { uuid } from "@/lib/validation";
+
+export default async function Page({ searchParams }: { searchParams: Promise<{ pair?: string | string[] }> }) {
+  const { pair } = await searchParams;
+  let next: string | undefined;
+  if (pair === "manual") next = "/admin/pair-device";
+  else try { next = `/admin/pair-device?request=${uuid(pair)}`; } catch { }
+  return <LoginPage admin next={next} />;
 }

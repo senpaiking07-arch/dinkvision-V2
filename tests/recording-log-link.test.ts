@@ -6,6 +6,7 @@ import ts from "typescript";
 import * as jsx from "react/jsx-runtime";
 import { uuid } from "../lib/validation";
 import { sessionCaptureReport } from "../lib/recording-status";
+import * as optionalSchema from "../lib/optional-schema";
 
 const id = "0c99e1e5-0000-4000-8000-000000000001";
 const other = "332b40d0-0000-4000-8000-000000000002";
@@ -25,6 +26,7 @@ async function openLog(recording: string, role = "admin", exists = true) {
       if(name === "next/navigation") return {redirect: () => {throw Error("redirected");}};
       if(name === "@/lib/validation") return {uuid};
       if(name === "@/lib/recording-status") return {sessionCaptureReport};
+      if(name === "@/lib/optional-schema") return optionalSchema;
       if(name === "@/lib/auth") return {getAccount:async()=>({account:{role}})};
       if(name === "@/components/admin-dashboard") return {default:Dashboard};
       if(name === "@/lib/recorder-server") return {recorderDatabase:()=>({from:(table:string)=>({select:()=>({in:(_key:string,ids:string[])=>{

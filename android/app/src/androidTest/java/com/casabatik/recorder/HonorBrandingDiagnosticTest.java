@@ -21,8 +21,8 @@ public class HonorBrandingDiagnosticTest {
     wake.acquire(30 * 60_000L);
     InstrumentationRegistry.getInstrumentation().startActivitySync(
         new android.content.Intent(context, MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
-    context.startForegroundService(new android.content.Intent(context, RecorderService.class)
-        .putExtra(RecorderService.EXTRA_UPLOAD_ACTIVE, true));
+    context.startForegroundService(new android.content.Intent(context, TransferService.class)
+        );
     File original = new File(context.getFilesDir(), "recordings/" + id + ".mp4");
     File copy = new File(context.getCacheDir(), "honor-diagnostic-" + id + ".mp4");
     File report = new File(context.getCacheDir(), "honor-branding-diagnostic.txt");
@@ -49,7 +49,7 @@ public class HonorBrandingDiagnosticTest {
       }
     } finally {
       if (wake.isHeld()) wake.release();
-      context.stopService(new android.content.Intent(context, RecorderService.class));
+      context.stopService(new android.content.Intent(context, TransferService.class));
     }
   }
 }

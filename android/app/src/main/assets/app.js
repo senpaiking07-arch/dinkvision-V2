@@ -1,8 +1,18 @@
 const $ = id => document.getElementById(id);
 let view = 'welcome', state = {}, emails = [], formError = '', enrollmentPrompted = false, lastTestToken = '';
+const rememberEmails = new Set();
+const interruptionReasons = {
+  camera_disconnected: 'The camera disconnected.',
+  camera_failure: 'The camera stopped delivering usable video.',
+  storage_full: 'The tablet was low on recording storage.',
+  app_interrupted: 'The app restarted before it finished saving.',
+  unknown: 'The recording ended unexpectedly.',
+};
 let recordingClock = null, timerAnimation = 0;
 let savedSelection = '', lastSavedToken = '';
 let startRequested = false, startAccepted = false;
+let stopRequestedAttempt = '';
+let qrEnrollmentSubmit = null;
 let lastErrorNotice = '', errorNoticeExpiresAt = 0;
 let lastStatusNotice = '', statusNoticeExpiresAt = 0;
 const native = window.CasaNative;
@@ -15,6 +25,7 @@ const call = (action, value = '') => {
   }
 };
 const hideModal = () => {
+  qrEnrollmentSubmit = null;
   $('modal').hidden = true;
   delete $('modal').dataset.kind;
   $('modal-content').replaceChildren();
@@ -55,6 +66,7 @@ function showNativeModal(raw) {
   try { data = typeof raw === 'string' ? JSON.parse(raw) : raw; }
   catch { return; }
   const modal = $('modal'), content = $('modal-content'), actions = $('modal-actions');
+  qrEnrollmentSubmit = null;
   modal.dataset.kind = data.kind;
   modal.classList.toggle('saved-error', ['saved-video-error','remove-saved-video'].includes(data.kind));
   content.replaceChildren(); actions.replaceChildren();
@@ -85,7 +97,18 @@ function showNativeModal(raw) {
   };
   const cancel = label => modalButton(label || 'Cancel', hideModal);
 
-  if (data.kind === 'saved-video-error') {
+  if (data.kind === 'clear-email-history') {
+    title('SAVED EMAILS', 'Clear email history?', 'This removes saved email suggestions from this tablet.');
+    modalButton('Clear history', () => {
+      if (!native.removeSavedEmail('')) {
+        window.setNativeModalError('Email history could not be cleared. Try again.');
+        return;
+      }
+      hideModal();
+      refreshEmailSuggestions();
+    }, true);
+    cancel();
+  } else if (data.kind === 'saved-video-error') {
     title('SAVED VIDEO', 'Recording details', String(data.error || 'No detailed error was recorded.').slice(0, 300));
     if (data.id) modalButton('Save another copy', () => { hideModal(); call('save-local-video', data.id); });
     modalButton('Close', hideModal, true);
@@ -94,13 +117,76 @@ function showNativeModal(raw) {
     modalButton('Remove app copy', () => { hideModal(); $('saved-player').pause(); $('saved-player').removeAttribute('src'); lastSavedToken=''; call('remove-local-video', data.id); }, true);
     cancel('Keep app copy');
   } else if (data.kind === 'enrollment') {
-    title('DEVICE SETUP', data.replace ? 'Register this Android Device' : 'Register this Android Device',
-      data.replace ? 'Enter the new enrollment code created in Admin / Devices & cameras.' : 'Enter the enrollment code from Admin / Devices & cameras before using this recorder.');
-    const code = field('ENROLLMENT CODE', 'code', '', {max: 120, placeholder: 'Enter code', wide: true});
-    modalButton(data.replace ? 'Re-register device' : 'Register device', () => {
+    title('DEVICE SETUP', data.replace ? 'Re-enroll this device' : 'Register this Android device',
+      state.enrollmentPending ? 'Check the previous enrollment attempt before requesting a new invitation.'
+        : `In Admin${state.enrollmentOrigin ? ` at ${state.enrollmentOrigin}` : ''}, open Devices & cameras and create an enrollment invitation.`);
+    modalButton('Scan enrollment QR', () => { hideModal(); call('scan-enrollment', data.replace ? 'replace' : 'new'); }, true);
+    modalButton('Enter code instead', () => showNativeModal({kind:'enrollment-code', replace: !!data.replace}));
+    if (data.scanError) window.setNativeModalError(data.scanError);
+    if (state.enrollmentPending) modalButton('Check confirmation', () => showNativeModal({kind:'enrollment-check', replace: !!data.replace}));
+    cancel();
+  } else if (data.kind === 'enrollment-code') {
+    title('DEVICE SETUP', 'Enter the enrollment code', 'Use the code shown below the QR in the Admin invitation.');
+    const code = field('ENROLLMENT CODE', 'code', '', {max: 24, placeholder: 'Enter enrollment code', wide: true});
+    code.autocapitalize = 'none';
+    const submit = modalButton(data.replace ? 'Re-register device' : 'Register device', () => {
       const value = code.value.trim();
-      if (!value) { $('modal-error').textContent = 'Enter the enrollment code to continue.'; $('modal-error').hidden = false; code.focus(); return; }
-      hideModal(); call('enroll', JSON.stringify({code: value, replace: !!data.replace}));
+      if (!/^(?:[A-Za-z0-9_-]{12}|[A-Za-z0-9_-]{24})$/.test(value)) {
+        window.setNativeModalError('Enter the full enrollment code from Admin.');
+        code.focus();
+        return;
+      }
+      clearRecipientDraft();
+      code.blur();
+      submit.disabled = true;
+      submit.textContent = 'Registering…';
+      $('modal-error').hidden = true;
+      qrEnrollmentSubmit = submit;
+      call('enroll', JSON.stringify({code: value, replace: !!data.replace}));
+    }, true);
+    modalButton('Back', () => showNativeModal({kind:'enrollment', replace: !!data.replace}));
+  } else if (data.kind === 'enrollment-check') {
+    title('DEVICE SETUP', 'Check enrollment', 'Check whether the server confirmed your previous attempt.');
+    const check = modalButton('Check confirmation', () => {
+      check.disabled = true;
+      check.textContent = 'Checking…';
+      $('modal-error').hidden = true;
+      qrEnrollmentSubmit = check;
+      call('retry-connection');
+    }, true);
+    modalButton('Back', () => showNativeModal({kind:'enrollment', replace: !!data.replace}));
+  } else if (data.kind === 'enrollment-pairing') {
+    enrollmentPrompted = true;
+    title('DEVICE SETUP', data.replace ? 'Replace this registration?' : 'Pair this device?',
+      data.replace ? 'Confirm to replace this tablet’s current registration with the scanned invitation.'
+        : 'Confirm to register this tablet with the scanned invitation.');
+    const submit = modalButton(data.replace ? 'Confirm replacement' : 'Confirm pairing', () => {
+      submit.disabled = true;
+      submit.textContent = 'Pairing…';
+      $('modal-error').hidden = true;
+      clearRecipientDraft();
+      qrEnrollmentSubmit = submit;
+      call('enroll', JSON.stringify({code: data.code, replace: !!data.replace}));
+    }, true);
+    cancel();
+  } else if (data.kind === 'enrollment-pin') {
+    enrollmentPrompted = true;
+    title('DEVICE SETUP', data.replace ? 'Replace this registration?' : 'Verify enrollment',
+      data.replace ? 'Enter the six-digit PIN shown next to the QR in Admin to replace this tablet’s registration.'
+        : 'Enter the six-digit PIN shown next to the QR in Admin.');
+    const pin = field('VERIFICATION PIN', 'pin', '', {max: 6, placeholder: '6 digits', inputmode: 'numeric', secret: true, wide: true});
+    const submit = modalButton(data.replace ? 'Verify and replace' : 'Verify and register', () => {
+      if (!/^[0-9]{6}$/.test(pin.value)) {
+        window.setNativeModalError('Enter all six PIN digits from Admin.');
+        pin.focus();
+        return;
+      }
+      submit.disabled = true;
+      submit.textContent = 'Verifying…';
+      $('modal-error').hidden = true;
+      clearRecipientDraft();
+      qrEnrollmentSubmit = submit;
+      call('enroll-qr', JSON.stringify({invite: data.invite, pin: pin.value, replace: !!data.replace}));
     }, true);
     cancel();
   } else if (data.kind === 'saved-enrollment') {
@@ -108,8 +194,8 @@ function showNativeModal(raw) {
     title('DEVICE SETUP', inactive ? 'Registration needs attention' : 'Enrollment saved', inactive
       ? 'Admin reports this registration is inactive or unrecognized. Ask Admin to check this device. Its saved videos have not been deleted. Re-register only when Admin intentionally replaces the registration.'
       : 'Enrollment is saved on this device. The server could not be reached to verify its assignment. Reconnect to the internet and check again; a new enrollment code is not needed for a connection outage.');
-    modalButton('Check again', () => { hideModal(); call('refresh'); }, true);
-    modalButton('Re-register', () => { hideModal(); call('setup-reenroll'); });
+    modalButton('Check again', () => { hideModal(); call('retry-connection'); }, true);
+    if (inactive) modalButton('Re-register', () => { hideModal(); call('setup-reenroll'); });
     cancel('Close');
   } else if (data.kind === 'session-recovery') {
     title('RECORDING RECOVERY', 'Previous recording needs attention',
@@ -170,18 +256,36 @@ document.addEventListener('keydown', event => {
 });
 document.addEventListener('selectstart', event => { if (!isTextInput(event.target)) event.preventDefault(); });
 document.addEventListener('contextmenu', event => { if (!isTextInput(event.target)) event.preventDefault(); });
-const keepModalAnchored = () => {
-  if (!$('modal').hidden && (window.scrollX !== 0 || window.scrollY !== 0)) window.scrollTo(0, 0);
+const keepKioskAnchored = () => {
+  if (window.scrollX !== 0 || window.scrollY !== 0) window.scrollTo(0, 0);
 };
-window.addEventListener('scroll', keepModalAnchored, {passive: true});
-window.visualViewport?.addEventListener('scroll', keepModalAnchored, {passive: true});
+window.addEventListener('scroll', keepKioskAnchored, {passive: true});
+window.visualViewport?.addEventListener('scroll', keepKioskAnchored, {passive: true});
+let recipientKeyboardInset = 0;
+function layoutRecipientEntry() {
+  const viewport = window.visualViewport;
+  const viewportInset = viewport && document.activeElement === $('player-email')
+    ? Math.max(0, innerHeight - viewport.height) : 0;
+  const inset = Math.max(recipientKeyboardInset, viewportInset);
+  const editing = view === 'form' && $('modal').hidden && inset > 40;
+  document.body.classList.toggle('recipient-ime', editing);
+  document.body.classList.toggle('recipient-ime-short', editing && innerHeight - inset < 160);
+  if (editing) document.body.style.setProperty('--recipient-ime-bottom', `${inset}px`);
+}
+window.setRecipientKeyboardInset = pixels => {
+  recipientKeyboardInset = pixels / window.devicePixelRatio;
+  layoutRecipientEntry();
+};
+window.visualViewport?.addEventListener('resize', layoutRecipientEntry, {passive: true});
+window.addEventListener('resize', layoutRecipientEntry, {passive: true});
 document.addEventListener('focusin', () => {
-  keepModalAnchored();
-  requestAnimationFrame(keepModalAnchored);
-  setTimeout(keepModalAnchored, 100);
-  setTimeout(keepModalAnchored, 300);
+  keepKioskAnchored();
+  requestAnimationFrame(keepKioskAnchored);
+  setTimeout(keepKioskAnchored, 100);
+  setTimeout(keepKioskAnchored, 300);
 });
 function show(name) {
+  const enteringForm = view !== 'form' && name === 'form';
   if (view === 'saved-videos' && name !== view) {
     $('saved-player').pause(); $('saved-player').removeAttribute('src'); $('saved-player').load();
     lastSavedToken = '';
@@ -195,6 +299,8 @@ function show(name) {
   }
   for (const section of ['welcome', 'form', 'confirm', 'session', 'camera-test', 'saved-videos'])
     $(section).hidden = section !== name;
+  layoutRecipientEntry();
+  if (enteringForm) refreshEmailSuggestions();
   syncReenrollVisibility();
 }
 const syncReenrollVisibility = () => {
@@ -274,7 +380,9 @@ $('saved-save').onclick = () => {
 $('saved-retry').onclick = () => call('retry-upload', savedSelection);
 $('saved-details').onclick = () => {
   const item = savedItems().find(row => row.id === savedSelection);
-  showNativeModal({kind: 'saved-video-error', id:item?.id, error: `Recording ID: ${item?.id || ''}\n${item?.lastError || 'No error reported.'}`});
+  const reason = interruptionReasons[item?.captureInterruptionCode];
+  const detail = [`Recording ID: ${item?.id || ''}`, reason, item?.lastError].filter(Boolean).join('\n');
+  showNativeModal({kind: 'saved-video-error', id:item?.id, error: detail});
 };
 $('saved-player').onerror = () => { if (view === 'saved-videos') $('saved-preview-warning').hidden = false; };
 function renderSavedVideos() {
@@ -301,16 +409,23 @@ function renderSavedVideos() {
   $('saved-video-name').textContent = `${date || 'Date unavailable'} · ${compact}${recipients.length > 1 ? ` +${recipients.length - 1} more` : ''}`;
   $('saved-video-name').title = recipients.join(', ');
   const duration = item.durationMs ? `${Math.round(item.durationMs / 1000)} seconds` : 'Duration not verified';
-  $('saved-video-meta').textContent = `${date ? date + ' · ' : ''}${duration} · ${(Number(item.bytes || 0) / 1048576).toFixed(1)} MB`;
+  const sizeMb = (Number(item.bytes || 0) / 1048576).toFixed(1);
+  const transferredMb = (Number(item.uploadedBytes || 0) / 1048576).toFixed(1);
+  const size = item.status === 'uploading' ? `${transferredMb} / ${sizeMb} MB uploaded` : `${sizeMb} MB`;
+  $('saved-video-meta').textContent = `${date ? date + ' · ' : ''}${duration} · ${size}`;
   const waiting = item.brandingState === 'complete' ? 'Waiting to upload' : 'Waiting to add logo';
-  const statuses = {pending: waiting, saved_locally: waiting, retrying: `${item.brandingState === 'failed' ? 'Logo processing' : 'Upload'} retry scheduled · ${item.retryCount || 0}/8 attempts`, uploading: `Uploading ${item.progress || 0}%`, local_only: 'Local only · under one minute'};
-  $('saved-video-status').textContent = item.status === 'failed'
+  const statuses = {pending: waiting, saved_locally: waiting, retrying: `${item.brandingState === 'failed' ? 'Logo processing' : 'Upload'} retry scheduled · ${item.retryCount || 0}/8 attempts`, uploading: item.verifyingUpload ? 'Verifying upload' : `Uploading ${Math.min(99, item.progress || 0)}%`, uploaded: 'Uploaded · app copy cleanup pending', local_only: 'Local only · under one minute'};
+  const interrupted = !!item.captureInterruptionCode;
+  const needsInspection = interrupted && !!item.validationFailed;
+  const status = item.status === 'failed'
     ? item.validationFailed ? 'Video needs inspection. Save the original for review.'
       : item.brandingState === 'failed' ? 'Logo processing failed. The original is still saved.'
         : `Upload paused · ${item.retryCount || 0} failed attempts. You can retry.`
-    : item.brandingState === 'processing' ? 'Adding the DinkVision logo' : statuses[item.status] || 'Saved in this app';
+    : item.validationPending ? 'Checking saved video'
+      : item.brandingState === 'processing' ? 'Adding the DinkVision logo' : statuses[item.status] || 'Saved in this app';
+  $('saved-video-status').textContent = interrupted ? `Interrupted recording · ${status}` : status;
   $('saved-details').hidden = false;
-  $('saved-retry').hidden = !['failed','retrying'].includes(item.status);
+  $('saved-retry').hidden = needsInspection || !['failed','retrying'].includes(item.status);
   $('saved-retry').textContent = item.status === 'retrying' ? 'Retry now' : item.validationFailed || item.brandingState === 'failed' ? 'Retry processing' : 'Retry upload';
   $('saved-retry').disabled = !!state.busy;
   $('saved-save').disabled = !!state.exportingSession || (item.exported && !item.canRemove);
@@ -324,17 +439,18 @@ function renderSavedVideos() {
   $('saved-next').disabled = position >= items.length - 1;
   $('saved-position').textContent = `${position + 1} of ${items.length}`;
   const processing = item.brandingState === 'processing';
-  const brandingPercent = Number.isInteger(item.brandingProgress) && item.brandingProgress >= 0 ? Math.min(99, item.brandingProgress) : null;
-  $('saved-processing-label').textContent = brandingPercent === null ? 'Adding logo…'
+  const brandingPercent = processing && Number.isInteger(item.brandingProgress) && item.brandingProgress >= 0 ? Math.min(99, item.brandingProgress) : null;
+  $('saved-processing-label').textContent = item.validationPending ? 'Checking saved video…'
+    : brandingPercent === null ? 'Adding logo…'
     : brandingPercent >= 99 ? 'Checking saved video · 99%' : `Adding logo · ${brandingPercent}%`;
   if (brandingPercent === null) $('saved-processing-progress').removeAttribute('value');
   else $('saved-processing-progress').value = brandingPercent;
   if (processing && brandingPercent !== null) $('saved-video-status').textContent = $('saved-processing-label').textContent;
-  $('saved-processing').hidden = !processing;
-  $('saved-player').hidden = processing;
-  if (processing) {
+  $('saved-processing').hidden = !(processing || (item.validationPending && item.status !== 'failed'));
+  $('saved-player').hidden = needsInspection || processing || !!item.validationPending;
+  if (needsInspection || processing || item.validationPending) {
     lastSavedToken = '';
-    $('saved-preview-warning').hidden = true;
+    $('saved-preview-warning').hidden = !needsInspection;
     const preview = $('saved-player');
     if (preview.hasAttribute('src')) { preview.pause(); preview.removeAttribute('src'); preview.load(); }
   } else if (lastSavedToken !== `${item.id}:${item.brandingState}:${item.bytes}`) {
@@ -347,22 +463,70 @@ function renderSavedVideos() {
   }
 }
 $('edit').onclick = () => show('form');
+function refreshEmailSuggestions() {
+  const panel = $('email-suggestions');
+  const input = $('player-email');
+  const prefix = input.value.trim();
+  const history = typeof native?.emailHistory === 'function'
+    ? JSON.parse(native.emailHistory(prefix.length >= 3 ? prefix : '')) : {};
+  $('email-history').hidden = !history.hasEntries;
+  const suggestions = emails.length < 4 && prefix.length >= 3 && Array.isArray(history.suggestions)
+    ? history.suggestions.filter(email => !emails.includes(email)) : [];
+  panel.replaceChildren(...suggestions.map(email => {
+    const row = node('div', 'email-suggestion');
+    const select = node('button', 'quiet', email);
+    select.type = 'button';
+    select.title = email;
+    select.setAttribute('aria-label', `Add saved email ${email}`);
+    select.onclick = () => { input.value = email; addEmail(); };
+    const remove = node('button', 'quiet', '×');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Forget saved email ${email}`);
+    remove.onclick = () => {
+      if (!native.removeSavedEmail(email)) {
+        formError = 'Could not forget this email. Try again.';
+        renderEmailFeedback();
+      } else refreshEmailSuggestions();
+    };
+    for (const button of [select, remove])
+      button.onpointerdown = event => { if (document.activeElement === input) event.preventDefault(); };
+    row.append(select, remove);
+    return row;
+  }));
+  panel.hidden = !suggestions.length;
+}
+$('email-history').onclick = () => showNativeModal({kind: 'clear-email-history'});
+function renderEmailFeedback() {
+  const input = $('player-email');
+  const feedback = $('email-count');
+  feedback.textContent = formError || `${emails.length} of 4 emails added`;
+  feedback.classList.toggle('invalid', !!formError);
+  input.setAttribute('aria-invalid', String(!!formError));
+  $('add-email').disabled = emails.length >= 4 || !input.value.trim();
+}
 function renderEmails() {
-  $('email-count').textContent = `Registered emails (${emails.length}/4) · At least 1 is required.`;
-  $('add-email').disabled = emails.length >= 4 || !$('player-email').value.trim();
+  renderEmailFeedback();
   $('email-list').replaceChildren(...emails.map(address => {
     const chip = node('div');
     const label = node('span', '', address);
+    label.title = address;
     const remove = node('button', '', '×');
     remove.type = 'button';
     remove.setAttribute('aria-label', `Remove ${address}`);
-    remove.onclick = () => { emails = emails.filter(value => value !== address); formError = ''; renderEmails(); };
+    remove.onclick = () => {
+      emails = emails.filter(value => value !== address);
+      rememberEmails.delete(address);
+      formError = '';
+      renderEmails();
+    };
     chip.append(label, remove);
     return chip;
   }));
+  if (view === 'form') refreshEmailSuggestions();
 }
 function clearRecipientDraft() {
   emails = [];
+  rememberEmails.clear();
   $('player-email').value = '';
   formError = '';
   renderEmails();
@@ -371,40 +535,92 @@ function unfinishedSession() {
   return !state.busy && !state.previousCaptureReleased && state.session && ['requested', 'starting', 'recording', 'finalizing'].includes(state.session.status);
 }
 function addEmail() {
-  const value = $('player-email').value.trim().toLowerCase();
-  if (emails.length >= 4) formError = 'You can add a maximum of 4 Gmail accounts.';
-  else if (!/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(value)) formError = 'Enter a valid Gmail address.';
-  else if (emails.includes(value)) formError = 'That Gmail address is already added.';
+  const input = $('player-email');
+  const value = input.value.trim().toLowerCase();
+  if (emails.length >= 4) formError = 'Remove an email to add another.';
+  else if (value.length > 254 || !input.validity.valid || !/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(value) ||
+      /@example\.(com|net|org)$/.test(value)) formError = 'Enter a valid email address.';
+  else if (emails.includes(value)) formError = 'Email already added.';
   else {
-    emails.push(value); $('player-email').value = ''; formError = ''; $('error').hidden = true; renderEmails(); return true;
+    emails.push(value);
+    input.value = '';
+    formError = '';
+    renderEmails();
+    if (emails.length === 4) input.blur();
+    return true;
   }
-  $('error').hidden = false; $('error-message').textContent = formError;
+  renderEmailFeedback();
   return false;
 }
-$('player-email').oninput = () => { formError = ''; renderEmails(); };
-$('player-email').onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); addEmail(); } };
+$('player-email').oninput = () => {
+  formError = '';
+  renderEmailFeedback();
+  refreshEmailSuggestions();
+};
+$('player-email').onkeydown = event => {
+  if (event.key === 'Enter' && !event.isComposing) {
+    event.preventDefault();
+    if ($('player-email').value.trim()) addEmail();
+  }
+};
+$('add-email').onpointerdown = event => {
+  if (document.activeElement === $('player-email')) event.preventDefault();
+};
 $('add-email').onclick = addEmail;
 $('email-form').onsubmit = event => {
   event.preventDefault();
   if (!state.enabled || !state.tested || !state.cameraMode || state.busy) { show('welcome'); call('setup'); return; }
   if ($('player-email').value.trim() && !addEmail()) return;
-  if (!emails.length) { formError = 'Add at least one valid Gmail address.'; $('error').hidden = false; $('error-message').textContent = formError; return; }
-  formError = ''; $('error').hidden = true;
-  $('confirmation').textContent = `${state.court || 'Your court'} · One replay for every registered email`;
-  const card = node('div');
-  card.append(node('strong', '', 'Replay recipients'));
-  emails.forEach(value => card.append(node('span', '', value)));
-  $('confirmation-recipients').replaceChildren(card);
+  if (!emails.length) {
+    formError = 'Add at least one email address.';
+    renderEmailFeedback();
+    return;
+  }
+  formError = '';
+  renderEmailFeedback();
+  $('player-email').blur();
+  $('confirmation').textContent = state.court || 'Your court';
+  $('confirmation-recipients').replaceChildren(...emails.map(email => {
+    const row = node('div', 'recipient-review-row');
+    row.append(node('span', '', email));
+    if (typeof native?.emailHistory === 'function') {
+      const label = node('label', 'remember-email');
+      const checkbox = node('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = rememberEmails.has(email);
+      checkbox.setAttribute('aria-label', `Remember ${email} on this tablet`);
+      checkbox.onchange = () => {
+        if (checkbox.checked) rememberEmails.add(email);
+        else rememberEmails.delete(email);
+      };
+      label.append(checkbox, 'Remember on this tablet');
+      row.append(label);
+    }
+    return row;
+  }));
   $('capture-note').textContent = state.audio
-    ? 'Video and available camera microphone audio will be recorded. The same Google Drive replay will be emailed to each person.'
-    : 'Video will be recorded. The same Google Drive replay will be emailed to each person.';
+    ? 'We’ll record video and available audio, then email the replay to these addresses.'
+    : 'We’ll record video, then email the replay to these addresses.';
   show('confirm');
 };
-$('record').onclick = () => {
-  if (startRequested) return;
+function watchRepeatedPress(id, action, argument) {
+  const button = $(id);
+  button.parentElement.addEventListener('pointerdown', event => {
+    if (!button.disabled || button.hidden || !event.isPrimary || event.button !== 0) return;
+    const bounds = button.getBoundingClientRect();
+    if (bounds.width > 0 && bounds.height > 0 && event.clientX >= bounds.left && event.clientX < bounds.right &&
+        event.clientY >= bounds.top && event.clientY < bounds.bottom) call(action, argument());
+  });
+}
+watchRepeatedPress('record', 'repeat-start', () => '');
+watchRepeatedPress('stop', 'repeat-stop', () => state.captureAttempt || '');
+$('record').onclick = event => {
+  if (startRequested) { call('repeat-start'); return; }
   if (!state.enabled || !state.tested || !state.cameraMode || state.busy) { show('welcome'); call('setup'); return; }
   if (native) { startRequested = true; $('record').disabled = true; }
-  call('start', JSON.stringify(emails));
+  const request = {emails, tapDelayMs: Math.max(0, Math.min(5000, Math.round(performance.now() - event.timeStamp)))};
+  if (rememberEmails.size) request.remember = emails.map(email => rememberEmails.has(email));
+  call('start', JSON.stringify(request));
   if (native) {
     try {
       const current = JSON.parse(native.state());
@@ -414,7 +630,14 @@ $('record').onclick = () => {
     tick();
   }
 };
-$('stop').onclick = () => call('stop');
+$('stop').onclick = () => {
+  const attempt = state.captureAttempt;
+  if (!attempt || stopRequestedAttempt === attempt || state.phase !== 'recording') return;
+  stopRequestedAttempt = attempt;
+  $('stop').disabled = true;
+  call('stop', attempt);
+  tick();
+};
 let playableTestToken = '';
 function cameraConfirmationAllowed(current, selectedMode, playableToken) {
   return !current.busy && !!current.testConfirmable && !!current.testReady
@@ -469,10 +692,12 @@ $('update-install').onclick = () => call('install-update');
 $('update-check').onclick = () => { $('update-check').disabled = true; call('check-update'); };
 $('connection-retry').onclick = event => { event.stopPropagation(); call('retry-connection'); };
 function tick() {
+  const wasConfirmingEnrollment = !!state.enrollmentPending;
   try { state = native ? JSON.parse(native.state()) : {enabled: true, enrolled: true, initialized: true, tested: true, cameraMode: 'device', court: 'Court 1', maxSeconds: 900}; }
   catch { return; }
   $('connection-notice').hidden = !state.connectionNotice;
   $('connection-retry').hidden = !state.connectionRetry;
+  $('connection-retry').textContent = state.enrollmentPending ? 'Check enrollment' : 'Retry connection';
   if ($('connection-text').textContent !== (state.connectionNotice || ''))
     $('connection-text').textContent = state.connectionNotice || '';
   const updateBlocked = !!(state.updateRequired || state.updateChecking) && !state.busy;
@@ -495,6 +720,20 @@ function tick() {
     return;
   }
   if (state.enabled && $('modal').dataset.kind === 'saved-enrollment') hideModal();
+  if (qrEnrollmentSubmit && !state.busy && !state.enrollmentChecking) {
+    if (state.enrolled && !state.enrollmentPending && !state.error) {
+      hideModal();
+      call('setup');
+    } else {
+      qrEnrollmentSubmit.disabled = false;
+      qrEnrollmentSubmit.textContent = 'Try again';
+      window.setNativeModalError(state.error || 'Confirmation is still pending. Check the connection and retry the same invitation.');
+      qrEnrollmentSubmit = null;
+    }
+  }
+  if (state.enabled && wasConfirmingEnrollment && !state.enrollmentPending &&
+      $('modal').dataset.kind === 'enrollment' && !document.querySelector('#modal-content input')?.value)
+    hideModal();
   if (startRequested && (state.phase === 'recording' || (startAccepted && ['finalizing', 'complete'].includes(state.phase)))) {
     clearRecipientDraft();
     startRequested = false;
@@ -524,6 +763,8 @@ function tick() {
   const limitMinutes = Math.max(1, Math.round(Number(state.maxSeconds || 900) / 60));
   $('limit').textContent = `Recording limit: ${limitMinutes} minutes`;
   $('record').disabled = !!state.busy || startRequested;
+  if (stopRequestedAttempt !== state.captureAttempt) stopRequestedAttempt = '';
+  $('stop').disabled = !!stopRequestedAttempt;
   if (['form', 'confirm'].includes(view) && (!state.enabled || !state.tested || !state.cameraMode)) show('welcome');
   recordingModeOptions($('camera-quality'));
   $('camera-quality').disabled = !!state.busy;
@@ -532,7 +773,7 @@ function tick() {
   const recoverable = view === 'welcome' && !!state.recoverable && !state.busy;
   const savedNotice = recoverable && (!state.error || state.startHasRecoverableFootage || /logo|upload|footage|saved video|saved recording/i.test(state.error));
   const recoveryMessage = 'Your recording is in Saved videos. Open it to check its status, save a device copy, or retry.';
-  const currentError = savedNotice ? recoveryMessage : (state.error || (['form', 'confirm'].includes(view) ? formError : ''));
+  const currentError = savedNotice ? recoveryMessage : (state.error || '');
   if (currentError !== lastErrorNotice) {
     lastErrorNotice = currentError;
     errorNoticeExpiresAt = currentError ? performance.now() + 30_000 : 0;
@@ -566,10 +807,14 @@ function tick() {
   } else if (recordingFlow) {
     show('session');
     $('session-title').textContent = state.phase === 'recording' ? 'Stay in the game.' : state.phase === 'testing' ? 'Testing your camera' : 'Your match';
-    $('progress').textContent = state.message || 'Preparing your match…';
+    $('progress').textContent = state.phase === 'recording'
+      ? 'Every rally. Every great shot. Captured.'
+      : state.message || 'Preparing your match…';
     const loading = ['connecting', 'testing', 'finalizing'].includes(state.phase);
     $('loading').hidden = !loading;
-    $('loading').querySelector('b').textContent = state.phase === 'testing' ? 'Checking camera…' : state.phase === 'finalizing' ? 'Preparing saved video…' : 'Connecting to camera…';
+    const loadingLabel = $('loading').querySelector('b');
+    loadingLabel.hidden = state.phase === 'connecting';
+    loadingLabel.textContent = state.phase === 'testing' ? 'Checking camera…' : 'Preparing saved video…';
     $('timer').hidden = state.phase !== 'recording';
     syncRecordingTimer();
     $('stop').hidden = state.phase !== 'recording';

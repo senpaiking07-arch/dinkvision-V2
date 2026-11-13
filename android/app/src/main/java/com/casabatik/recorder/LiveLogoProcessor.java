@@ -19,6 +19,7 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
   private final HandlerThread thread = new HandlerThread("DinkVisionLiveLogo");
   private final Handler handler;
   private final int width, height, rotation;
+  private final boolean validateSavedMediaInBackground;
   private volatile boolean encoding = true;
   private final java.util.function.Consumer<Exception> onFailure;
   private EGLDisplay display = EGL14.EGL_NO_DISPLAY;
@@ -30,6 +31,8 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
   private volatile boolean stopped;
   private volatile Exception failure;
   private volatile long frames;
+  final CountDownLatch firstInputFrame = new CountDownLatch(1);
+  final CountDownLatch firstEncodedFrame = new CountDownLatch(1);
   private long lastTimestamp;
   private final float[] transform = new float[16];
   private static final float[] IDENTITY = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
@@ -47,7 +50,14 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
 
   LiveLogoProcessor(Context context, Surface encoder, int width, int height, int rotation,
       boolean encoding, java.util.function.Consumer<Exception> onFailure) throws Exception {
+    this(context, encoder, width, height, rotation, encoding, false, onFailure);
+  }
+
+  LiveLogoProcessor(Context context, Surface encoder, int width, int height, int rotation,
+      boolean encoding, boolean validateSavedMediaInBackground,
+      java.util.function.Consumer<Exception> onFailure) throws Exception {
     this.width = width; this.height = height; this.rotation = rotation; this.encoding = encoding;
+    this.validateSavedMediaInBackground = validateSavedMediaInBackground;
     // Invert the MP4 playback rotation so the logo reads upright at bottom right.
     switch (rotation) {
       case 90: logoUv = floats(0,0, 0,1, 1,0, 1,1); break;
@@ -102,6 +112,7 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
     try {
       texture.updateTexImage(); texture.getTransformMatrix(transform);
       long timestamp = texture.getTimestamp();
+      firstInputFrame.countDown();
       if (!encoding || timestamp <= lastTimestamp) return;
       GLES20.glViewport(0,0,width,height);
       GLES20.glDisable(GLES20.GL_BLEND);
@@ -117,6 +128,7 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
       require(EGLExt.eglPresentationTimeANDROID(display,window,timestamp), "Frame timestamp");
       require(EGL14.eglSwapBuffers(display,window), "Encode live logo frame");
       lastTimestamp = timestamp; frames++;
+      firstEncodedFrame.countDown();
     } catch (Exception e) { failure = e; onFailure.accept(e); }
   }
 
@@ -141,7 +153,7 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
     stop(); onGl(() -> {});
     if (failure != null) throw new Exception("Live logo rendering failed", failure);
     if (frames < 1 || file == null) throw new Exception("No live-logo frames were saved");
-    RecordedVideo.validate(file, -1, false);
+    if (!validateSavedMediaInBackground) RecordedVideo.validate(file, -1, false);
     LiveLogoEvidence.mark(file);
   }
 

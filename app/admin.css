@@ -1065,6 +1065,8 @@ summary {
 }
 .tablet-primary-action {
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   min-height: 44px;
   display: flex;
 }
@@ -1236,6 +1238,23 @@ summary {
   margin: 1rem 0;
   font-size: 1.3rem;
   display: block;
+}
+.enrollment-qr-card {
+  width: min(100%, 500px);
+  text-align: center;
+}
+.enrollment-qr-details img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 16px auto;
+  background: white;
+}
+.enrollment-qr-details .enrollment-code {
+  margin: 6px 0 16px;
+  font-size: clamp(1.75rem, 8vw, 2.5rem);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .12em;
 }
 .tablet-enrollment {
   max-width: 800px;

@@ -50,8 +50,9 @@ export async function browserUploadQueue(
   sessionId: string,
   deviceId: string,
   claim = false,
+  tenantId?: string,
 ) {
-  const db = recorderDatabase();
+  const db = recorderDatabase(tenantId);
   const result = await db.rpc("browser_upload_turn", {
     p_session: sessionId,
     p_device: deviceId,

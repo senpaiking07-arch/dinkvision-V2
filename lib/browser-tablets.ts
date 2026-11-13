@@ -32,6 +32,8 @@ export async function canSetup(device: {
 export function publicTablet(d: Record<string, any>) {
   const {
     enrollment_hash,
+    enrollment_qr_hash,
+    enrollment_qr_failures,
     setup_hash,
     rtsp_url,
     rtsp_username,

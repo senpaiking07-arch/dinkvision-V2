@@ -64,9 +64,9 @@ public class UploadFailureRecoveryTest {
           .put("durationMs", 3_000L).put("retryCount", 0);
       engine.vault.put("upload-queue", new JSONArray().put(item).toString());
       engine.server = new JSONObject().put("device", new JSONObject().put("id", device));
-      var upload = Engine.class.getDeclaredMethod("upload", JSONObject.class);
+      var upload = Engine.class.getDeclaredMethod("upload", JSONObject.class, BackgroundTransfers.Ticket.class);
       upload.setAccessible(true);
-      upload.invoke(engine, item);
+      try (var ticket = engine.backgroundTransfers.begin()) { upload.invoke(engine, item, ticket); }
       JSONObject failed = engine.vault.array("upload-queue").getJSONObject(0);
       assertEquals("failed", failed.getString("status"));
       assertEquals(1, failed.getInt("retryCount"));

@@ -12,6 +12,61 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class QueueRecoveryTest {
+  @Test public void restartRecoversFinalizedMediaAndPreservesAnUnverifiedOriginal() throws Exception {
+    Context base = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    String namespace = "capture-restart-" + UUID.randomUUID();
+    String device = UUID.randomUUID().toString();
+    File root = new File(base.getCacheDir(), namespace), directory = new File(root, "recordings");
+    assertTrue(directory.mkdirs());
+    Context context = new ContextWrapper(base) {
+      @Override public Context getApplicationContext() { return this; }
+      @Override public File getFilesDir() { return root; }
+      @Override public File getCacheDir() { return root; }
+      @Override public SharedPreferences getSharedPreferences(String name, int mode) {
+        return base.getSharedPreferences(namespace + name, mode);
+      }
+    };
+    Engine engine = null;
+    File[] files = new File[3];
+    JSONArray queue = new JSONArray();
+    try {
+      for (int index = 0; index < files.length; index++) {
+        String id = UUID.randomUUID().toString();
+        File file = files[index] = new File(directory, id + ".mp4");
+        try (var out = new FileOutputStream(file)) { out.write(new byte[2048]); }
+        if (index != 1) LiveLogoEvidence.mark(file);
+        queue.put(new JSONObject().put("id", id).put("device", device).put("status", "recording")
+            .put("liveLogoRequired", true).put("captureEndedNormally", index == 2));
+      }
+      Vault vault = new Vault(context);
+      vault.put("device-id", device);
+      vault.put("upload-queue", queue.toString());
+      engine = new Engine(context, url -> { throw new IOException("Isolated capture restart"); });
+      engine.heartbeat.shutdownNow();
+      JSONArray restored = engine.vault.array("upload-queue");
+      JSONObject sealed = restored.getJSONObject(0);
+      assertEquals("app_interrupted", sealed.getString("captureInterruptionCode"));
+      assertFalse(sealed.has("captureInterruptedAt"));
+      assertEquals("pending", sealed.getString("status"));
+      assertEquals(503, LocalVideoResponse.open(engine, files[0].getName(), null).getStatusCode());
+      JSONObject raw = restored.getJSONObject(1);
+      assertEquals("failed", raw.getString("status"));
+      assertEquals(404, LocalVideoResponse.open(engine, files[1].getName(), null).getStatusCode());
+      assertEquals(files[1], engine.localPlaybackFile(raw.getString("id")));
+      assertEquals(2048, files[1].length());
+      assertFalse(restored.getJSONObject(2).has("captureInterruptionCode"));
+      assertTrue(restored.getJSONObject(2).getBoolean("validationPending"));
+    } finally {
+      if (engine != null) {
+        engine.heartbeat.shutdownNow(); engine.work.shutdownNow(); engine.uploads.shutdownNow(); engine.exports.shutdownNow();
+      }
+      for (File file : files) if (file != null) file.delete();
+      directory.delete();
+      root.delete();
+      context.getSharedPreferences("vault", 0).edit().clear().commit();
+    }
+  }
+
   @Test public void interruptedBrandingResumesButMissingOriginalIsReportedUnavailable() throws Exception {
     Context base=InstrumentationRegistry.getInstrumentation().getTargetContext();
     String namespace="branding-recovery-"+UUID.randomUUID(), device=UUID.randomUUID().toString();
@@ -99,6 +154,32 @@ public class QueueRecoveryTest {
         engine.vault.put("upload-queue", current.toString());
       }
       assertNull(next.invoke(engine));
+      JSONArray completed = engine.vault.array("upload-queue");
+      File locked = new File(files[4].getAbsolutePath()) {
+        @Override public boolean delete() { return false; }
+      };
+      assertFalse(engine.saveVerifiedUpload(completed.getJSONObject(4), locked));
+      JSONObject durable = new Vault(context).array("upload-queue").getJSONObject(4);
+      assertEquals("uploaded", durable.getString("status"));
+      assertTrue(durable.getBoolean("cleanupPending"));
+      assertTrue(files[4].isFile());
+      assertNull("A verified video is never selected for another upload", next.invoke(engine));
+      engine.finishPendingUploadedCopies();
+      assertFalse(files[4].exists());
+      JSONObject cleaned = new Vault(context).array("upload-queue").getJSONObject(4);
+      assertFalse(cleaned.getBoolean("localAvailable"));
+      assertTrue(cleaned.getBoolean("presenceReportPending"));
+      JSONArray interrupted = engine.vault.array("upload-queue");
+      interrupted.getJSONObject(0).put("status", "failed").put("retryCount", 8);
+      engine.vault.put("upload-queue", interrupted.toString());
+      engine.updateServer(new JSONObject().put("enabled", true)
+          .put("device", new JSONObject().put("id", deviceId))
+          .put("queue", new JSONArray().put(new JSONObject().put("session_id", ids[0])
+              .put("upload_state", "uploaded").put("bytes", files[0].length())
+              .put("recording_sessions", new JSONObject().put("status", "ready")))));
+      assertEquals("uploaded", new Vault(context).array("upload-queue").getJSONObject(0).getString("status"));
+      engine.finishPendingUploadedCopies();
+      assertFalse("An acknowledged final attempt is cleaned up after restart", files[0].exists());
     } finally {
       if (engine != null) {
         engine.heartbeat.shutdownNow();
@@ -161,6 +242,13 @@ public class QueueRecoveryTest {
       engine.vault.put("upload-queue", restored.toString());
       assertNull(next.invoke(engine));
       assertEquals(8, restored.getJSONObject(0).getInt("retryCount"));
+      engine.server.put("capabilities", new JSONObject().put("uploadBackoffScheduling", true));
+      assertEquals(restored.getJSONObject(1).getString("id"), ((JSONObject) next.invoke(engine)).getString("id"));
+      restored.getJSONObject(1).put("nextQueueCheckAt", System.currentTimeMillis() + 5_000);
+      engine.vault.put("upload-queue", restored.toString());
+      assertNull("A waiting turn must not occupy the worker during the next probe delay", next.invoke(engine));
+      restored.getJSONObject(1).put("nextQueueCheckAt", 0);
+      engine.server.remove("capabilities");
       restored.getJSONObject(0).put("nextRetryAt", 0);
       engine.vault.put("upload-queue", restored.toString());
       assertEquals(restored.getJSONObject(0).getString("id"), ((JSONObject)next.invoke(engine)).getString("id"));

@@ -78,7 +78,7 @@ final class RecordedVideo {
 
   static long validate(File file, long expectedMillis, boolean expectAudio) throws Exception {
     if (!file.isFile() || file.length() < 1024)
-      throw new Exception("No recoverable video was saved.");
+      throw new RecordingAccuracy.Failure("No recoverable video was saved.");
     long validatedDurationMicros;
     try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(file)) {
       grabber.start();
@@ -89,9 +89,9 @@ final class RecordedVideo {
       Frame frame;
       int count = 0;
       while ((frame = grabber.grabImage()) != null && count < 2) count++;
-      if (count == 0) throw new Exception("Saved video cannot be read.");
+      if (count == 0) throw new RecordingAccuracy.Failure("Saved video cannot be read.");
       if (expectAudio && (grabber.getAudioChannels() < 1 || audioMicros <= 0))
-        throw new Exception(
+        throw new RecordingAccuracy.Failure(
             "Saved video has no complete audio track. It was kept locally and was not uploaded.");
       if (expectedMillis > 0) {
         long expectedMicros = expectedMillis * 1_000L;
@@ -122,6 +122,7 @@ final class RecordedVideo {
       AVPacket packet;
       while ((packet = grabber.grabPacket()) != null) {
         try {
+          if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Video check paused.");
           int index = packet.stream_index();
           AVStream stream = context.streams(index);
           int kind = stream.codecpar().codec_type();

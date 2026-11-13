@@ -21,6 +21,7 @@
     "next": "16.3.6",
     "onvif": "^0.8.2",
     "pg": "^8.23.1",
+    "qrcode": "1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1"
@@ -29,6 +30,7 @@
     "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.23.1",
+    "@types/qrcode": "1.5.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "fake-indexeddb": "^6.2.5",

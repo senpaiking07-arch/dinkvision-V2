@@ -7,7 +7,7 @@ device must reach the hosted backend.
 
 ## Install and configure
 
-1. Transfer `Dink-Vision-Recorder-0.5.30.apk` to a **64-bit Android 8 or newer** device.
+1. Transfer `Dink-Vision-Recorder-0.5.48.apk` to a **64-bit Android 8 or newer** device.
    Open it and allow installation from that file source when Android asks.
    This is a debug-signed testing build, not a Play Store release.
 2. In the hosted admin's **Devices & cameras**, add/edit the device, assign its
@@ -89,8 +89,8 @@ SDK location in a gitignored `local.properties`. From this directory:
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`. Every `assembleDebug` build,
 including Android Studio's **Build APK(s)** action, copies that exact APK to
-`../Dink-Vision-Recorder-0.5.30.apk` and
-`../artifacts/Dink-Vision-Recorder-0.5.30.apk`. It contains arm64-v8a and x86_64
+`Dink-Vision-Recorder-0.5.48.apk` and its SHA-256 checksum into the sibling
+`DinkVision-APKs` folder outside the checkout. The APK contains arm64-v8a and x86_64
 native libraries. Gradle and native dependencies are pinned. The debug signing
 key lives in the developer's Android profile, not in this repository.
 
@@ -136,7 +136,7 @@ actual Drive/email delivery remain device acceptance tests.
 
 ## Open-source components
 
-JavaCV/JavaCPP 1.5.12, FFmpeg 7.1.1-1.5.12 non-GPL Android classifiers,
+JavaCV/JavaCPP 1.5.13, FFmpeg 8.0.1-1.5.13 non-GPL Android classifiers,
 UVCAndroid 1.0.13, AndroidX WebKit 1.14.0 and Activity 1.10.1. License texts and source links are packaged in
 `app/src/main/assets/licenses`. FFmpeg libraries are dynamically linked; replacing
 their native JAR inputs and rebuilding/re-signing the APK supports modifications

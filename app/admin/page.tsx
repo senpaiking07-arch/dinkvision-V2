@@ -8,6 +8,10 @@ import type { AdminData } from "@/lib/admin-types";
 import { uuid } from "@/lib/validation";
 import { sessionCaptureReport } from "@/lib/recording-status";
 import { recorderDatabase } from "@/lib/recorder-server";
+import { captureColumns, withOptionalColumns } from "@/lib/optional-schema";
+
+const baseSessionFields = "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available,duration_ms),capture_jobs(last_seen_at)";
+const sessionFields = `${baseSessionFields},capture_interruption_code,capture_interrupted_at` as const;
 
 // The dashboard is a live operational view. Do not let the route cache an
 // earlier recording state between client refreshes.
@@ -62,13 +66,11 @@ export default async function AdminPage({ searchParams }: {
       .select("max_duration_seconds,retention_seconds,venue_time_zone")
       .eq("id", true)
       .single(),
-    db
-      .from("recording_sessions")
-      .select(
-        "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available),capture_jobs(last_seen_at)",
-      )
-      .order("created_at", { ascending: false })
-      .limit(100),
+    withOptionalColumns(
+      () => db.from("recording_sessions").select(sessionFields).order("created_at", { ascending: false }).limit(100),
+      () => db.from("recording_sessions").select(baseSessionFields).order("created_at", { ascending: false }).limit(100),
+      captureColumns,
+    ),
     db
       .from("audit_events")
       .select("id,action,created_at")
@@ -88,9 +90,11 @@ export default async function AdminPage({ searchParams }: {
   ]);
   const sessionRows = sessions.data || [];
   const selected = focusedId && !sessionRows.some(session => session.id === focusedId)
-    ? await db.from("recording_sessions")
-        .select("id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available),capture_jobs(last_seen_at)")
-        .eq("id", focusedId).maybeSingle()
+    ? await withOptionalColumns(
+        () => db.from("recording_sessions").select(sessionFields).eq("id", focusedId).maybeSingle(),
+        () => db.from("recording_sessions").select(baseSessionFields).eq("id", focusedId).maybeSingle(),
+        captureColumns,
+      )
     : { data: null, error: null };
   const visibleSessions = selected.data ? [...sessionRows, selected.data] : sessionRows;
   const browserSessionIds = visibleSessions
@@ -101,7 +105,7 @@ export default async function AdminPage({ searchParams }: {
   // through RLS; never accept session IDs from the URL as authorization.
   const browserReports = browserSessionIds.length
     ? await recorderDatabase().from("browser_recordings")
-        .select("session_id,last_seen_at,last_error,safe_error,upload_state,branding_state,local_available")
+        .select("session_id,last_seen_at,last_error,safe_error,upload_state,branding_state,local_available,duration_ms")
         .in("session_id", browserSessionIds)
     : { data: [], error: null };
   const reportBySession = new Map((browserReports.data || []).map(report => [report.session_id, report]));

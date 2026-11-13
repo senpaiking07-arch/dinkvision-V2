@@ -5,6 +5,8 @@ if (environmentFile.exists()) environmentFile.withInputStream { environment.load
 def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
 def recorderRelease = new groovy.json.JsonSlurper().parse(rootProject.file('recorder-release.json'))
 def appVersionName = recorderRelease.versionName
+def bytedecoVersion = '1.5.13'
+def ffmpegVersion = "8.0.1-${bytedecoVersion}"
 // Project-local override for updating an APK signed on another workstation.
 // The keystore itself stays outside the checkout; never replace ~/.android/debug.keystore.
 def localSigning = new Properties()
@@ -115,6 +117,7 @@ def prepareRoutedUvc = tasks.register('prepareRoutedUvc') {
 android.sourceSets.main.java.srcDir(rootProject.file('third_party/uvcandroid/src'))
 android.sourceSets.main.assets.srcDir(rootProject.file('third_party/uvcandroid/licenses'))
 dependencies {
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     implementation 'androidx.activity:activity:1.10.1'
     implementation 'androidx.webkit:webkit:1.14.0'
     uvcOriginal('com.herohan:UVCAndroid:1.0.13') { transitive = false }
@@ -125,13 +128,13 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.annotation:annotation:1.8.0'
     implementation 'cn.hutool:hutool-core:5.8.35'
-    implementation('org.bytedeco:javacv:1.5.12') { transitive = false }
-    implementation 'org.bytedeco:javacpp:1.5.12'
-    implementation 'org.bytedeco:ffmpeg:7.1.1-1.5.12'
-    nativeBundles 'org.bytedeco:javacpp:1.5.12:android-arm64'
-    nativeBundles 'org.bytedeco:javacpp:1.5.12:android-x86_64'
-    nativeBundles 'org.bytedeco:ffmpeg:7.1.1-1.5.12:android-arm64'
-    nativeBundles 'org.bytedeco:ffmpeg:7.1.1-1.5.12:android-x86_64'
+    implementation("org.bytedeco:javacv:${bytedecoVersion}") { transitive = false }
+    implementation "org.bytedeco:javacpp:${bytedecoVersion}"
+    implementation "org.bytedeco:ffmpeg:${ffmpegVersion}"
+    nativeBundles "org.bytedeco:javacpp:${bytedecoVersion}:android-arm64"
+    nativeBundles "org.bytedeco:javacpp:${bytedecoVersion}:android-x86_64"
+    nativeBundles "org.bytedeco:ffmpeg:${ffmpegVersion}:android-arm64"
+    nativeBundles "org.bytedeco:ffmpeg:${ffmpegVersion}:android-x86_64"
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
 }

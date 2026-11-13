@@ -89,6 +89,30 @@ test("all devices in a tenant share one global FIFO upload queue", async () => {
         )
       ).rows[0].ok;
 
+    const originalHead = (await db.query<{ upload_queued_at: string }>(
+      "select upload_queued_at::text from browser_recordings where session_id=$1", [sessions[0]],
+    )).rows[0].upload_queued_at;
+    await db.query(`update browser_recordings set upload_state='retrying',upload_retry_at=now()+interval '5 minutes',
+      upload_updated_at=now()-interval '4 minutes',last_seen_at=now()-interval '4 minutes' where session_id=$1`, [sessions[0]]);
+    await db.query("select expire_browser_uploads(null)");
+    const deferred = await turn(0, false);
+    assert.equal(deferred.upload_state, "retrying", "a deferred retry is not stale yet");
+    assert.equal(deferred.queue_position, 0);
+    assert.equal((await turn(1)).allowed, true, "a deferred head yields to the next eligible transfer");
+    await db.query("update browser_recordings set upload_retry_at=now()-interval '1 second' where session_id=$1", [sessions[0]]);
+    assert.equal((await turn(0)).allowed, false, "elapsed backoff must not preempt an active transfer");
+    await db.query("update browser_recordings set upload_retry_at=now()+interval '5 minutes' where session_id=$1", [sessions[0]]);
+    await db.query("select retry_browser_upload($1,$2)", [sessions[0], devices[0]]);
+    assert.equal((await db.query<{ upload_retry_at: string | null }>(
+      "select upload_retry_at from browser_recordings where session_id=$1", [sessions[0]],
+    )).rows[0].upload_retry_at, null);
+    assert.equal((await turn(0)).allowed, false, "manual retry cannot take an active transfer's slot");
+    assert.equal(await report(1, "complete", 1000), true);
+    assert.equal(await report(1, "failed", 0), false, "a late failure cannot reopen a completed upload");
+    await db.query(`update browser_recordings set upload_state='pending',upload_started_at=null,
+      upload_updated_at=now(),uploaded_bytes=0,local_available=true where session_id=any($1)`, [[sessions[0], sessions[1]]]);
+    await db.query("update browser_recordings set upload_queued_at=$2 where session_id=$1", [sessions[0], originalHead]);
+
     // Every camera in the tenant shares one FIFO queue, ordered by queue time.
     const first = await turn(0);
     assert.equal(first.allowed, true);
@@ -451,6 +475,11 @@ test("all devices in a tenant share one global FIFO upload queue", async () => {
     await db.query("insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email,stopped_at) values($1,$2,$3,gen_random_uuid(),'uploading','{}','raw@gmail.com',now())", [rawSession,rawKiosk,courts[0]]);
     await db.query("insert into browser_recordings(session_id,device_id,upload_state,branding_state,retry_count,local_available) values($1,$2,'failed','failed',8,true)", [rawSession,rawDevice]);
     const retryRaw = async (device = rawDevice) => (await db.query<{ok:boolean}>("select retry_browser_upload($1,$2) ok", [rawSession,device])).rows[0].ok;
+    await db.query("update recording_sessions set capture_interruption_code='camera_disconnected',capture_inspection_required=true where id=$1", [rawSession]);
+    assert.equal(await retryRaw(), false, "an original that failed interrupted capture validation cannot be requeued");
+    assert.deepEqual((await db.query("select upload_state,retry_count,local_available from browser_recordings where session_id=$1", [rawSession])).rows[0],
+      {upload_state: "failed", retry_count: 8, local_available: true});
+    await db.query("update recording_sessions set capture_inspection_required=false where id=$1", [rawSession]);
     assert.equal(await retryRaw(devices[0]), false, "a different tablet cannot retry another device's raw clip");
     await db.query("update browser_recordings set local_available=false where session_id=$1", [rawSession]);
     assert.equal(await retryRaw(), false, "a missing local copy cannot be processed again");

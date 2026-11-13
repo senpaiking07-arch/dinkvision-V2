@@ -109,6 +109,7 @@ test("Drive-confirmed offsets update Admin through empty-body probes", async () 
 });
 
 test("tablet route requires device ownership before forwarding an explicit direct-upload opt-in", async () => {
+  const optionalSchema = await import("../lib/optional-schema");
   const routeSource = ts.transpileModule(readFileSync("app/api/tablet/route.ts", "utf8"), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
@@ -125,6 +126,7 @@ test("tablet route requires device ownership before forwarding an explicit direc
   ]) {
     const exports: any = {}, calls: any[] = [];
     runInNewContext(routeSource, { exports, URL, console: { error() {} }, require(name: string) {
+      if (name === "@/lib/optional-schema") return optionalSchema;
       if (name === "@/lib/browser-tablets") return { browserTablet: async () => scenario.unenrolled ? null :
         ({ device: { id: "device" }, kiosk: { id: "kiosk", tenant_id: "tenant" } }) };
       if (name === "@/lib/recorder-server") return { recorderDatabase: () => ({

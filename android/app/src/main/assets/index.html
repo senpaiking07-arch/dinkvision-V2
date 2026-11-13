@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; media-src 'self'; font-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-src 'none'; form-action 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; media-src 'self'; font-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-src 'none'; form-action 'none'">
     <meta name="theme-color" content="#041d38">
     <title>Dink Vision recorder</title>
     <link rel="stylesheet" href="style.css">
@@ -15,8 +15,8 @@
     <header>
       <div class="brand"><img src="dink-vision-logo.png" alt="Dink Vision"></div>
       <div class="header-status" aria-live="polite"><span id="camera-status" class="camera-status">Checking camera</span><span id="header-court" hidden></span></div>
+      <div id="connection-notice" hidden><span id="connection-text" role="status"></span><button id="connection-retry" type="button" hidden>Retry connection</button></div>
     </header>
-    <div id="connection-notice" hidden><span id="connection-text" role="status"></span><button id="connection-retry" type="button" hidden>Retry connection</button></div>
     <main>
       <div id="count-in" class="count-in" hidden><div><span>Recording starts in</span><strong id="count-number">3</strong><small>Get ready</small></div></div>
       <section id="welcome">
@@ -38,29 +38,31 @@
           </button>
           <div class="form-heading-copy">
             <h1>Record your match</h1>
-            <p class="subtitle">Add up to four Gmail accounts for this replay.</p>
+            <p class="subtitle">Add up to four email addresses for this replay.</p>
           </div>
-          <span class="form-heading-spacer" aria-hidden="true"></span>
+          <button id="email-history" class="player-back" type="button" aria-label="Clear saved email history" hidden>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"></path></svg>
+          </button>
         </div>
-        <form id="email-form">
+        <form id="email-form" novalidate>
           <label>Your court<div class="field" id="court">Assigned by your administrator</div></label>
           <div class="email-entry">
-            <label for="player-email">Player Gmail</label>
-            <div class="email-add-row"><input id="player-email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="254" placeholder="player@gmail.com"><button id="add-email" class="email-add" type="button">＋ Add</button></div>
-            <p class="email-hint" id="email-count">Registered emails (0/4) · At least 1 is required.</p>
-            <div id="email-list" class="email-list" aria-label="Registered Gmail accounts"></div>
+            <label for="player-email">Player email</label>
+            <div class="email-add-row"><input id="player-email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="254" placeholder="Player email address" aria-describedby="email-count"><button id="add-email" class="email-add" type="button">Add email</button></div>
+            <p class="email-hint" id="email-count" role="status">0 of 4 emails added</p>
+            <div id="email-suggestions" aria-label="Saved email suggestions" hidden></div>
+            <div id="email-list" class="email-list" aria-label="Added email addresses"></div>
           </div>
-          <button class="record" type="submit"><span class="record-icon" aria-hidden="true"></span><span>Start recording</span></button>
-          <p class="note" id="limit">At least one Gmail address is required · Recording limit: 15 minutes</p>
+          <button class="record" type="submit">Review emails</button>
+          <p class="note" id="limit">Recording limit: 15 minutes</p>
         </form>
       </section>
       <section id="confirm" hidden>
-        <p class="eyebrow">READY FOR THE NEXT RALLY?</p>
-        <h1>Ready to play?</h1>
+        <h1>Review emails</h1>
         <p class="subtitle" id="confirmation"></p>
         <div id="confirmation-recipients" class="confirmation-recipients"></div>
         <p class="note" id="capture-note"></p>
-        <div class="actions"><button id="edit" class="quiet" type="button">Edit details</button><button id="record" class="primary" type="button">Confirm &amp; record</button></div>
+        <div class="actions"><button id="edit" class="quiet" type="button">Edit emails</button><button id="record" class="primary" type="button"><span class="record-icon" aria-hidden="true"></span> Start recording</button></div>
       </section>
       <section id="session" hidden>
         <p class="eyebrow" id="session-eyebrow">YOUR MATCH</p>

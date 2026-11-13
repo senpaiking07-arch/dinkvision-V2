@@ -16,10 +16,19 @@ public class ConnectionNoticeTest {
         public java.util.Map<String,java.util.List<String>> getHeaderFields(){return java.util.Collections.emptyMap();}
       };
     });
-    try { api.call("/api/tablet",null); fail("Expected fixture outage"); } catch(java.io.IOException expected) {}
-    assertEquals(Boolean.FALSE,api.serverReachable);
-    offline.set(false);api.call("/api/tablet",null);
-    assertEquals(Boolean.TRUE,api.serverReachable);
+    Api.RequestFailure failure = assertThrows(Api.RequestFailure.class, () -> api.call("/api/tablet", null));
+    assertEquals("connection", failure.code);
+    assertEquals(Boolean.FALSE, api.serverReachable);
+
+    offline.set(false);
+    api.call("/api/tablet/diagnostics", null);
+    assertEquals(Boolean.FALSE, api.serverReachable);
+    api.call("/api/tablet", null);
+    assertEquals(Boolean.TRUE, api.serverReachable);
+
+    offline.set(true);
+    assertThrows(Api.RequestFailure.class, () -> api.call("/api/tablet/diagnostics", null));
+    assertEquals(Boolean.TRUE, api.serverReachable);
   }
   @Test public void distinguishesInternetFromServerAndClearsAfterRecovery() {
     assertTrue(ConnectionNotice.message(false, false).startsWith("No internet"));

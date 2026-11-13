@@ -13,6 +13,7 @@ test("Email contains one private link, Philippines deadline and no injected head
   assert.match(mime,/To: player@gmail.com\r\n/);
   assert.doesNotMatch(mime,/Bcc:|Cc:/);
   const body=plainPart(mime);
+  assert.doesNotMatch(body,/ended early|ended unexpectedly|We recovered/);
   assert.match(body,/https:\/\/drive.google.com\/file\/d\/drive12345\/view/);
   assert.match(body,/Asia\/Manila/);
   assert.match(body,/player@gmail.com/);
@@ -38,4 +39,24 @@ test("Gmail accepts successful sends; uncertain sends never silently retry",asyn
   await assert.rejects(sendGmail("token","raw",mock(429,{}, {"Retry-After":"120"})),(e:unknown)=>e instanceof MailError && e.outcome==="retry" && e.retryAfter===120000);
   await assert.rejects(sendGmail("token","raw",mock(403,{})),(e:unknown)=>e instanceof MailError && e.code==="gmail_permission_required");
   await assert.rejects(sendGmail("token","raw",mock(401,{})),(e:unknown)=>e instanceof MailError && e.outcome==="failed");
+});
+
+test("a recovered replay includes the approved capture notice in both email parts", () => {
+  const replay = (code: unknown, durationMs: unknown) => Buffer.from(recordingMessage(
+    "owner@gmail.com", ["one@gmail.com", "two@gmail.com"], id, "drive12345",
+    "2026-10-02T00:00:00Z", "Asia/Manila", false, { code, durationMs },
+  ), "base64url").toString();
+  const camera = replay("camera_disconnected", 504_900);
+  assert.match(camera, /Subject: Your DinkVision replay is ready =\?UTF-8\?B\?4oCU\?= recording interrupted/);
+  assert.match(camera, /Bcc: one@gmail.com, two@gmail.com/);
+  const notice = /camera disconnected during the match\. We recovered 8 minutes 24 seconds of footage\./;
+  assert.match(plainPart(camera), notice);
+  assert.match(camera, notice);
+  assert.match(plainPart(camera), /https:\/\/drive\.google\.com\/file\/d\/drive12345\/view/);
+  assert.match(plainPart(camera), /scheduled retention deadline/);
+  const unknown = replay("unknown", null);
+  assert.match(plainPart(unknown), /could not confirm the cause\. We recovered the available footage/);
+  assert.match(unknown, /could not confirm the cause/);
+  assert.doesNotMatch(plainPart(unknown), /power loss|overheating|battery/);
+  assert.doesNotMatch(replay("<img src=unsafe>", 504_900), /unsafe|recording interrupted/);
 });

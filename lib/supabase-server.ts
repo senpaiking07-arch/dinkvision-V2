@@ -1,6 +1,7 @@
 import "server-only";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { TENANT_HEADER, tenantId } from "./tenant-scope";
 
 export function isConfigured() {
   return Boolean(
@@ -9,13 +10,14 @@ export function isConfigured() {
   );
 }
 
-export async function serverSupabase() {
+export async function serverSupabase(tenant?: string) {
   const store = await cookies();
   if (!isConfigured()) throw new Error("Supabase is not configured.");
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
     {
+      ...(tenant ? { global: { headers: { [TENANT_HEADER]: tenantId(tenant) } } } : {}),
       cookieOptions: {
         httpOnly: true,
         sameSite: "lax",

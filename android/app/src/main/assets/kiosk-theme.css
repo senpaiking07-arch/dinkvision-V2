@@ -5,7 +5,12 @@ body{background:var(--navy);color:var(--ink);font-family:Arial,sans-serif}
 .backdrop{background-image:linear-gradient(90deg,rgba(2,15,34,.12),transparent 75%),url('Kiosk-Background-Tablet.png');background-position:center;background-size:cover}
 .backdrop:after{background:linear-gradient(0deg,rgba(2,15,34,.3),transparent 35%);transition:background .15s}
 .flow-view .backdrop:after{background:linear-gradient(90deg,rgba(2,15,34,.83),rgba(2,15,34,.66))}
-header{border-bottom:1px solid rgba(121,199,215,.17)}
+header{z-index:2;isolation:isolate;border-bottom:1px solid rgba(121,199,215,.17)}
+header::before{
+  content:"";position:absolute;z-index:-1;
+  inset:calc(-1 * var(--safe-top)) calc(-1 * var(--safe-x)) 0;
+  background:var(--navy);
+}
 /* Remap the original navy wordmark to white, retaining teal and white ball holes. */
 .brand-filter{position:absolute;pointer-events:none}.brand img{filter:url('#brand-on-navy');width:clamp(116px,16vw,225px)}
 .header-status{display:flex;align-items:center;justify-content:flex-end;gap:clamp(10px,1.8vw,28px);min-width:0;padding-left:10px;text-align:right;font-size:clamp(10px,1.1vw,16px);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c8d9e8}
@@ -95,11 +100,11 @@ select { min-height:44px; max-width:100%; border:1px solid #365b73; border-radiu
   .hero h1{font-size:clamp(38px,min(15cqw,22cqh),190px)}
   @media(max-width:700px) and (orientation:portrait){.hero h1{font-size:clamp(38px,min(23cqw,16cqh),130px)}}
 }
-/* Welcome composition sits between the live header and the safe-area footer. */
-body:not(.flow-view) header { border-color: transparent; }
 @media (orientation: landscape) and (min-height: 500px) {
-  body:not(.flow-view) .brand img { width: min(26vw, 420px); height: 12dvh; }
+  .brand img { width: min(20vw, 300px); height: clamp(54px, 8dvh, 100px); }
 }
+
+/* Welcome composition sits between the live header and the safe-area footer. */
 #welcome { justify-content: space-between; padding: 2dvh clamp(4px, 2vw, 42px) .5dvh; }
 #welcome .hero { flex: 1; width: 100%; max-width: none; padding: 0; }
 #welcome .hero h1 {
@@ -122,7 +127,7 @@ body:not(.flow-view) header { border-color: transparent; }
 #welcome .tap span { border-bottom: .11em solid var(--teal); padding-bottom: .15em; }
 .has-tools footer span { display: inline; }
 @media (orientation: portrait) {
-  #welcome .hero h1 { font-size: min(20vw, 24cqh); }
+  #welcome .hero h1 { font-size: min(17vw, 24cqh); }
   #welcome .intro { font-size: min(5.8vw, 6cqh); }
   #welcome .tap { font-size: min(6vw, 7cqh); }
 }
@@ -131,11 +136,170 @@ body:not(.flow-view) header { border-color: transparent; }
   .device-tools { bottom: calc(var(--safe-bottom) + 17px); }
 }
 #connection-notice {
-  top: max(46px, 9dvh, env(safe-area-inset-top)); left: auto; right: var(--safe-x);
-  display: flex; align-items: center; gap: 8px; max-width: calc(100% - 2 * var(--safe-x));
+  position: absolute; top: calc(100% + 4px); left: auto; right: 0;
+  display: flex; align-items: center; gap: 8px; max-width: 100%;
   padding: 3px 8px; font-size: clamp(10px, 1.2vw, 14px);
 }
 #connection-retry {
   pointer-events: auto; min-height: 44px; border: 0;
   background: transparent; color: inherit; text-decoration: underline;
 }
+
+#email-form .email-add {
+  border-color: #4ba99f;
+  color: #d9fff6;
+  font-weight: 700;
+}
+#email-form .email-add-row input { min-width: 0; }
+.form-heading .player-back { min-width: 44px; }
+#email-count { display: block; min-height: 1.25em; line-height: 1.25; }
+#email-count.invalid { color: #ffb6a9; }
+#player-email[aria-invalid="true"] { border-color: #e38f85; }
+#record .record-icon { display: inline-block; margin-right: 5px; vertical-align: -.02em; }
+#confirmation-recipients span { max-width: 100%; }
+
+@media (orientation: landscape) and (max-height: 400px) {
+  #email-count { grid-column: 1/-1; grid-row: 3; margin: 0; }
+}
+
+/* Keep the fullscreen WebView fixed. Only the recipient form uses the visible area above the IME. */
+.recipient-ime #form {
+  position: fixed;
+  inset: var(--safe-top) var(--safe-x) calc(var(--recipient-ime-bottom) + 6px);
+  width: auto;
+  padding: 0 4px;
+  justify-content: center;
+}
+.recipient-ime #form .form-heading,
+.recipient-ime #email-form > label,
+.recipient-ime #email-form .email-entry > label,
+.recipient-ime #email-form .email-list,
+.recipient-ime #email-form .note { display: none; }
+.recipient-ime #email-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+  width: min(100%, 760px);
+  margin: 0;
+}
+.recipient-ime #email-form .email-entry { display: block; grid-column: 1; grid-row: 1; }
+.recipient-ime #email-form .record {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  min-height: 44px;
+  width: auto;
+  margin: 0;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+.recipient-ime #email-form input,
+.recipient-ime #email-form .email-add { min-height: 44px; font-size: 14px; }
+@media (max-width: 480px) and (orientation: portrait) {
+  .recipient-ime #email-form { display: flex; align-items: stretch; }
+  .recipient-ime #email-form .record { align-self: center; }
+}
+.recipient-ime-short #email-form { display: grid; }
+.recipient-ime-short header { visibility: hidden; }
+
+#email-suggestions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 4px;
+  margin-top: 5px;
+}
+.email-suggestion { display: flex; min-width: 0; }
+.email-suggestion button { min-height: 44px; padding: 5px 8px; font-size: 12px; }
+.email-suggestion button:first-child {
+  flex: 1;
+  min-width: 0;
+  border-radius: 9px 0 0 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.email-suggestion button:last-child {
+  flex: 0 0 44px;
+  border-left: 0;
+  border-radius: 0 9px 9px 0;
+  font-size: 20px;
+}
+#confirmation-recipients {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  width: min(100%, 760px);
+}
+#confirmation-recipients .recipient-review-row {
+  display: grid;
+  align-items: center;
+  min-width: 0;
+  gap: 0;
+  border: 1px solid #38677a;
+  border-radius: 10px;
+  background: #0c344c;
+}
+#confirmation-recipients .recipient-review-row span {
+  border: 0;
+  background: transparent;
+  padding: 5px 8px;
+  overflow-wrap: anywhere;
+}
+.remember-email {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 3px 7px;
+  font-size: clamp(11px, 1.2vw, 14px);
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.remember-email input[type="checkbox"] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  appearance: auto;
+  accent-color: var(--teal);
+}
+@media (max-width: 700px), (max-height: 600px) {
+  #email-suggestions .email-suggestion:nth-child(n+2) { display: none; }
+}
+@media (orientation: portrait) and (max-height: 600px) {
+  #confirmation-recipients .recipient-review-row {
+    grid-template-columns: minmax(0, 1fr) minmax(110px, 42%);
+    text-align: left;
+  }
+}
+@media (orientation: landscape) and (max-height: 400px) {
+  #email-suggestions { grid-column: 1/-1; grid-row: 4; margin-top: 0; }
+  #confirmation-recipients { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #confirm .subtitle, #confirm .note { display: none; }
+  #confirmation-recipients .recipient-review-row span { padding: 2px 6px; }
+}
+.recipient-ime #email-suggestions { margin-top: 2px; }
+.recipient-ime #email-form:has(#email-suggestions:not([hidden])) { display: grid; }
+@media (max-width: 480px) and (orientation: portrait) {
+  .recipient-ime #email-form:has(#email-suggestions:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recipient-ime #email-form:has(#email-suggestions:not([hidden])) .record {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: center;
+  }
+}
+.recipient-ime-short .email-entry:has(#email-suggestions:not([hidden])) #email-count:not(.invalid) { display: none; }
+
+@media (max-width: 480px) and (orientation: portrait) {
+  #modal[data-kind="enrollment"] .modal-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #modal[data-kind="enrollment"] .modal-actions .primary { grid-column: 1 / -1; }
+}
+
+/* Let the action row observe presses on these disabled controls without activating them. */
+#record:disabled, #stop:disabled { pointer-events: none; }

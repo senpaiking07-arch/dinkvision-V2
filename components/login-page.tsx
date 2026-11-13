@@ -5,12 +5,14 @@ import { redirect } from "next/navigation";
 
 export default async function LoginPage({
   admin = false,
+  next,
 }: {
   admin?: boolean;
+  next?: string;
 }) {
   const { account, problem } = await getAccount();
   if (account && (!admin || account.role === "admin"))
-    redirect(account.role === "admin" ? "/admin" : "/");
+    redirect(account.role === "admin" ? next || "/admin" : "/");
   return (
     <main className="auth-page">
       <a className="brand" href="/">
@@ -31,7 +33,7 @@ export default async function LoginPage({
             {problem}
           </p>
         )}
-        <LoginForm admin={admin} configured={isConfigured()} />
+        <LoginForm admin={admin} next={next} configured={isConfigured()} />
       </section>
       <a className="auth-switch" href={admin ? "/login" : "/admin/login"}>
         {admin ? "Player sign-in" : "Venue administrator? Sign in here"}

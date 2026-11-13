@@ -49,6 +49,28 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     await db.query("update profiles set role='admin' where id=$1", [admin]);
     await provisionLegacyFixtureMemberships(db);
     await db.query("insert into courts(id,name) values($1,'Court 1')", [court]);
+    const qrDevice = randomUUID();
+    await db.query(
+      "insert into browser_devices(id,name,enrollment_hash,enrollment_qr_hash,enrollment_expires_at) values($1,'QR fixture','qr-pin-hash','qr-invite-hash',now()+interval '10 minutes')",
+      [qrDevice],
+    );
+    const qrEnroll = async (verifier: string, token: string) => (await db.query<{ id: string | null }>(
+      "select enroll_browser_qr('qr-invite-hash',$1,$2,'qr-setup',$3,null) id",
+      [verifier, token, admin],
+    )).rows[0].id;
+    for (let attempt = 0; attempt < 5; attempt++)
+      assert.equal(await qrEnroll("wrong-pin-hash", "wrong-token"), null);
+    assert.equal(await qrEnroll("qr-pin-hash", "locked-token"), null);
+    assert.equal((await db.query<{ count: number }>("select enrollment_qr_failures count from browser_devices where id=$1", [qrDevice])).rows[0].count, 5);
+    await db.query("update browser_devices set enrollment_qr_failures=0,enrollment_expires_at=now()-interval '1 second' where id=$1", [qrDevice]);
+    assert.equal(await qrEnroll("qr-pin-hash", "expired-token"), null);
+    await db.query("update browser_devices set enrollment_expires_at=now()+interval '10 minutes' where id=$1", [qrDevice]);
+    const redeemed = await Promise.all([qrEnroll("qr-pin-hash", "qr-token-a"), qrEnroll("qr-pin-hash", "qr-token-b")]);
+    assert.equal(redeemed.filter(Boolean).length, 1, "one invitation binds one registration");
+    assert.equal(await qrEnroll("qr-pin-hash", "used-token"), null);
+    await db.exec("set role authenticated");
+    await assert.rejects(() => qrEnroll("qr-pin-hash", "unauthorized"), /permission denied/);
+    await db.exec("reset role");
     await db.query(
       "insert into browser_devices(id,name,court_id,enrollment_hash,enrollment_expires_at) values($1,'Tablet 1',$2,'enroll',now()+interval '10 minutes')",
       [device, court],
@@ -92,6 +114,15 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     const rotated = await db.query<{id:string}>("select enroll_browser('rotate-same','rotated-token','rotated-setup',$1,$2) id",[admin,kiosk]);
     assert.equal(rotated.rows[0].id,kiosk,"Re-enrollment preserves the kiosk and queue owner");
     assert.equal((await db.query<any>("select active from kiosk_devices where id=$1",[kiosk])).rows[0].active,true,"Rotating the same registration must not disable it");
+    await db.query("update browser_devices set enrollment_hash='previous-pairing-hash',enrollment_expires_at=now()+interval '10 minutes' where id=$1", [device]);
+    await db.query("update browser_devices set enrollment_hash='new-pairing-hash' where id=$1", [device]);
+    await assert.rejects(() => enroll("previous-pairing-hash"), /invalid or expired/);
+    const paired = await Promise.allSettled(["scanned-token", "typed-token"].map(token =>
+      db.query("select enroll_browser('new-pairing-hash',$1,'pairing-setup',$2,null)", [token, admin])));
+    assert.equal(paired.filter(result => result.status === "fulfilled").length, 1);
+    assert.equal(paired.filter(result => result.status === "rejected").length, 1);
+    assert.equal((await db.query<{enrollment_hash: string | null}>(
+      "select enrollment_hash from browser_devices where id=$1", [device])).rows[0].enrollment_hash, null);
     const oldDevice=randomUUID();
     await db.query("insert into browser_devices(id,name,enrollment_hash,enrollment_expires_at) values($1,'Previous phone slot','old-slot',now()+interval '10 minutes')",[oldDevice]);
     const oldKiosk=(await db.query<{id:string}>("select enroll_browser('old-slot','old-token','old-setup',$1) id",[admin])).rows[0].id;

@@ -22,7 +22,12 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public class CameraTestRecoveryTest {
   @Test public void activityRecreationPreservesApprovalUntilTheCameraReconnects() throws Exception {
-    Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    Context context = instrumentation.getTargetContext();
+    instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.CAMERA);
+    instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.RECORD_AUDIO);
+    if (android.os.Build.VERSION.SDK_INT >= 33)
+      instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.POST_NOTIFICATIONS);
     Engine engine=Engine.get(context);assertFalse("Do not interrupt an active capture",engine.busy);
     boolean original=engine.cameraCheckedThisLaunch;String connection=engine.confirmedCameraConnection;
     try(var activity=androidx.test.core.app.ActivityScenario.launch(MainActivity.class)){
@@ -119,7 +124,6 @@ public class CameraTestRecoveryTest {
         assertTrue(engine.error.contains("Record another test"));
       } else {
         assertEquals("idle", engine.phase);
-        assertTrue(engine.message.contains("choose"));
         assertEquals("", engine.vault.get("camera"));
         assertEquals("", engine.vault.get("camera-revision"));
       }

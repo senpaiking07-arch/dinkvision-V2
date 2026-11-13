@@ -4,9 +4,11 @@ import { useState, type FormEvent } from "react";
 export default function LoginForm({
   admin = false,
   configured,
+  next,
 }: {
   admin?: boolean;
   configured: boolean;
+  next?: string;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,7 +33,7 @@ export default function LoginForm({
         setBusy(false);
         return;
       }
-      window.location.assign(body.redirect);
+      window.location.assign(next && body.redirect === "/admin" ? next : body.redirect);
     } catch {
       setError("Could not reach the sign-in service. Please retry.");
       setBusy(false);

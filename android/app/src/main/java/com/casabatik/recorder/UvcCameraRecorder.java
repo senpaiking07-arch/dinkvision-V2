@@ -95,23 +95,6 @@ final class UvcCameraRecorder {
     if (value != null) throw value;
   }
 
-  private static void await(
-      CountDownLatch latch,
-      int seconds,
-      BooleanSupplier stop,
-      AtomicReference<Exception> failure,
-      String timeout)
-      throws Exception {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
-    while (latch.getCount() > 0 && System.nanoTime() < deadline) {
-      throwFailure(failure);
-      if (stop.getAsBoolean()) throw new Exception("Recording start was cancelled.");
-      latch.await(100, TimeUnit.MILLISECONDS);
-    }
-    throwFailure(failure);
-    if (latch.getCount() > 0) throw new Exception(timeout);
-  }
-
   static long capture(
       Context context,
       File file,
@@ -133,17 +116,27 @@ final class UvcCameraRecorder {
     AtomicReference<CameraHelper> helperRef = new AtomicReference<>();
     AtomicReference<UsbDevice> selected = new AtomicReference<>();
     AtomicReference<Exception> failure = new AtomicReference<>();
-    VideoCapture.setSurfaceProcessorFactory((surface, width, height) ->
-        new LiveLogoProcessor(context, surface, width, height, error ->
-            failure.compareAndSet(null, new Exception("Live watermark renderer failed. Saved footage was preserved.", error))));
+    AtomicReference<LiveLogoProcessor> watermark = new AtomicReference<>();
+    CountDownLatch encoderPrepared = new CountDownLatch(1);
+    VideoCapture.setSurfaceProcessorFactory((surface, width, height) -> {
+      LiveLogoProcessor processor = new LiveLogoProcessor(context, surface, width, height, 0, true,
+          listener.validateSavedMediaInBackground(), error ->
+              failure.compareAndSet(null, new Exception("Live watermark renderer failed. Saved footage was preserved.", error)));
+      watermark.set(processor);
+      encoderPrepared.countDown();
+      return processor;
+    });
     CountDownLatch opened = new CountDownLatch(1);
     CountDownLatch started = new CountDownLatch(1);
     CountDownLatch saved = new CountDownLatch(1);
     AtomicBoolean finishing = new AtomicBoolean(false);
     AtomicBoolean recording = new AtomicBoolean(false);
+    AtomicBoolean finalized = new AtomicBoolean(false);
     UsbDevice audioCamera = context.getSystemService(UsbManager.class).getDeviceList().values().stream()
         .filter(UvcCameraRecorder::isUvcDevice).findFirst().orElse(null);
+    listener.preparation("microphone_prepare");
     RecordingAudioInput audio = new RecordingAudioInput(context, audioCamera);
+    listener.preparation("camera_connect");
     VideoCapture.setAudioInputCallback(recorder -> {
       try { audio.bind(recorder); }
       catch (Exception e) { failure.compareAndSet(null, e); throw e; }
@@ -153,7 +146,7 @@ final class UvcCameraRecorder {
         new ICameraHelper.StateCallback() {
           private void select(UsbDevice device) {
             CameraHelper helper = helperRef.get();
-            if (helper != null
+            if (!finishing.get() && helper != null
                 && isUvcDevice(device)
                 && selected.compareAndSet(null, device)) {
               Log.i(TAG, "Requesting USB permission for " + device.getDeviceName());
@@ -169,7 +162,7 @@ final class UvcCameraRecorder {
           @Override
           public void onDeviceOpen(UsbDevice device, boolean isFirstOpen) {
             CameraHelper helper = helperRef.get();
-            if (helper == null) return;
+            if (finishing.get() || helper == null) return;
             UVCParam parameters = new UVCParam();
             parameters.setQuirks(UVCCamera.getRecommendedPlatformQuirks());
             helper.openCamera(parameters);
@@ -183,11 +176,12 @@ final class UvcCameraRecorder {
 
           @Override
           public void onCameraClose(UsbDevice device) {
+            if (!device.equals(selected.get())) return;
             if (!finishing.get())
-              failure.compareAndSet(null, new Exception("The USB camera closed unexpectedly."));
+              failure.compareAndSet(null, new CameraCapture.Interruption(
+                  CameraCapture.InterruptionCode.CAMERA_FAILURE, "The USB camera closed unexpectedly."));
             opened.countDown();
             started.countDown();
-            saved.countDown();
           }
 
           @Override
@@ -195,14 +189,15 @@ final class UvcCameraRecorder {
 
           @Override
           public void onDetach(UsbDevice device) {
-            if (device.equals(selected.get()) && !finishing.get())
+            if (!device.equals(selected.get())) return;
+            if (!finishing.get())
               failure.compareAndSet(
                   null,
-                  new Exception(
+                  new CameraCapture.Interruption(
+                      CameraCapture.InterruptionCode.CAMERA_DISCONNECTED,
                       "The USB camera was disconnected. Reconnect it before recording again."));
             opened.countDown();
             started.countDown();
-            saved.countDown();
           }
 
           @Override
@@ -238,7 +233,7 @@ final class UvcCameraRecorder {
             break;
           }
 
-      await(
+      CameraCapture.await(
           opened,
           25,
           stop,
@@ -267,10 +262,18 @@ final class UvcCameraRecorder {
               .setAudioBitRate(128_000)
               .setAudioSampleRate(48_000)
               .setAudioChannelCount(1));
+      CountDownLatch previewFrame = new CountDownLatch(1);
+      listener.preparation("camera_connect");
       helper.startPreview();
+      helper.setFrameCallback(frame -> {
+        if (frame != null && frame.hasRemaining()) previewFrame.countDown();
+      }, UVCCamera.PIXEL_FORMAT_RAW);
       listener.camera("USB camera");
-      // Match captures already warm the camera during the three-second countdown.
-      // Calibration has no countdown: let USB exposure/stream delivery settle first.
+      CameraCapture.await(previewFrame, 8, stop, failure, "The USB camera opened but did not deliver video.");
+      helper.setFrameCallback(null, UVCCamera.PIXEL_FORMAT_RAW);
+      listener.preparation("encoder_prepare");
+      CameraCapture.await(encoderPrepared, 8, stop, failure, "The USB camera encoder could not be prepared.");
+      // Preserve the exposure settling time for the short calibration clip.
       if (countInSeconds == 0) {
         long warmUntil = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!stop.getAsBoolean() && System.nanoTime() < warmUntil) {
@@ -278,17 +281,7 @@ final class UvcCameraRecorder {
           Thread.sleep(25);
         }
       }
-      listener.ready();
-
-      for (int value = countInSeconds; value > 0; value--) {
-        listener.countdown(value);
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
-        while (!stop.getAsBoolean() && System.nanoTime() < deadline) {
-          throwFailure(failure);
-          Thread.sleep(25);
-        }
-      }
-      if (stop.getAsBoolean()) throw new Exception("Recording start was cancelled.");
+      CameraCapture.countIn(countInSeconds, stop, failure, listener);
 
       helper.startRecording(
           new VideoCapture.OutputFileOptions.Builder(file).build(),
@@ -301,6 +294,7 @@ final class UvcCameraRecorder {
 
             @Override
             public void onVideoSaved(VideoCapture.OutputFileResults result) {
+              finalized.set(true);
               recording.set(false);
               saved.countDown();
             }
@@ -317,32 +311,56 @@ final class UvcCameraRecorder {
               saved.countDown();
             }
           });
-      await(started, 15, stop, failure, "Timed out while starting the USB camera recording.");
+      CameraCapture.await(started, 15, stop, failure, "Timed out while starting the USB camera recording.");
+      LiveLogoProcessor processor = watermark.get();
+      if (processor == null) throw new CameraCapture.StartFailure("The USB recording surface was not prepared.");
+      CameraCapture.await(processor.firstEncodedFrame, 6, stop, failure,
+          "The USB camera encoder did not receive a video frame.");
 
       long start = System.nanoTime();
-      // onStart is the first reliable signal that the USB capture is live.
+      // The driver starts the codec before attaching the camera to its input.
       listener.countdown(0);
       listener.started();
       long targetNanos = TimeUnit.SECONDS.toNanos(seconds);
       if (countInSeconds == 0 && seconds == 3) targetNanos += TimeUnit.MILLISECONDS.toNanos(350);
-      while (!stop.getAsBoolean()
-          && System.nanoTime() - start < targetNanos) {
-        throwFailure(failure);
-        audio.observe(null, start);
-        if (audio.isVerified()) listener.audio(audio.label());
-        listener.frame((int) TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start));
-        if (file.getParentFile().getUsableSpace() < 50_000_000)
-          throw new Exception("Tablet storage is nearly full.");
-        Thread.sleep(100);
+      CameraCapture.Interruption interruption = null;
+      try {
+        while (!stop.getAsBoolean() && System.nanoTime() - start < targetNanos) {
+          throwFailure(failure);
+          audio.observe(null, start);
+          if (audio.isVerified()) listener.audio(audio.label());
+          listener.frame((int) TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start));
+          if (file.getParentFile().getUsableSpace() < 50_000_000)
+            throw new CameraCapture.Interruption(CameraCapture.InterruptionCode.STORAGE_FULL, "Tablet storage is nearly full.");
+          Thread.sleep(100);
+        }
+        audio.requireVerified();
+        listener.audio(audio.label());
+      } catch (Exception captureFailure) {
+        interruption = CameraCapture.Interruption.observed(captureFailure);
+        listener.interrupted(interruption);
       }
       capturedMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
-      audio.requireVerified();
-      listener.audio(audio.label());
-      listener.finalizing();
+      if (interruption == null) listener.finalizing();
       finishing.set(true);
-      helper.stopRecording();
-      await(saved, (int)Math.min(180, 30 + file.length() / (32L * 1024 * 1024)), () -> false, failure, "Timed out while finalizing the USB camera recording.");
-      throwFailure(failure);
+      try {
+        helper.stopRecording();
+        long sizeAllowance = file.length() / (32L * 1024 * 1024);
+        int timeout = interruption == null ? (int) Math.min(180, 30 + sizeAllowance)
+            : (int) Math.min(90, 12 + sizeAllowance);
+        // A disconnect is the reason to close the file. Only the writer's
+        // terminal callback, rather than a camera close notification, completes this wait.
+        CameraCapture.await(saved, timeout, () -> false, new AtomicReference<>(),
+            "Timed out while finalizing the USB camera recording.");
+        if (!finalized.get()) {
+          throwFailure(failure);
+          throw new RecordingAccuracy.Failure("The USB recorder could not finalize the file.");
+        }
+      } catch (Exception closeFailure) {
+        if (interruption == null) throw closeFailure;
+        interruption.addSuppressed(closeFailure);
+      }
+      if (interruption != null) throw interruption;
       if (!file.isFile() || file.length() == 0)
         throw new RecordingAccuracy.Failure("The USB camera created an empty recording.");
       Log.i(TAG, "Saved direct UVC recording: " + size + ", " + file.length() + " bytes");
@@ -352,11 +370,12 @@ final class UvcCameraRecorder {
           "This Android processor cannot load the USB camera driver. Use a 64-bit Android device.",
           error);
     } finally {
-      finishing.set(true);
+      boolean stopAlreadyRequested = finishing.getAndSet(true);
+      helperRef.set(null);
       VideoCapture.setAudioInputCallback(null);
       VideoCapture.setSurfaceProcessorFactory(null);
       if (helper != null) {
-        if (recording.get()) {
+        if (recording.get() && !stopAlreadyRequested) {
           try {
             helper.stopRecording();
             saved.await(5, TimeUnit.SECONDS);

@@ -9,6 +9,25 @@ import org.junit.runner.RunWith;
 
 @RunWith(AndroidJUnit4.class)
 public class UploadTransferTest {
+  @Test public void aQueuedVideoReturnsTheWorkerWithoutSendingBytesOrPolling() throws Exception {
+    var calls = new java.util.ArrayList<String>();
+    var waits = new java.util.concurrent.atomic.AtomicInteger();
+    UploadTransfer.Transport transport = new UploadTransfer.Transport() {
+      public JSONObject action(String action) throws Exception {
+        calls.add(action);
+        return new JSONObject().put("queued", true)
+            .put("queue", new JSONObject().put("state", "pending"));
+      }
+      public JSONObject chunk(long offset, int length) {
+        throw new AssertionError("A waiting video must not transfer data");
+      }
+    };
+    assertThrows(UploadTransfer.WaitingForTurn.class,
+        () -> UploadTransfer.send(1000, transport, p -> fail("Waiting is not transfer progress"),
+            q -> waits.incrementAndGet(), false, true));
+    assertEquals(java.util.List.of("upload"), calls);
+    assertEquals(1, waits.get());
+  }
   @Test
   public void chunkTransportUsesDriveWithoutForwardingAppCredentials() throws Exception {
     android.content.Context base =
@@ -204,15 +223,25 @@ public class UploadTransferTest {
     Backend backend = new Backend();
     backend.expire = true;
     backend.confirm = false;
+    var progress = new java.util.ArrayList<String>();
+    UploadTransfer.Progress observer = new UploadTransfer.Progress() {
+      public void update(long percent) { progress.add("percent:" + percent); }
+      public void acknowledged(long bytes, long total) { progress.add("acknowledged:" + bytes); }
+      public void verifying(long bytes) { progress.add("verifying:" + bytes); }
+    };
     try {
-      UploadTransfer.send(backend.bytes, backend, value -> {});
+      UploadTransfer.send(backend.bytes, backend, observer);
       fail();
     } catch (Exception expected) {
       assertTrue(expected.getMessage().contains("confirmation"));
     }
+    assertEquals(java.util.List.of("acknowledged:0", "acknowledged:0", "acknowledged:4194304",
+        "verifying:" + backend.bytes), progress);
     assertEquals(1, backend.restarts);
     backend.confirm = true;
-    UploadTransfer.send(backend.bytes, backend, value -> {});
+    progress.clear();
+    UploadTransfer.send(backend.bytes, backend, observer);
+    assertEquals(java.util.List.of("verifying:" + backend.bytes, "percent:100"), progress);
     assertEquals(3, backend.chunks);
   }
 }

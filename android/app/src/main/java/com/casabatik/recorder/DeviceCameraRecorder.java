@@ -120,11 +120,15 @@ final class DeviceCameraRecorder {
         Build.VERSION.SDK_INT >= 31 ? new MediaRecorder(context) : new MediaRecorder();
     LiveLogoProcessor logo = null;
     android.view.Surface encoderSurface = null;
-    CameraDevice camera = null;
-    CameraCaptureSession session = null;
+    AtomicReference<CameraDevice> openedCamera = new AtomicReference<>();
+    AtomicReference<CameraCaptureSession> openedSession = new AtomicReference<>();
+    var closing = new java.util.concurrent.atomic.AtomicBoolean();
     long capturedMillis = 0;
     boolean recording = false;
+    boolean captureLive = false;
+    boolean finalizing = false;
     try {
+      listener.preparation("encoder_prepare");
       recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
       recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
       recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
@@ -145,44 +149,49 @@ final class DeviceCameraRecorder {
         if (usbManager != null) for (var device : usbManager.getDeviceList().values())
           if (UvcCameraRecorder.isUvcDevice(device)) { usbCamera = device; break; }
       }
+      listener.preparation("microphone_prepare");
       RecordingAudioInput audio = new RecordingAudioInput(context, usbCamera);
       audio.prefer(recorder);
 
       CountDownLatch opened = new CountDownLatch(1);
-      AtomicReference<CameraDevice> openedCamera = new AtomicReference<>();
       AtomicReference<Exception> failure = new AtomicReference<>();
       java.util.concurrent.atomic.AtomicLong lastFrame = new java.util.concurrent.atomic.AtomicLong(System.nanoTime());
-      recorder.setOnErrorListener((r, what, extra) -> failure.set(new RecordingAccuracy.Failure("Android camera encoder failed. Available footage remains on this device.")));
+      recorder.setOnErrorListener((r, what, extra) -> failure.compareAndSet(null,
+          new CameraCapture.Interruption(CameraCapture.InterruptionCode.CAMERA_FAILURE, "Android camera encoder failed.")));
+      listener.preparation("camera_connect");
       manager.openCamera(
           cameraId,
           new CameraDevice.StateCallback() {
             public void onOpened(CameraDevice value) {
               openedCamera.set(value);
+              if (closing.get() && openedCamera.compareAndSet(value, null)) value.close();
               opened.countDown();
             }
 
             public void onDisconnected(CameraDevice value) {
               value.close();
-              failure.set(new Exception("Android camera disconnected."));
+              failure.compareAndSet(null, new CameraCapture.Interruption(
+                  CameraCapture.InterruptionCode.CAMERA_DISCONNECTED, "Android camera disconnected."));
               opened.countDown();
             }
 
             public void onError(CameraDevice value, int error) {
               value.close();
-              failure.set(new Exception("Android camera could not be opened."));
+              failure.compareAndSet(null, new CameraCapture.Interruption(
+                  CameraCapture.InterruptionCode.CAMERA_FAILURE, "Android camera failed."));
               opened.countDown();
             }
           },
-          handler);
-      if (!opened.await(10, TimeUnit.SECONDS))
-        throw new Exception("Timed out while opening the Android camera.");
-      if (failure.get() != null) throw failure.get();
-      camera = openedCamera.get();
+          new Handler(context.getMainLooper()));
+      CameraCapture.await(opened, 10, stop, failure, "Timed out while opening the Android camera.");
+      CameraDevice camera = openedCamera.get();
       if (camera == null) throw new Exception("Android camera could not be opened.");
 
+      listener.preparation("encoder_prepare");
       encoderSurface = recorder.getSurface();
       logo = new LiveLogoProcessor(context, encoderSurface, profile.width, profile.height,
-          orientation == null ? 0 : orientation, false, error -> failure.compareAndSet(null, error));
+          orientation == null ? 0 : orientation, false, listener.validateSavedMediaInBackground(),
+          error -> failure.compareAndSet(null, error));
       android.view.Surface surface = logo.input();
       CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
       request.addTarget(surface);
@@ -196,25 +205,24 @@ final class DeviceCameraRecorder {
             break;
           }
       CountDownLatch configured = new CountDownLatch(1);
-      AtomicReference<CameraCaptureSession> openedSession = new AtomicReference<>();
       camera.createCaptureSession(
           Collections.singletonList(surface),
           new CameraCaptureSession.StateCallback() {
             public void onConfigured(CameraCaptureSession value) {
               openedSession.set(value);
+              if (closing.get() && openedSession.compareAndSet(value, null)) value.close();
               configured.countDown();
             }
 
             public void onConfigureFailed(CameraCaptureSession value) {
-              failure.set(new Exception("Android camera recording could not be configured."));
+              value.close();
+              failure.compareAndSet(null, new CameraCapture.StartFailure("Android camera recording could not be configured."));
               configured.countDown();
             }
           },
           handler);
-      if (!configured.await(10, TimeUnit.SECONDS))
-        throw new Exception("Timed out while preparing the Android camera.");
-      if (failure.get() != null) throw failure.get();
-      session = openedSession.get();
+      CameraCapture.await(configured, 10, stop, failure, "Timed out while preparing the Android camera.");
+      CameraCaptureSession session = openedSession.get();
       if (session == null) throw new Exception("Android camera recording could not be configured.");
       session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
         private final RecordingAccuracy.Timeline clock = new RecordingAccuracy.Timeline();
@@ -227,23 +235,22 @@ final class DeviceCameraRecorder {
         }
       }, handler);
 
-      listener.ready();
-      for (int value = countInSeconds; value > 0; value--) {
-        listener.countdown(value);
-        long deadline = System.nanoTime() + 1_000_000_000L;
-        while (!stop.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(25);
-      }
-      if (stop.getAsBoolean()) throw new Exception("Recording start was cancelled.");
+      CameraCapture.await(logo.firstInputFrame, 6, stop, failure,
+          "The Android camera opened but did not deliver video.");
+      CameraCapture.countIn(countInSeconds, stop, failure, listener);
 
       recorder.start();
       recording = true;
       logo.startEncoding();
+      CameraCapture.await(logo.firstEncodedFrame, 6, stop, failure,
+          "The Android camera encoder did not receive a video frame.");
       long start = System.nanoTime();
       lastFrame.set(start);
       // Keep "1" visible while MediaRecorder performs its native startup.
       // Clear the countdown only once capture has actually begun.
       listener.countdown(0);
       listener.started();
+      captureLive = true;
       long targetNanos = TimeUnit.SECONDS.toNanos(seconds);
       if (countInSeconds == 0 && seconds == 3) targetNanos += TimeUnit.MILLISECONDS.toNanos(350);
       while (!stop.getAsBoolean()
@@ -252,27 +259,47 @@ final class DeviceCameraRecorder {
         audio.observe(recorder, start);
         if (audio.isVerified()) listener.audio(audio.label());
         if (System.nanoTime() - lastFrame.get() > 3_000_000_000L)
-          throw new RecordingAccuracy.Failure("Device camera stopped delivering frames. Available footage remains on this device.");
+          throw new CameraCapture.Interruption(CameraCapture.InterruptionCode.CAMERA_FAILURE,
+              "The Android camera stopped delivering video.");
         listener.frame((int) ((System.nanoTime() - start) / 1_000_000_000L));
         if (file.getParentFile().getUsableSpace() < 50_000_000)
-          throw new Exception("Tablet storage is nearly full.");
+          throw new CameraCapture.Interruption(CameraCapture.InterruptionCode.STORAGE_FULL, "Tablet storage is nearly full.");
         Thread.sleep(100);
       }
       capturedMillis = Math.max(1, (System.nanoTime() - start) / 1_000_000L);
       audio.requireVerified();
       listener.audio(audio.label());
+      finalizing = true;
       listener.finalizing();
-      session.stopRepeating();
+      try { session.stopRepeating(); } catch (CameraAccessException | IllegalStateException ignored) { }
       logo.stop();
-      recorder.stop();
       recording = false;
+      recorder.stop();
       logo.completed(file);
-    } catch (RuntimeException e) {
-      throw new Exception("Android camera could not save a complete recording.", e);
+    } catch (Exception failure) {
+      if (captureLive && !finalizing) {
+        CameraCapture.Interruption interruption = CameraCapture.Interruption.observed(failure);
+        listener.interrupted(interruption);
+        CameraCaptureSession session = openedSession.get();
+        if (session != null) try { session.stopRepeating(); } catch (Exception ignored) { }
+        logo.stop();
+        recording = false;
+        try {
+          recorder.stop();
+          logo.completed(file);
+        } catch (Exception incomplete) { interruption.addSuppressed(incomplete); }
+        throw interruption;
+      }
+      if (failure instanceof RuntimeException)
+        throw new Exception("Android camera could not save a complete recording.", failure);
+      throw failure;
     } finally {
+      closing.set(true);
       if (recording) try { recorder.stop(); } catch (Exception ignored) {}
-      if (session != null) session.close();
-      if (camera != null) camera.close();
+      CameraCaptureSession session = openedSession.getAndSet(null);
+      CameraDevice camera = openedCamera.getAndSet(null);
+      if (session != null) try { session.close(); } catch (RuntimeException ignored) { }
+      if (camera != null) try { camera.close(); } catch (RuntimeException ignored) { }
       if (logo != null) logo.close();
       if (encoderSurface != null) encoderSurface.release();
       try {

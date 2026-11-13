@@ -7,6 +7,7 @@ type RecoveryRecording = {
     status?: string;
     stopped_at?: string | null;
     failure_stage?: string | null;
+    capture_inspection_required?: boolean;
   } | null;
 };
 
@@ -14,6 +15,7 @@ export function videoRetryLabel(recording?: RecoveryRecording | null, nativeReco
   if (recording?.upload_state !== "failed" || recording.local_available !== true)
     return null;
   const session = recording.recording_sessions;
+  if (session?.capture_inspection_required) return null;
   const uploadFailed = session?.status === "failed" &&
     ["upload", "upload_cancelled"].includes(session.failure_stage || "");
   if (recording.file_id) {

@@ -3,6 +3,7 @@ import { connectedDrive, googleConfig } from "./google-server";
 import { MailError, recordingMessage, sendGmail } from "./gmail";
 import { DriveError } from "./google-drive";
 import { recorderDatabase } from "./recorder-server";
+import { captureColumns, withOptionalColumns } from "./optional-schema";
 
 export async function deliverNextEmail(recorderId?:string,fileId?:string) {
   const db=recorderDatabase();
@@ -12,7 +13,11 @@ export async function deliverNextEmail(recorderId?:string,fileId?:string) {
   if (!job) return;
   let sending=false;
   try {
-    const f=await db.from("recording_files").select("id,session_id,status,drive_file_id,expires_at,deleted_at,recording_sessions(recipient_email,configuration_snapshot)").eq("id",job.file_id).single();
+    const f=await withOptionalColumns(
+      () => db.from("recording_files").select("id,session_id,status,drive_file_id,expires_at,deleted_at,recording_sessions(recipient_email,configuration_snapshot,capture_interruption_code,browser_recordings(duration_ms))").eq("id",job.file_id).single(),
+      () => db.from("recording_files").select("id,session_id,status,drive_file_id,expires_at,deleted_at,recording_sessions(recipient_email,configuration_snapshot)").eq("id",job.file_id).single(),
+      captureColumns,
+    );
     if (f.error) throw f.error;
     const file=f.data;
     if (file.status!=="ready" || file.deleted_at || Date.parse(file.expires_at)<=Date.now()) throw new MailError("recording_expired","failed");
@@ -20,12 +25,18 @@ export async function deliverNextEmail(recorderId?:string,fileId?:string) {
     if (settings.error) throw settings.error;
     const {integration,accessToken}=await connectedDrive();
     if (!integration.gmail_authorized_at) throw new MailError("gmail_permission_required","failed");
-    const session=file.recording_sessions as unknown as {recipient_email:string;configuration_snapshot?:{sharing_mode?:string;recipient_emails?:unknown}};
+    const session=file.recording_sessions as unknown as {
+      recipient_email:string;
+      configuration_snapshot?:{sharing_mode?:string;recipient_emails?:unknown};
+      capture_interruption_code?: string | null;
+      browser_recordings?: {duration_ms: number | null} | null;
+    };
     const configured=session.configuration_snapshot?.recipient_emails;
     const recipients=Array.isArray(configured) && configured.every(value=>typeof value==="string")
       ? configured as string[]
       : session.recipient_email;
-    const raw=recordingMessage(googleConfig().owner,recipients,file.id,file.drive_file_id,file.expires_at,settings.data.venue_time_zone || "Asia/Manila",session.configuration_snapshot?.sharing_mode === "link");
+    const raw=recordingMessage(googleConfig().owner,recipients,file.id,file.drive_file_id,file.expires_at,settings.data.venue_time_zone || "Asia/Manila",session.configuration_snapshot?.sharing_mode === "link",
+      { code: session.capture_interruption_code, durationMs: session.browser_recordings?.duration_ms });
     // Re-check our lease just before an external side effect.
     const lease=await db.from("email_jobs").select("file_id").eq("file_id",job.file_id).eq("lease_token",job.lease_token).eq("status","sending").gt("lease_until",new Date(Date.now()+30000).toISOString()).maybeSingle();
     if (lease.error || !lease.data) return;

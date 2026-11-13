@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import {venueStateError} from "../lib/venue-errors";
+import * as optionalSchema from "../lib/optional-schema";
 
 // Isolate request-bound Next imports while exercising the actual route handler,
 // including rejected promises returned by its asynchronous state loader.
@@ -14,10 +15,11 @@ function handler(error: { code: string; message: string }, enrolled = true) {
   }).outputText;
   const exports: { GET?: (request: Request) => Promise<Response> } = {};
   runInNewContext(compiled, {
-    exports, URL,
+    exports, URL, process: { env: {} },
     console: { error() {} },
     require(name: string) {
       if (name === "@/lib/venue-errors") return {venueStateError};
+      if (name === "@/lib/optional-schema") return optionalSchema;
       if (name === "@/lib/browser-tablets") return {
         browserTablet: async () => enrolled ? { device: { id: "device" }, kiosk: {} } : null,
       };
@@ -57,6 +59,10 @@ test("unenrolled browser still receives the setup enrollment response", async ()
   const response = await handler({code:"PGRST202",message:"Missing RPC"},false)(new Request("http://localhost/api/tablet?setup=1"));
   assert.equal(response.status,200);
   assert.deepEqual(await response.json(),{enabled:false});
+  const android = await handler({code:"PGRST202",message:"Missing RPC"},false)(
+    new Request("http://localhost/api/tablet", {headers: {"x-dinkvision-client": "android"}}),
+  );
+  assert.deepEqual(await android.json(), {enabled:false,capabilities:{enrollmentRecovery:true}});
 });
 
 test("kiosk awaits tablet state rejection and returns safe JSON", async () => {

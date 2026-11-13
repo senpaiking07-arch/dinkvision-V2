@@ -17,7 +17,12 @@ import {
 import { normalizeRecipients } from "@/lib/team-recipients";
 import { venueStateError } from "@/lib/venue-errors";
 import { androidUpdateRequired } from "@/lib/android-release";
+import { isCaptureInterruption } from "@/lib/capture-interruption";
+import { captureColumns, readRecorderQueue, retryColumns, withOptionalColumns } from "@/lib/optional-schema";
 export const maxDuration = 60;
+function uploadBackoffEnabled() {
+  return process.env.RECORDER_UPLOAD_BACKOFF_ENABLED === "true";
+}
 const activeCaptureStatuses = [
   "requested",
   "starting",
@@ -32,7 +37,10 @@ export async function browserTabletState(
   includeSetupAccess = false,
 ) {
   const db = recorderDatabase();
-    const [court, settings, session, queue] = await Promise.all([
+    const deviceQueue = (details: boolean, retrySchedule: boolean) => db.from("browser_recordings")
+      .select(`session_id,job_id,upload_state,upload_updated_at,uploaded_bytes,bytes,retry_count,last_error,branding_state,client_created_at,duration_ms,local_available,${retrySchedule ? "upload_retry_at," : ""}recording_sessions(court_id,status,created_at,recipient_email,configuration_snapshot${details ? ",capture_interruption_code,capture_interrupted_at,capture_inspection_required" : ""})`)
+      .eq("device_id", t.device.id).order("client_created_at", { ascending: false }).limit(100);
+    const [court, settings, session, {result: queue, retrySchedule}] = await Promise.all([
       db
         .from("courts")
         .select("id,name,active")
@@ -53,12 +61,7 @@ export async function browserTabletState(
             .eq("kiosk_id", t.kiosk.id)
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
-      db
-        .from("browser_recordings")
-        .select("session_id,job_id,upload_state,upload_updated_at,uploaded_bytes,bytes,retry_count,last_error,branding_state,client_created_at,duration_ms,local_available,recording_sessions(court_id,status,created_at,recipient_email,configuration_snapshot)")
-        .eq("device_id", t.device.id)
-        .order("client_created_at", { ascending: false })
-        .limit(100),
+      readRecorderQueue(deviceQueue, uploadBackoffEnabled()),
     ]);
     if (court.error || settings.error || session.error || queue.error)
       throw court.error || settings.error || session.error || queue.error;
@@ -70,7 +73,9 @@ export async function browserTabletState(
         : null;
     return json({
       enabled: true,
-      capabilities: {deviceCopyReporting: true,brandingProgressReporting:true,localFileSizeReporting:true,queuePresenceReporting:true},
+      capabilities: {enrollmentRecovery:true,deviceCopyReporting: true,brandingProgressReporting:true,localFileSizeReporting:true,queuePresenceReporting:true,
+        uploadBackoffScheduling:retrySchedule,
+        recorderDiagnostics:process.env.RECORDER_DIAGNOSTICS_ENABLED==="true"},
       browser: true,
       device: publicTablet(t.device),
       canSetup: includeSetupAccess ? await canSetup(t.device) : false,
@@ -98,14 +103,19 @@ export async function browserTabletState(
       queue: (queue.data || []).map((row: any) => {
         const session = Array.isArray(row.recording_sessions) ? row.recording_sessions[0] : row.recording_sessions;
         return {...row, recording_sessions: session ? {court_id: session.court_id, status: session.status,
-          created_at: session.created_at, recipient_emails: normalizeRecipients(session.configuration_snapshot?.recipient_emails, session.recipient_email) || []} : null};
+          created_at: session.created_at, recipient_emails: normalizeRecipients(session.configuration_snapshot?.recipient_emails, session.recipient_email) || [],
+          capture_interruption_code: session.capture_interruption_code,
+          capture_interrupted_at: session.capture_interrupted_at,
+          capture_inspection_required: session.capture_inspection_required} : null};
       }),
     });
 }
 export async function GET(request: Request) {
   try {
     const t = await browserTablet();
-    if (!t) return json({ enabled: false });
+    if (!t) return json(request.headers.get("x-dinkvision-client") === "android"
+      ? { enabled: false, capabilities: { enrollmentRecovery: true } }
+      : { enabled: false });
     return await browserTabletState(
       t,
       new URL(request.url).searchParams.get("setup") === "1",
@@ -269,17 +279,82 @@ export async function POST(request: Request) {
       return json({ id: r.data });
     }
     const id = uuid(b.id);
-    const owned = await db
-      .from("browser_recordings")
-      .select("session_id,upload_state")
-      .eq("session_id", id)
-      .eq("device_id", t.device.id)
-      .maybeSingle();
+    const deliveryAction = ["saved", "upload", "finish", "restart-upload", "retry-upload"].includes(String(b.action));
+    const captureReport =
+      (["captured", "saved", "failed"].includes(String(b.action)) ||
+        (b.action === "upload-failed" && b.validation_failed === true)) &&
+      (b.capture_interruption_code !== undefined || b.capture_interrupted_at !== undefined);
+    let captureSchemaReady = true;
+    const ownedRecording = (details: boolean) => {
+      const table = db.from("browser_recordings");
+      const fields = details ? table.select("session_id,upload_state,recording_sessions(capture_inspection_required)")
+        : table.select("session_id,upload_state");
+      return fields.eq("session_id", id).eq("device_id", t.device.id).maybeSingle();
+    };
+    const owned = deliveryAction || captureReport ? await withOptionalColumns(
+      () => ownedRecording(true), () => { captureSchemaReady = false; return ownedRecording(false); }, captureColumns,
+    ) : await ownedRecording(false);
     if (owned.error || !owned.data)
       return json(
         { error: "This recording does not belong to this tablet." },
         403,
       );
+    const recording = "recording_sessions" in owned.data
+      ? owned.data.recording_sessions as unknown as { capture_inspection_required?: boolean } | null
+      : null;
+    if (recording?.capture_inspection_required && deliveryAction)
+      return json({ error: "This interrupted video needs inspection. Save the original on the tablet." }, 409);
+    if (!captureSchemaReady && captureReport && b.action === "saved")
+      return json({ error: "The interrupted video is saved on this tablet. Apply the database update before retrying its upload." }, 503);
+    if (captureSchemaReady && captureReport) {
+      if (!isCaptureInterruption(b.capture_interruption_code))
+        throw new InputError("Invalid capture interruption reason.");
+      const interruptedAt = b.capture_interrupted_at;
+      if (interruptedAt != null &&
+        (typeof interruptedAt !== "number" || !Number.isSafeInteger(interruptedAt) ||
+          interruptedAt <= 0 || interruptedAt > Date.UTC(9999, 11, 31, 23, 59, 59, 999)))
+        throw new InputError("Invalid capture interruption time.");
+      if (b.action === "saved" &&
+        (typeof b.duration_ms !== "number" || !Number.isSafeInteger(b.duration_ms) ||
+          b.duration_ms < 1 || b.duration_ms > 7_200_000))
+        throw new InputError("The recovered video needs a valid duration.");
+      // Save the first report before the saved action can make the file eligible
+      // for Drive delivery. Retries cannot replace the original capture cause.
+      const interruption = await db.from("recording_sessions")
+        .update({
+          capture_interruption_code: b.capture_interruption_code,
+          capture_interrupted_at: interruptedAt == null ? null : new Date(interruptedAt).toISOString(),
+        })
+        .eq("id", id).eq("kiosk_id", t.kiosk.id)
+        .is("capture_interruption_code", null)
+        .in("status", ["requested", "starting", "recording", "finalizing", "uploading", "failed"]);
+      if (interruption.error) throw interruption.error;
+      if (b.action === "failed" || b.action === "upload-failed") {
+        const inspection = await db.from("recording_sessions")
+          .update({ capture_inspection_required: true })
+          .eq("id", id).eq("kiosk_id", t.kiosk.id)
+          .in("status", ["requested", "starting", "recording", "finalizing", "uploading", "failed"]);
+        if (inspection.error) throw inspection.error;
+      }
+    }
+    if (b.action === "upload-turn") {
+      if (!uploadBackoffEnabled()) return json({ error: "Upload scheduling is unavailable." }, 503);
+      return json({ queue: await browserUploadQueue(id, t.device.id, false, t.kiosk.tenant_id) });
+    }
+    if (["saved", "retry-upload", "queue-report"].includes(String(b.action)) &&
+        ["uploaded", "complete"].includes(owned.data.upload_state)) {
+      const complete = await db.from("recording_sessions").select("id")
+        .eq("id", id).eq("kiosk_id", t.kiosk.id).eq("status", "ready").maybeSingle();
+      if (complete.error) throw complete.error;
+      if (complete.data) {
+        if (b.action === "queue-report" && b.status === "uploaded") {
+          const copy = await db.from("browser_recordings").update({ local_available: b.local_available !== false })
+            .eq("session_id", id).eq("device_id", t.device.id).in("upload_state", ["uploaded", "complete"]);
+          if (copy.error) throw copy.error;
+        }
+        return json({ ok: true, ready: true, queued: false });
+      }
+    }
     if (b.action === "queue-presence") {
       // Presence is not a state transition: never reset confirmed Drive bytes,
       // backoff, retry counts, leases, FIFO position or an administrator action.
@@ -303,6 +378,8 @@ export async function POST(request: Request) {
       const status = String(b.status || "");
       if (!["saved_locally", "pending", "uploading", "retrying", "uploaded", "failed", "local_only"].includes(status))
         throw new InputError("Invalid local queue status.");
+      if (status === "uploaded")
+        return json({ error: "Drive completion has not been verified." }, 409);
       if(status==="local_only"&&owned.data.upload_state!=="local_only")
         throw new InputError("The local-only policy must be confirmed by the server first.");
       const progress = Number(b.progress || 0), retries = Number(b.retry_count || 0);
@@ -330,7 +407,7 @@ export async function POST(request: Request) {
         last_error: b.last_error ? String(b.last_error).slice(0, 300) : null,
         local_available: b.local_available !== false,
         client_created_at: b.created_at ? new Date(Number(b.created_at)).toISOString() : undefined,
-        duration_ms: b.duration_ms == null ? null : Number(b.duration_ms),
+        duration_ms: b.duration_ms == null ? undefined : Number(b.duration_ms),
         upload_updated_at: new Date().toISOString(),
         ...(brandingProgress===undefined?{}:{branding_progress:brandingProgress}),
         ...(reportedBytes&&reportedBytes>0?{bytes:reportedBytes}:{}),
@@ -349,9 +426,16 @@ export async function POST(request: Request) {
     if (b.action === "upload-status")
       return json(await browserUploadStatus(id, t.device.id));
     if (b.action === "upload-failed") {
+      if (["uploaded", "complete", "cancelled"].includes(owned.data.upload_state))
+        return json({ ok: true, upload_state: owned.data.upload_state });
       const retries = Number(b.retry_count || 0);
       if (!Number.isInteger(retries) || retries < 0 || retries > 100)
         throw new InputError("Invalid upload retry count.");
+      const retrying = b.retrying === true && b.validation_failed !== true;
+      let scheduled = uploadBackoffEnabled();
+      const delay = b.retry_delay_ms ?? 0;
+      if (scheduled && (typeof delay !== "number" || !Number.isSafeInteger(delay) || delay < 0 || delay > 900_000))
+        throw new InputError("Invalid upload retry delay.");
       if (b.validation_failed === true) {
         // Reuse the guarded capture transition to release a pre-upload session.
         // It cannot downgrade an uploading or completed recording on a late report.
@@ -370,8 +454,10 @@ export async function POST(request: Request) {
       });
       if (failed.error || !failed.data)
         return json({ error: "Upload queue state changed. Refresh and retry." }, 409);
-      const updated = await db.from("browser_recordings").update({
-        ...(b.retrying === true && b.validation_failed !== true ? { upload_state: "retrying" } : {}),
+      const updateFailure = (retrySchedule: boolean) => db.from("browser_recordings").update({
+        ...(retrying ? { upload_state: "retrying" } : {}),
+        ...(retrySchedule ? { upload_retry_at: retrying && Number(delay) > 0
+          ? new Date(Date.now() + Number(delay)).toISOString() : null } : {}),
         ...(b.branding_state === undefined
           ? {}
           : {
@@ -395,12 +481,26 @@ export async function POST(request: Request) {
           ? "Connection interrupted. Automatic retry scheduled."
           : "Upload paused on this device.",
       }).eq("session_id", id).eq("device_id", t.device.id).eq("upload_state", "failed");
+      const updated = await withOptionalColumns(() => updateFailure(scheduled), () => {
+        scheduled = false;
+        return updateFailure(false);
+      }, retryColumns);
       if (updated.error) throw updated.error;
       const acknowledged = await db.from("browser_recordings")
-        .select("upload_state,upload_updated_at")
+        .select(scheduled ? "upload_state,upload_updated_at,upload_retry_at" : "upload_state,upload_updated_at")
         .eq("session_id", id).eq("device_id", t.device.id).single();
       if (acknowledged.error) throw acknowledged.error;
-      return json({ ok: true, ...acknowledged.data });
+      const state = acknowledged.data as unknown as {
+        upload_state: string;
+        upload_updated_at: string;
+        upload_retry_at?: string | null;
+      };
+      return json({
+        ok: true,
+        upload_state: state.upload_state,
+        upload_updated_at: state.upload_updated_at,
+        ...(scheduled ? { upload_retry_at: state.upload_retry_at ?? null } : {}),
+      });
     }
     if (
       ["upload", "finish", "restart-upload", "retry-upload"].includes(

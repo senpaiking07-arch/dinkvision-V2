@@ -4,6 +4,10 @@ import org.json.JSONObject;
 
 /** Sends bytes through its transport and resumes only from Drive-confirmed offsets. */
 final class UploadTransfer {
+  static final class WaitingForTurn extends Exception {
+    WaitingForTurn() { super("Waiting for the upload turn."); }
+  }
+
   static final class CancelledException extends Exception {
     CancelledException() {
       super(
@@ -19,6 +23,8 @@ final class UploadTransfer {
 
   interface Progress {
     void update(long percent);
+    default void acknowledged(long bytes, long total) { update(bytes * 100 / total); }
+    default void verifying(long bytes) {}
   }
 
   interface QueueProgress {
@@ -30,7 +36,8 @@ final class UploadTransfer {
   }
 
   private static JSONObject waitForTurn(
-      JSONObject prepared, Transport transport, QueueProgress queueProgress) throws Exception {
+      JSONObject prepared, Transport transport, QueueProgress queueProgress, boolean yieldWhenQueued)
+      throws Exception {
     while (prepared.optBoolean("queued")) {
       JSONObject queue = prepared.optJSONObject("queue");
       if (queue == null) throw new Exception("Upload queue status is unavailable.");
@@ -39,6 +46,7 @@ final class UploadTransfer {
         throw new Exception(
             "Upload paused after a connection problem. Automatic retry is scheduled.");
       queueProgress.update(queue);
+      if (yieldWhenQueued) throw new WaitingForTurn();
       Thread.sleep(2000);
       prepared = transport.action("upload");
     }
@@ -58,21 +66,26 @@ final class UploadTransfer {
       QueueProgress queueProgress,
       boolean retryCancelled)
       throws Exception {
+    send(bytes, transport, progress, queueProgress, retryCancelled, false);
+  }
+
+  static void send(
+      long bytes, Transport transport, Progress progress, QueueProgress queueProgress,
+      boolean retryCancelled, boolean yieldWhenQueued) throws Exception {
     JSONObject prepared =
         waitForTurn(
             transport.action(retryCancelled ? "retry-upload" : "upload"),
             transport,
-            queueProgress);
+            queueProgress, yieldWhenQueued);
     int restarts = 0, stalled = 0;
     long previous = -1;
-    if (!prepared.optBoolean("ready")) progress.update(0);
     while (!prepared.optBoolean("ready")) {
       JSONObject status = transport.action("upload-status");
       if (status.optBoolean("uploaded")) break;
       if (status.optBoolean("expired")) {
         if (++restarts > 2) throw new Exception("Upload expired. Retry the saved video.");
         prepared =
-            waitForTurn(transport.action("restart-upload"), transport, queueProgress);
+            waitForTurn(transport.action("restart-upload"), transport, queueProgress, yieldWhenQueued);
         previous = -1;
         continue;
       }
@@ -82,17 +95,18 @@ final class UploadTransfer {
         if (++stalled > 2) throw new Exception("Upload stalled. Retry the saved video.");
       } else stalled = 0;
       previous = offset;
-      progress.update(offset * 100 / bytes);
+      progress.acknowledged(offset, bytes);
       JSONObject result = transport.chunk(offset, (int) Math.min(4 * 1024 * 1024, bytes - offset));
       if (result.optBoolean("expired")) {
         if (++restarts > 2) throw new Exception("Upload expired. Retry the saved video.");
         prepared =
-            waitForTurn(transport.action("restart-upload"), transport, queueProgress);
+            waitForTurn(transport.action("restart-upload"), transport, queueProgress, yieldWhenQueued);
         previous = -1;
       } else if (!result.optBoolean("accepted")) {
         throw new Exception("Upload not accepted. Retry the saved video.");
       }
     }
+    progress.verifying(bytes);
     if (!transport.action("finish").optBoolean("ready"))
       throw new Exception("Waiting for upload confirmation. Retry the saved video.");
     progress.update(100);

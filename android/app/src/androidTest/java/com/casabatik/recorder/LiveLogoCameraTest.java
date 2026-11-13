@@ -41,6 +41,45 @@ public class LiveLogoCameraTest {
     } finally { engine.busy=false;engine.phase="idle";RecorderService.stopWhenIdle(); }
   }
 
+  @Test public void shortUsbCaptureWithLiveLogo() throws Exception {
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    Assume.assumeTrue("true".equals(InstrumentationRegistry.getArguments().getString("shortUsbCamera")));
+    var context = instrumentation.getTargetContext();
+    assertTrue("Run only in the local test package", context.getPackageName().endsWith(".dev"));
+    assertTrue("Connect a UVC camera before starting the test", UvcCameraRecorder.hasAttachedCamera(context));
+    instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.CAMERA);
+    instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.RECORD_AUDIO);
+    if (android.os.Build.VERSION.SDK_INT >= 33)
+      instrumentation.getUiAutomation().grantRuntimePermission(context.getPackageName(), android.Manifest.permission.POST_NOTIFICATIONS);
+    File file = File.createTempFile("usb-smoke-", ".mp4", context.getCacheDir());
+    assertTrue(file.delete());
+    Engine engine = Engine.get(context);
+    var countdown = new java.util.ArrayList<Integer>();
+    var audio = new java.util.concurrent.atomic.AtomicReference<String>();
+    engine.busy = true;
+    try (var activity = ActivityScenario.launch(MainActivity.class)) {
+      activity.onActivity(a -> engine.startService(true, false));
+      long duration = UvcCameraRecorder.capture(context, file, 3, 3, () -> false, new CameraCapture.Listener() {
+        public void ready() {}
+        public void countdown(int value) { countdown.add(value); }
+        public void started() {}
+        public void frame(int seconds) {}
+        public void audio(String label) { audio.set(label); }
+      });
+      assertEquals(java.util.Arrays.asList(3, 2, 1, 0), countdown);
+      LiveLogoEvidence.requireVerified(file);
+      long playableMs = RecordedVideo.validate(file, duration, true);
+      assertTrue("Expected a three-second playable clip", playableMs >= 2_900);
+      assertNotNull("Report the microphone route", audio.get());
+      System.out.println("Local USB capture duration=" + playableMs
+          + " ms, measured fps=" + RecordedVideo.measuredFrameRate(file) + ", " + audio.get());
+    } finally {
+      engine.busy = false;
+      RecorderService.stopWhenIdle();
+      file.delete();
+    }
+  }
+
   /** Operator unplugs the camera after the started signal. This never creates a server session. */
   @Test public void usbDisconnectThenBuiltInCapture() throws Exception {
     Assume.assumeTrue("true".equals(InstrumentationRegistry.getArguments().getString("unplugCamera")));

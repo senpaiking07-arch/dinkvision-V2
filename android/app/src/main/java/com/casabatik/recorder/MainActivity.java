@@ -8,7 +8,11 @@ import android.os.*;
 import android.view.*;
 import android.webkit.*;
 import android.widget.*;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 import java.util.ArrayList;
 import org.json.JSONObject;
 
@@ -17,6 +21,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
   private WebView web;
   private boolean configureDeviceCameraAfterPermission;
   private String pendingExportSession = "";
+  private volatile String pendingEnrollmentInvite = "";
+  private boolean pendingEnrollmentReplace;
+  private boolean replaceAfterScan;
   private boolean usbReceiverRegistered;
   private final BroadcastReceiver usbChanges = new BroadcastReceiver() {
     @Override public void onReceive(Context context, Intent intent) {
@@ -42,11 +49,26 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         } catch (SecurityException unsupported) { }
         engine.exportLocalVideo(session, destination);
       });
+  private final androidx.activity.result.ActivityResultLauncher<ScanOptions> enrollmentScanner =
+      registerForActivityResult(new ScanContract(), result -> {
+        String scanned = result.getContents();
+        String invite = EnrollmentLink.scanned(scanned);
+        if (invite.isEmpty()) {
+          String scanError = scanned == null ? "" : EnrollmentLink.forAnotherServer(scanned)
+              ? "This QR is for a different server. Open Admin at " + Api.ORIGIN + " to create an invitation."
+              : "Scan the enrollment QR from Devices & cameras in DinkVision Admin.";
+          showModal(cameraConfiguration("kind", "enrollment", "replace", replaceAfterScan, "scanError", scanError));
+        } else {
+          pendingEnrollmentReplace = replaceAfterScan;
+          pendingEnrollmentInvite = invite;
+        }
+      });
 
   @Override
   public void onCreate(Bundle b) {
     super.onCreate(b);
     if (b != null) pendingExportSession = b.getString("pending-export-session", "");
+    if (b != null) replaceAfterScan = b.getBoolean("replace-after-scan");
     try {
       engine = Engine.get(this);
       // Engine owns approval for this process. A new Engine starts unapproved;
@@ -59,6 +81,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
           .show();
       return;
     }
+    readEnrollmentIntent(getIntent());
     IntentFilter usbFilter = new IntentFilter(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_ATTACHED);
     usbFilter.addAction(android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED);
     androidx.core.content.ContextCompat.registerReceiver(this, usbChanges, usbFilter,
@@ -83,6 +106,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
         (view, scrollX, scrollY, oldScrollX, oldScrollY) -> {
           if (scrollX != 0 || scrollY != 0) web.scrollTo(0, 0);
         });
+    attachRecipientInsets(web);
     setContentView(web);
     hideSystemUi();
     web.post(this::hideSystemUi);
@@ -134,6 +158,48 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     if (!permissions.isEmpty()) requestPermissions(permissions.toArray(new String[0]), 1);
   }
 
+  static void attachRecipientInsets(WebView web) {
+    ViewCompat.setOnApplyWindowInsetsListener(web, (view, insets) -> {
+      int keyboardBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+      web.evaluateJavascript("window.setRecipientKeyboardInset?.(" + keyboardBottom + ")", null);
+      return ViewCompat.onApplyWindowInsets(view, insets);
+    });
+  }
+
+  @Override protected void onNewIntent(Intent intent) {
+    super.onNewIntent(intent);
+    setIntent(intent);
+    readEnrollmentIntent(intent);
+  }
+
+  private void readEnrollmentIntent(Intent intent) {
+    if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+    String invite = EnrollmentLink.handoff(intent.getData());
+    // Consume the intent even when the activity is recreated.
+    intent.setData(null);
+    if (invite.isEmpty() || engine == null) return;
+    if (engine.busy) {
+      Toast.makeText(this, "Finish the current operation, then scan the enrollment QR again.", Toast.LENGTH_LONG).show();
+      return;
+    }
+    pendingEnrollmentReplace = engine.hasStoredEnrollment();
+    pendingEnrollmentInvite = invite;
+  }
+
+  private void showEnrollmentPin(String invite, boolean replace) {
+    showModal(cameraConfiguration("kind", "enrollment-pin", "invite", invite, "replace", replace));
+  }
+
+  private void openPendingEnrollmentInvite() {
+    if (pendingEnrollmentInvite.isEmpty() || engine.busy || engine.updateBlocksPlayer()) return;
+    String invite = pendingEnrollmentInvite;
+    pendingEnrollmentInvite = "";
+    if (EnrollmentLink.pairingCode(invite))
+      showModal(cameraConfiguration("kind", "enrollment-pairing", "code", invite, "replace", pendingEnrollmentReplace));
+    else
+      showEnrollmentPin(invite, pendingEnrollmentReplace);
+  }
+
   private void hideSystemUi() {
     if (Build.VERSION.SDK_INT >= 30) {
       getWindow().setDecorFitsSystemWindows(false);
@@ -167,11 +233,33 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
   private final class Bridge {
     @JavascriptInterface
     public String state() {
+      if (!pendingEnrollmentInvite.isEmpty()) runOnUiThread(MainActivity.this::openPendingEnrollmentInvite);
       return engine.snapshot();
     }
 
     @JavascriptInterface
+    public String emailHistory(String prefix) {
+      if (prefix == null || prefix.length() > 254 || !canUseEmailHistory()) return "{}";
+      try { return engine.emailHistory.find(prefix.trim()).toString(); }
+      catch (Exception unavailable) { return "{}"; }
+    }
+
+    @JavascriptInterface
+    public boolean removeSavedEmail(String email) {
+      if (email == null || email.length() > 254 || !canUseEmailHistory()) return false;
+      try {
+        engine.emailHistory.remove(email);
+        return true;
+      } catch (Exception unavailable) { return false; }
+    }
+
+    private boolean canUseEmailHistory() {
+      return !engine.busy && engine.server.optBoolean("enabled") && !engine.updateBlocksPlayer();
+    }
+
+    @JavascriptInterface
     public void action(String action, String value) {
+      long receivedNanos = System.nanoTime();
       if ("retry-connection".equals(action)) { engine.retryConnection(); return; }
       if ("check-update".equals(action)) { engine.checkForUpdate(); return; }
       if ("install-update".equals(action)) {
@@ -192,6 +280,26 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
           break;
         case "setup-reenroll":
           runOnUiThread(() -> enrollment(true));
+          break;
+        case "tablet-pairing":
+          engine.openTabletPairing("replace".equals(value) || "renew-replace".equals(value), value.startsWith("renew"));
+          break;
+        case "tablet-pairing-poll":
+          engine.pollTabletPairing();
+          break;
+        case "scan-enrollment":
+          runOnUiThread(() -> {
+            if (engine.busy || engine.updateBlocksPlayer()) return;
+            replaceAfterScan = "replace".equals(value);
+            enrollmentScanner.launch(new ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("Scan the DinkVision enrollment QR").setBeepEnabled(false).setOrientationLocked(false));
+          });
+          break;
+        case "enroll-qr":
+          try {
+            JSONObject request = new JSONObject(value);
+            engine.enrollQr(request.optString("invite"), request.optString("pin"), request.optBoolean("replace"));
+          } catch (org.json.JSONException ignored) { }
           break;
         case "enroll":
           try {
@@ -216,10 +324,16 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
           if (engine.selectRecordingMode(value.trim())) engine.syncCamera();
           break;
         case "start":
-          engine.start(value.trim());
+          engine.start(value.trim(), receivedNanos);
+          break;
+        case "repeat-start":
+          engine.noteRepeatedStart();
+          break;
+        case "repeat-stop":
+          engine.noteRepeatedStop(value);
           break;
         case "stop":
-          engine.requestStop();
+          engine.requestStop(value);
           break;
         case "recover":
           engine.recover();
@@ -285,6 +399,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
   @Override
   protected void onSaveInstanceState(Bundle saved) {
     saved.putString("pending-export-session", pendingExportSession);
+    saved.putBoolean("replace-after-scan", replaceAfterScan);
     super.onSaveInstanceState(saved);
   }
 
@@ -379,7 +494,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
   @Override
   public void onResume() {
     super.onResume();
-    if (engine != null) engine.visible = true;
+    if (engine != null) { engine.visible = true; engine.resumeBackgroundTransfers(); }
   }
 
   @Override

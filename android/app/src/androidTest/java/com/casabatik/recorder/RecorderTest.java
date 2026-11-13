@@ -349,15 +349,23 @@ public class RecorderTest {
               .getSystemService(android.app.NotificationManager.class)
               .getActiveNotifications()
               .length);
-      RecorderService.updateUploadProgress(42);
-      Thread.sleep(250);
-      android.service.notification.StatusBarNotification active =
-          i.getTargetContext()
-              .getSystemService(android.app.NotificationManager.class)
-              .getActiveNotifications()[0];
-      assertTrue(
-          String.valueOf(active.getNotification().extras.getCharSequence("android.text"))
-              .contains("42%"));
+      i.runOnMainSync(() -> activity.startForegroundService(new android.content.Intent(activity, TransferService.class)));
+      long transferDeadline = System.nanoTime() + 5_000_000_000L;
+      while (!TransferService.isReady() && System.nanoTime() < transferDeadline) Thread.sleep(25);
+      assertTrue("Transfer service must promote before progress updates", TransferService.isReady());
+      TransferService.updateUploadProgress(42);
+      var notifications = i.getTargetContext().getSystemService(android.app.NotificationManager.class);
+      long progressDeadline = System.nanoTime() + 12_000_000_000L;
+      String progressText = "";
+      do {
+        for (var candidate : notifications.getActiveNotifications()) {
+          if (candidate.getId() == 2)
+            progressText = String.valueOf(candidate.getNotification().extras.getCharSequence("android.text"));
+        }
+        if (progressText.contains("42%")) break;
+        Thread.sleep(100);
+      } while (System.nanoTime() < progressDeadline);
+      assertTrue("Expected 42% in the transfer notification, saw: " + progressText, progressText.contains("42%"));
       i.runOnMainSync(
           () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));
     } finally {
@@ -369,6 +377,7 @@ public class RecorderTest {
       engine.busy = false;
       i.runOnMainSync(
           () -> activity.stopService(new android.content.Intent(activity, RecorderService.class)));
+      i.runOnMainSync(() -> activity.stopService(new android.content.Intent(activity, TransferService.class)));
       i.runOnMainSync(activity::finish);
     }
   }

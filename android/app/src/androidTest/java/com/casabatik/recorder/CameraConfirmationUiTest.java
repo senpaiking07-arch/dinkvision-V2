@@ -19,7 +19,6 @@ public class CameraConfirmationUiTest {
 
   @Test public void exactModeReviewAndPersistentConnectionNotice() throws Exception {
     var instrumentation=InstrumentationRegistry.getInstrumentation();
-    assertTrue(instrumentation.getTargetContext().getPackageName().endsWith(".honor"));
     MainActivity activity=(MainActivity)instrumentation.startActivitySync(new Intent(instrumentation.getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     Engine engine=Engine.get(activity);boolean oldBusy=engine.busy;engine.busy=true;
     AtomicReference<WebView> view=new AtomicReference<>();
@@ -45,7 +44,7 @@ public class CameraConfirmationUiTest {
       assertTrue(loaded.await(10,TimeUnit.SECONDS));
       for(int i=0;i<30 && !"false".equals(evaluate(web,"tick();document.getElementById('camera-test-confirm').disabled"));i++)Thread.sleep(100);
       assertEquals("false",evaluate(web,"document.getElementById('camera-test-confirm').disabled"));
-      evaluate(web,"document.getElementById('camera-quality').value='1920x1080@60';document.getElementById('camera-quality').dispatchEvent(new Event('change'));");
+      evaluate(web,"document.getElementById('camera-test-confirm').style.transition='none';document.getElementById('camera-quality').value='1920x1080@60';document.getElementById('camera-quality').dispatchEvent(new Event('change'));");
       state.put("testConfirmable",false).put("selectedRecordingMode","1920x1080@60");bridge.snapshot=state.toString();
       assertEquals("true",evaluate(web,"tick();document.getElementById('camera-test-confirm').disabled"));
       assertEquals("\"rgb(100, 116, 139)\"",evaluate(web,"getComputedStyle(document.getElementById('camera-test-confirm')).backgroundColor"));

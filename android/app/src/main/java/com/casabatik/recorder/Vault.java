@@ -80,19 +80,25 @@ final class Vault {
   }
 
   synchronized void put(String name, String value) throws Exception {
+    Object previous = values.opt(name);
     values.put(name, value);
-    Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-    cipher.init(Cipher.ENCRYPT_MODE, key());
-    JSONObject box =
-        new JSONObject()
-            .put("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-            .put(
-                "bytes",
-                Base64.encodeToString(
-                    cipher.doFinal(
-                        values.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-                    Base64.NO_WRAP));
-    if (!context.getSharedPreferences("vault", 0).edit().putString("data", box.toString()).commit())
-      throw new Exception("Could not save device state.");
+    try {
+      Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+      cipher.init(Cipher.ENCRYPT_MODE, key());
+      JSONObject box =
+          new JSONObject()
+              .put("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+              .put(
+                  "bytes",
+                  Base64.encodeToString(
+                      cipher.doFinal(
+                          values.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                      Base64.NO_WRAP));
+      if (!context.getSharedPreferences("vault", 0).edit().putString("data", box.toString()).commit())
+        throw new Exception("Could not save device state.");
+    } catch (Exception failure) {
+      values.put(name, previous);
+      throw failure;
+    }
   }
 }

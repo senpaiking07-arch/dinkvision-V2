@@ -5,20 +5,20 @@ import { hashKiosk } from "@/lib/kiosk";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { uuid, InputError } from "@/lib/validation";
 import { publicTablet } from "@/lib/browser-tablets";
+import QRCode from "qrcode";
+import { qrEnrollmentPath } from "@/lib/tablet-enrollment";
+import { qrColumns, readRecorderQueue, withOptionalColumns } from "@/lib/optional-schema";
 export async function GET() {
   if ((await getAccount()).account?.role !== "admin")
     return json({ error: "Admin sign-in required." }, 403);
   const db = recorderDatabase();
-  const [devices, courts, recordings, worker] = await Promise.all([
+  const queue = (captureDetails: boolean, retrySchedule: boolean) => db.from("browser_recordings").select(
+    `session_id,device_id,job_id,file_id,safe_error,last_error,last_seen_at,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_progress,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,device_copy_saved_at,device_copy_bytes,${retrySchedule ? "upload_retry_at," : ""}recording_sessions(id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,configuration_snapshot,failure_stage,${captureDetails ? "capture_interruption_code,capture_inspection_required," : ""}recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))`,
+  ).order("last_seen_at", { ascending: false }).limit(100);
+  const [devices, courts, {result: recordings}, worker] = await Promise.all([
     db.from("browser_devices").select("*").order("created_at"),
     db.from("courts").select("id,name,active").order("created_at"),
-    db
-      .from("browser_recordings")
-      .select(
-        "session_id,device_id,job_id,file_id,safe_error,last_error,last_seen_at,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_progress,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,device_copy_saved_at,device_copy_bytes,recording_sessions(id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,configuration_snapshot,failure_stage,recording_files(id,status,drive_file_id,email_jobs(status,safe_error)))",
-      )
-      .order("last_seen_at", { ascending: false })
-      .limit(100),
+    readRecorderQueue(queue, process.env.RECORDER_UPLOAD_BACKOFF_ENABLED === "true"),
     db
       .from("venue_settings")
       .select("browser_worker_at,venue_time_zone")
@@ -132,17 +132,17 @@ export async function POST(request: Request) {
       return json({ ok: true });
     }
     if (b.action === "disable" && id) {
-      const r = await db
-        .from("browser_devices")
-        .update({
+      const disable = (clearQr: boolean) => db.from("browser_devices").update({
           enabled: false,
           enrollment_hash: null,
+          ...(clearQr ? { enrollment_qr_hash: null, enrollment_qr_failures: 0 } : {}),
           setup_hash: null,
           tested_at: null,
         })
         .eq("id", id)
         .select("kiosk_id")
         .single();
+      const r = await withOptionalColumns(() => disable(true), () => disable(false), qrColumns);
       if (r.error) throw r.error;
       if (r.data.kiosk_id)
         await db
@@ -166,26 +166,30 @@ export async function POST(request: Request) {
     if (!name || name.length > 100)
       throw new InputError("Enter a tablet name (up to 100 characters).");
     const court = b.court_id ? uuid(b.court_id) : null;
-    const code = randomBytes(18).toString("base64url");
-    const fields = {
+    const issue = b.action === "enroll" || !id;
+    const code = issue ? randomBytes(9).toString("base64url") : "";
+    const expiresAt = issue ? new Date(Date.now() + 600_000).toISOString() : null;
+    const inviteLink = issue ? new URL(qrEnrollmentPath, request.headers.get("origin")!) : null;
+    if (inviteLink) inviteLink.hash = `code=${code}`;
+    const qr = inviteLink ? await QRCode.toDataURL(inviteLink.href, { width: 280, margin: 4, errorCorrectionLevel: "M" }) : null;
+    const baseFields = {
       name,
       court_id: court,
-      ...(b.action === "enroll" || !id
-        ? {
-            enrollment_hash: hashKiosk(code),
-            enrollment_expires_at: new Date(Date.now() + 600000).toISOString(),
-            enabled: true,
-          }
-        : {}),
+      ...(issue ? { enrollment_hash: hashKiosk(code), enrollment_expires_at: expiresAt, enabled: true } : {}),
     };
-    const r = id
-      ? await db
+    const write = (fields: Record<string, unknown>) => id
+      ? db
           .from("browser_devices")
           .update(fields)
           .eq("id", id)
           .select("id")
           .single()
-      : await db.from("browser_devices").insert(fields).select("id").single();
+      : db.from("browser_devices").insert(fields).select("id").single();
+    const r = issue ? await withOptionalColumns(
+      () => write({ ...baseFields, enrollment_qr_hash: null, enrollment_qr_failures: 0 }),
+      () => write(baseFields),
+      qrColumns,
+    ) : await write(baseFields);
     if (r.error) throw r.error;
     // The enrolling endpoint derives the administrator from this server-created record.
     if (b.action === "enroll" || !id) {
@@ -199,7 +203,7 @@ export async function POST(request: Request) {
     return json({
       ok: true,
       id: r.data.id,
-      ...(b.action === "enroll" || !id ? { code } : {}),
+      ...(issue ? { qr, code, expiresAt } : {}),
     });
   } catch (e) {
     return json(

@@ -14,4 +14,7 @@ test("failed native validation can be retried before an upload file exists", () 
   assert.equal(videoRetryLabel({ ...failed, recording_sessions: { status: "ready" } }, true), null);
   assert.equal(videoRetryLabel({ ...failed, recording_sessions: { status: "failed", failure_stage: "short_recording", stopped_at: failed.recording_sessions.stopped_at } }, true), null);
   assert.equal(videoRetryLabel({ ...failed, file_id: "file", bytes: 2048 }), "Retry upload");
+  const inspection = { ...failed.recording_sessions, capture_inspection_required: true };
+  assert.equal(videoRetryLabel({ ...failed, recording_sessions: inspection }, true), null);
+  assert.equal(videoRetryLabel({ ...failed, file_id: "file", bytes: 2048, recording_sessions: inspection }, true), null);
 });

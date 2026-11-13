@@ -74,6 +74,9 @@ public class VideoCapture {
     }
     private static volatile SurfaceProcessorFactory surfaceProcessorFactory;
     public static void setSurfaceProcessorFactory(SurfaceProcessorFactory factory) { surfaceProcessorFactory = factory; }
+    // The driver may recreate the encoder while releasing an earlier camera.
+    private final SurfaceProcessorFactory captureSurfaceFactory = surfaceProcessorFactory;
+    private final AudioInputCallback captureAudioInput = audioInputCallback;
     private SurfaceProcessor surfaceProcessor;
     private Surface recordingSurface() { return surfaceProcessor == null ? mCameraSurface : surfaceProcessor.input(); }
     private static final String TAG = VideoCapture.class.getSimpleName();
@@ -590,7 +593,7 @@ public class VideoCapture {
         }
         Surface cameraSurface = mVideoEncoder.createInputSurface();
         mCameraSurface = cameraSurface;
-        SurfaceProcessorFactory factory = surfaceProcessorFactory;
+        SurfaceProcessorFactory factory = captureSurfaceFactory;
         if (factory != null) {
             try { surfaceProcessor = factory.create(cameraSurface, mResolution.width, mResolution.height); }
             catch (Exception failure) { handleVideoEncoderInitError(failure); return; }
@@ -1062,7 +1065,7 @@ public class VideoCapture {
 
             if (recorder.getState() == AudioRecord.STATE_INITIALIZED) {
                 try {
-                    AudioInputCallback callback = audioInputCallback;
+                    AudioInputCallback callback = captureAudioInput;
                     if (callback != null) callback.onCreated(recorder);
                 } catch (Exception routingFailure) {
                     recorder.release();

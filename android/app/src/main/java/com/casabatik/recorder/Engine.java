@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 final class Engine {
@@ -43,20 +44,30 @@ final class Engine {
   final Context context;
   final Vault vault;
   final Api api;
+  final BackgroundTransfers backgroundTransfers;
+  final EmailHistory emailHistory;
+  final RecorderDiagnostics diagnostics;
+  private final LiveRecordingValidation liveRecordingValidation = new LiveRecordingValidation();
   final ExecutorService work = Executors.newSingleThreadExecutor();
   final ExecutorService uploads = Executors.newSingleThreadExecutor();
   final ExecutorService exports = Executors.newSingleThreadExecutor();
   final ScheduledExecutorService heartbeat = Executors.newSingleThreadScheduledExecutor();
   final AtomicBoolean uploadWorkerRunning = new AtomicBoolean(false);
   final AtomicBoolean exportWorkerRunning = new AtomicBoolean(false);
+  // Guarded by vault so manual retries cannot replace the worker's reserved job.
+  private String uploadWorkerSession = "";
+  private final HashSet<String> reportingUploadFailures = new HashSet<>();
   volatile String exportingSession = "", localVideoSession = "", localVideoMessage = "", localVideoError = "";
   volatile int exportPercent = 0;
   volatile boolean busy = false, stop = false;
   volatile String phase = "idle", message = "", error = "";
   volatile int elapsed = 0, countdown = 0;
   volatile int uploadPercent = -1;
+  private volatile String verifyingUploadSession = "";
   volatile long recordingStartedNanos = 0;
   volatile String activeSession = "";
+  volatile String captureAttempt = "";
+  private volatile RecorderDiagnostics.Trace captureTrace;
   volatile String latestSavedSession = "";
   volatile boolean startHasRecoverableFootage = false;
   volatile boolean visible = false;
@@ -95,9 +106,12 @@ final class Engine {
   Engine(Context c, Api.Connections connections) {
     context = c.getApplicationContext();
     vault = new Vault(context);
+    backgroundTransfers = new BackgroundTransfers(context);
+    emailHistory = new EmailHistory(vault, System::currentTimeMillis);
     LocalVideoExporter.cleanupInterruptedGalleryCopy(context, vault.get("export-pending-uri"));
     try { vault.put("export-pending-uri", ""); } catch (Exception ignored) { }
     api = connections == null ? new Api(vault) : new Api(vault, connections);
+    diagnostics = new RecorderDiagnostics(context.getFilesDir());
     JSONObject modes = vault.object("recording-modes");
     if (UvcCameraRecorder.connectionKey(context).equals(modes.optString("connection"))
         && modes.optInt("version") == BuildConfig.VERSION_CODE && modes.optJSONArray("modes") != null)
@@ -145,7 +159,10 @@ final class Engine {
           }
           try {
             if (!busy) {
-              if (!uploadWorkerRunning.get()) reconcileMissingLocalFiles();
+              if (!uploadWorkerRunning.get()) {
+                finishPendingUploadedCopies();
+                reconcileMissingLocalFiles();
+              }
               releaseCapturedRecordings();
               reportPendingUploadFailures();
               reportFailedCaptureIfNeeded();
@@ -153,6 +170,9 @@ final class Engine {
           } catch (Exception ignored) {
           }
           try { kickUploads(); } catch (Exception ignored) { }
+          JSONObject diagnosticCapabilities=server.optJSONObject("capabilities");
+          diagnostics.flush(api,vault.get("device-id"),diagnosticCapabilities!=null
+              && diagnosticCapabilities.optBoolean("recorderDiagnostics"));
         },
         1,
         5,
@@ -179,6 +199,7 @@ final class Engine {
   private void reconcileLocalQueue() {
     try {
       finishPendingLocalRemovals();
+      finishPendingUploadedCopies();
       reconcileMissingLocalFiles();
       File directory = new File(context.getFilesDir(), "recordings");
       File[] files = directory.listFiles((candidate, name) -> name.endsWith(".mp4"));
@@ -191,6 +212,7 @@ final class Engine {
           continue;
         }
         JSONObject item = queueItem(id);
+        if ("uploaded".equals(item.optString("status"))) continue;
         if (item.length() == 0) {
           saveQueueItem(
               new JSONObject()
@@ -204,6 +226,8 @@ final class Engine {
         } else if (!item.optBoolean("localAvailable", true)) {
           item.put("localAvailable", true).put("status", "pending").put("bytes", file.length());
           saveQueueItem(item);
+        } else if (backgroundTransfers.isPaused() && "uploading".equals(item.optString("status"))) {
+          pauseUploadItem(item);
         } else if ("uploading".equals(item.optString("status"))) {
           int retries = item.optInt("retryCount", 0) + 1;
           item
@@ -211,14 +235,23 @@ final class Engine {
               .put("retryCount", retries)
               .put("lastError", "Upload was interrupted when the app stopped.")
               .put("nextRetryAt", retries >= 8 ? 0 : System.currentTimeMillis() + 5_000L)
-              .put("bytes", file.length());
+              .put("bytes", file.length())
+              .put("failureReportPending", true)
+              .put("serverRetryRequired", true);
           saveQueueItem(item);
         } else if ("recording".equals(item.optString("status"))) {
-          item
-              .put("status", "pending")
-              .put("lastError", "Recording was interrupted and will be validated before upload.")
-              .put("nextRetryAt", 0)
-              .put("bytes", file.length());
+          if (!item.optBoolean("captureEndedNormally") && !item.has("captureInterruptionCode"))
+            item.put("captureInterruptionCode", CameraCapture.InterruptionCode.APP_INTERRUPTED.value);
+          if (item.optBoolean("liveLogoRequired") && !LiveLogoEvidence.hasSeal(file)) {
+            item.put("status", "failed").put("validationFailed", true)
+                .put("validationPending", false)
+                .put("failureReportPending", item.has("captureInterruptionCode"))
+                .put("lastError", "The recording did not finish saving. You can export the original for inspection.");
+          } else {
+            item.put("status", "pending").put("validationPending", true)
+                .put("captureDurationMs", -1).put("lastError", "");
+          }
+          item.put("nextRetryAt", 0).put("bytes", file.length());
           saveQueueItem(item);
         } else if ("processing".equals(item.optString("brandingState")) && !item.optBoolean("branded", false)) {
           item.put("status", "saved_locally").put("brandingState", "failed")
@@ -353,18 +386,23 @@ final class Engine {
               .put("jobId", item.optString("jobId", item.optString("id")))
               .put("status", item.optString("status", "saved_locally"))
               .put("progress", item.optInt("progress", 0))
+              .put("uploadedBytes", item.optLong("uploadedBytes"))
+              .put("verifyingUpload", item.optString("id").equals(verifyingUploadSession))
               .put("retryCount", item.optInt("retryCount", 0))
               .put("lastError", item.optString("lastError"))
               .put("createdAt", item.optLong("createdAt"))
               .put("recipients", item.optJSONArray("recipients") == null ? new JSONArray() : item.optJSONArray("recipients"))
               .put("bytes", file.length())
               .put("durationMs", item.optLong("durationMs"))
+              .put("captureInterruptionCode", item.optString("captureInterruptionCode"))
+              .put("captureInterruptedAt", item.optLong("captureInterruptedAt"))
               .put("captureReleased", item.optBoolean("captureReleased", false))
               .put("localAvailable", true)
               .put("brandingState", item.optString("brandingState"))
               .put("brandingProgress", item.optInt("brandingProgress", -1))
               .put("exportReportPending",item.optBoolean("exportReportPending"))
               .put("validationFailed", item.optBoolean("validationFailed"))
+              .put("validationPending", item.optBoolean("validationPending"))
               .put("canRemove", !busy && !uploadWorkerRunning.get() && !exportWorkerRunning.get()
                   && removableLocalItem(item) && !item.optString("exportedUri").isEmpty()
                   && item.optLong("exportedBytes") == file.length())
@@ -384,7 +422,7 @@ final class Engine {
             .put("local_available", item.optBoolean("localAvailable", true))
             .put("created_at", item.optLong("createdAt"))
             .put("bytes", item.optLong("bytes"))
-            .put("uploaded_bytes", 0);
+            .put("uploaded_bytes", "uploaded".equals(item.optString("status")) ? item.optLong("bytes") : 0);
     if (item.has("brandingState"))
       report.put("branding_state", item.optString("brandingState"));
     JSONObject capabilities = server.optJSONObject("capabilities");
@@ -427,6 +465,16 @@ final class Engine {
     return item.optBoolean("localAvailable", true)
         && java.util.Arrays.asList("saved_locally", "pending", "retrying").contains(item.optString("status"))
         && !"processing".equals(item.optString("brandingState"));
+  }
+
+  private int queuedWorkCount() {
+    int count=0;JSONArray items=queue();
+    for(int i=0;i<items.length();i++) {
+      JSONObject item=items.optJSONObject(i);
+      if(item!=null && belongsToCurrentDevice(item) && item.optBoolean("localAvailable",true)
+          && java.util.Arrays.asList("saved_locally","pending","retrying","uploading").contains(item.optString("status")))count++;
+    }
+    return count;
   }
 
   void reportFilePresence() throws Exception {
@@ -484,7 +532,7 @@ final class Engine {
     UUID.fromString(sid);
     File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
     if (!released && (!file.isFile() || file.length() < 1)) return;
-    api.tablet("captured", new JSONObject().put("id", sid));
+    api.tablet("captured", captureEventFields(item));
     item.put("captureReleased", true);
     JSONObject latest = queueItem(sid);
     if (latest.length() > 0) {
@@ -508,8 +556,24 @@ final class Engine {
     }
   }
 
+  // The recording-start path reconciles only the server's actual capture holder.
+  // Historical files remain the responsibility of the background heartbeat.
+  void releaseBlockingCapture() throws Exception {
+    JSONObject remote=server.optJSONObject("session");
+    if(remote==null || !activeCaptureStatus(remote.optString("status")))return;
+    JSONObject item=queueItem(remote.optString("id"));
+    if(item.length()==0 || !belongsToCurrentDevice(item))return;
+    if ("failed".equals(item.optString("status"))) {
+      api.tablet("failed", captureEventFields(item));
+      return;
+    }
+    if (!item.optBoolean("localAvailable",true)) return;
+    if(!java.util.Arrays.asList("saved_locally","pending","retrying","uploading").contains(item.optString("status")))return;
+    releaseCapturedRecording(item);
+  }
+
   synchronized boolean claim() {
-    if (busy) return false;
+    if (busy || pairingRequested.get()) return false;
     busy = true;
     error = "";
     stop = false;
@@ -517,8 +581,21 @@ final class Engine {
   }
 
   void refresh() {
+    refresh(false);
+  }
+
+  private void refresh(boolean checkEnrollmentNow) {
     try {
-      updateServer(api.call("/api/tablet", null));
+      JSONObject next = api.call("/api/tablet", null);
+      JSONObject capabilities = next.optJSONObject("capabilities");
+      if (!busy && hasPendingEnrollment()) {
+        if (capabilities != null && capabilities.optBoolean("enrollmentRecovery")) {
+          if (recoverPendingEnrollment(checkEnrollmentNow)) next = api.call("/api/tablet", null);
+        } else if (checkEnrollmentNow) {
+          error = "This server cannot check the previous enrollment. Retry the invitation from the same Admin site as this app.";
+        }
+      }
+      updateServer(next);
       initialized = true;
       reconcileServerUploadRequests();
       boolean reconnected = !lastRefreshError.isEmpty();
@@ -560,6 +637,10 @@ final class Engine {
   boolean updateBlocksPlayer() { return !releaseChecked || updateRequired(); }
 
   void updateServer(JSONObject next) throws Exception {
+    api.acceptCurrentResponse(next, () -> applyServerState(next));
+  }
+
+  private void applyServerState(JSONObject next) throws Exception {
     JSONObject device = next.optJSONObject("device");
     String id = device == null ? "" : device.optString("id");
     if (!(next.opt("enabled") instanceof Boolean)
@@ -572,13 +653,30 @@ final class Engine {
     if (busy && !activeSession.isEmpty() && current != null
         && activeSession.equals(current.optString("id"))
         && !current.isNull("stop_requested_at")
-        && !current.optString("stop_requested_at").isEmpty()) stop = true;
+        && !current.optString("stop_requested_at").isEmpty()) {
+      RecorderDiagnostics.Trace trace = captureTrace;
+      if (!stop && trace != null) trace.stopRequested(RecorderDiagnostics.ActionSource.ADMIN);
+      stop = true;
+    }
     JSONArray reports = next.optJSONArray("queue");
     if (reports != null) for (int index = 0; index < reports.length(); index++) {
       JSONObject remote = reports.optJSONObject(index);
       if (remote == null) continue;
       JSONObject local = queueItem(remote.optString("session_id"));
       JSONObject session = remote.optJSONObject("recording_sessions");
+      if (session != null && "ready".equals(session.optString("status"))
+          && java.util.Arrays.asList("uploaded", "complete").contains(remote.optString("upload_state"))
+          && belongsToCurrentDevice(local) && !uploadWorkerSession.equals(local.optString("id"))
+          && java.util.Arrays.asList("pending", "retrying", "failed", "uploading").contains(local.optString("status"))) {
+        String sid = local.getString("id");
+        UUID.fromString(sid);
+        File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
+        if (!file.exists() || (file.isFile() && file.length() == remote.optLong("bytes"))) {
+          // The process may have stopped between verified Drive completion and
+          // the local journal write, including on its last automatic attempt.
+          persistVerifiedUpload(local);
+        }
+      }
       if (remote.optBoolean("local_available") && !id.isEmpty() && session != null
           && !activeCaptureStatus(session.optString("status"))) {
         String sid = remote.optString("session_id");
@@ -607,6 +705,15 @@ final class Engine {
           }
           local.put("createdAt", created);
           if (!remote.isNull("duration_ms")) local.put("durationMs", remote.optLong("duration_ms"));
+          if (!session.isNull("capture_interruption_code")) {
+            local.put("captureInterruptionCode", session.getString("capture_interruption_code"));
+            if (!session.isNull("capture_interrupted_at")) try {
+              long interruptedAt = java.time.OffsetDateTime.parse(session.getString("capture_interrupted_at")).toInstant().toEpochMilli();
+              local.put("captureInterruptedAt", interruptedAt);
+            } catch (java.time.format.DateTimeParseException ignored) { }
+          }
+          if (session.optBoolean("capture_inspection_required") && local.optBoolean("localAvailable"))
+            local.put("status", "failed").put("validationFailed", true).put("lastError", remote.optString("last_error"));
           saveQueueItem(local);
         }
       }
@@ -629,21 +736,25 @@ final class Engine {
   private final AtomicBoolean retryQueued = new AtomicBoolean();
 
   void retryConnection() {
-    if (!hasStoredEnrollment() || !retryQueued.compareAndSet(false, true)) return;
+    if ((!hasStoredEnrollment() && !hasPendingEnrollment()) || !retryQueued.compareAndSet(false, true)) return;
     heartbeat.execute(() -> {
       try {
         if (!releaseChecked) refreshRelease();
-        refresh();
+        refresh(true);
       } finally { retryQueued.set(false); }
     });
   }
 
   private String connectionStatus() {
     String network = ConnectionNotice.message(context, api.serverReachable);
-    if (!hasStoredEnrollment()) return network;
     if (retryQueued.get()) return "Reconnecting…";
+    if (!hasStoredEnrollment()) {
+      if (hasPendingEnrollment() && network.isEmpty()) return "Enrollment confirmation pending.";
+      return network;
+    }
     if (network.startsWith("No internet")) return "Offline — enrollment is saved.";
     if (!lastRefreshError.isEmpty()) return "Server unavailable — enrollment is saved.";
+    if (hasPendingEnrollment()) return "Enrollment confirmation pending.";
     if (!initialized) return "Connecting…";
     return server.optBoolean("enabled") ? "" : "Registration inactive — contact Admin.";
   }
@@ -689,6 +800,7 @@ final class Engine {
               .contains(remote.optString("upload_state"))) continue;
       String id = remote.optString("session_id");
       JSONObject local = queueItem(id);
+      if (interruptedNeedsInspection(local)) continue;
       File file = new File(new File(context.getFilesDir(), "recordings"), id + ".mp4");
       String localFailureUpdate = local.optString("failureServerUpdatedAt");
       String remoteUpdate = remote.optString("upload_updated_at");
@@ -724,22 +836,30 @@ final class Engine {
   }
 
   private void reportUploadFailure(JSONObject item) throws Exception {
-    JSONObject response = api.tablet(
-        "upload-failed",
-        new JSONObject()
-            .put("id", item.getString("id"))
+    JSONObject report = captureEventFields(item)
             .put("retry_count", item.optInt("retryCount"))
             .put("retrying", "retrying".equals(item.optString("status")))
             .put("last_error", item.optString("lastError"))
             .put("validation_failed", item.optBoolean("validationFailed"))
             .put("local_available", item.optBoolean("localAvailable", true))
-            .put("branding_state", item.optString("brandingState")));
+            .put("branding_state", item.optString("brandingState"));
+    if (supportsUploadBackoff() && "retrying".equals(item.optString("status")))
+      report.put("retry_delay_ms", Math.max(0, Math.min(900_000L, item.optLong("nextRetryAt") - System.currentTimeMillis())));
+    JSONObject response = api.tablet("upload-failed", report);
     synchronized (vault) {
       JSONObject current = queueItem(item.getString("id"));
       if (!current.optBoolean("failureReportPending")
           || current.optInt("retryCount") != item.optInt("retryCount")
           || !current.optString("status").equals(item.optString("status"))) return;
       current.put("failureReportPending", false);
+      if ("retrying".equals(response.optString("upload_state")) && !response.isNull("upload_retry_at")) {
+        try {
+          long retryAt = java.time.OffsetDateTime.parse(response.getString("upload_retry_at")).toInstant().toEpochMilli();
+          long reportedAt = java.time.OffsetDateTime.parse(response.getString("upload_updated_at")).toInstant().toEpochMilli();
+          long delay = Math.max(0, Math.min(900_000L, retryAt - reportedAt));
+          current.put("nextRetryAt", Math.max(current.optLong("nextRetryAt"), System.currentTimeMillis() + delay));
+        } catch (Exception ignored) { /* Keep the local deadline if the server does not provide one. */ }
+      }
       // Use the server's acknowledged time, never the tablet's wall clock.
       // A newer administrator request is the only remote state that resets a failure.
       current.put("failureServerUpdatedAt",
@@ -757,10 +877,17 @@ final class Engine {
           || !belongsToCurrentDevice(item)
           || !java.util.Arrays.asList("failed", "retrying").contains(item.optString("status")))
         continue;
+      String sid = item.optString("id");
+      synchronized (vault) {
+        if (sid.equals(uploadWorkerSession) || !reportingUploadFailures.add(sid)) continue;
+      }
       try {
-        reportUploadFailure(item);
+        JSONObject latest = queueItem(sid);
+        if (latest.optBoolean("failureReportPending")) reportUploadFailure(latest);
       } catch (Exception ignored) {
         // Keep the pending report durable until the device can contact the server.
+      } finally {
+        synchronized (vault) { reportingUploadFailures.remove(sid); }
       }
     }
   }
@@ -775,9 +902,9 @@ final class Engine {
     if (session == null || !activeCaptureStatus(session.optString("status"))) return;
     String id = session.optString("id");
     JSONObject item = queueItem(id);
-    if (!"failed".equals(item.optString("status"))) return;
+    if (!"failed".equals(item.optString("status")) || !belongsToCurrentDevice(item)) return;
     try {
-      api.tablet("failed", new JSONObject().put("id", id));
+      api.tablet("failed", captureEventFields(item));
       refresh();
     } catch (Exception ignored) {
     }
@@ -801,7 +928,12 @@ final class Engine {
               .put("initialized", initialized)
               .put("registrationInactive", hasStoredEnrollment() && initialized && !server.optBoolean("enabled") && lastRefreshError.isEmpty())
               .put("connectionNotice", connectionStatus())
-              .put("connectionRetry", hasStoredEnrollment() && !lastRefreshError.isEmpty() && !retryQueued.get())
+              .put("connectionRetry", (hasPendingEnrollment() || (hasStoredEnrollment() && !lastRefreshError.isEmpty())) && !retryQueued.get())
+              .put("enrollmentPending", hasPendingEnrollment())
+              .put("enrollmentChecking", retryQueued.get())
+              .put("enrollmentOrigin", Api.ORIGIN)
+              .put("tabletPairing", tabletPairing)
+              .put("tabletPairingBusy", pairingRequested.get())
               .put("busy", busy)
               .put("phase", phase)
               .put("message", message)
@@ -816,6 +948,7 @@ final class Engine {
               .put("elapsedMs", Math.max(0L, currentElapsedMillis))
               .put("uploadPercent", uploadPercent)
               .put("countdown", countdown)
+              .put("captureAttempt", captureAttempt)
               .put("pending", hasLocalQueue())
               .put("recoverable", recovery.length() > 0)
               .put("startHasRecoverableFootage", startHasRecoverableFootage)
@@ -857,10 +990,14 @@ final class Engine {
     if (cameraActive && !DeviceCameraRecorder.hasPermissions(context))
       throw new IllegalStateException(
           "Open Device setup and allow camera and microphone access first.");
-    context.startForegroundService(
-        new Intent(context, RecorderService.class)
-            .putExtra(RecorderService.EXTRA_CAMERA_ACTIVE, cameraActive)
-            .putExtra(RecorderService.EXTRA_UPLOAD_ACTIVE, uploadActive));
+    if (cameraActive)
+      context.startForegroundService(new Intent(context, RecorderService.class)
+          .putExtra(RecorderService.EXTRA_CAMERA_ACTIVE, true));
+    if (uploadActive) {
+      if (backgroundTransfers.isPaused()) throw new IllegalStateException(BackgroundTransfers.PAUSED);
+      try { context.startForegroundService(new Intent(context, TransferService.class)); }
+      catch (RuntimeException denied) { pauseBackgroundTransfers(); throw denied; }
+    }
   }
 
   boolean usesDeviceCamera() {
@@ -1007,24 +1144,217 @@ final class Engine {
 
   void finishWork() {
     busy = false;
-    if (!uploadWorkerRunning.get() && !hasPendingUploadWork()) RecorderService.stopWhenIdle();
+    RecorderService.stopWhenIdle();
     refresh();
   }
 
+  private void finishCaptureWork() {
+    busy = false;
+    RecorderService.stopWhenIdle();
+    try { heartbeat.execute(this::refresh); }
+    catch (RejectedExecutionException ignored) { }
+  }
+
+  private final Object enrollmentState = new Object();
+  private long nextEnrollmentRecoveryNanos;
+
+  private boolean hasPendingEnrollment() {
+    return !vault.get("pending-enrollment").isEmpty();
+  }
+
+  private boolean recoverPendingEnrollment(boolean immediate) throws Exception {
+    synchronized (enrollmentState) {
+      JSONObject attempt = vault.object("pending-enrollment");
+      long now = System.nanoTime();
+      if (attempt.length() == 0 ||
+          (!immediate && nextEnrollmentRecoveryNanos != 0 && now - nextEnrollmentRecoveryNanos < 0)) return false;
+      nextEnrollmentRecoveryNanos = now + TimeUnit.SECONDS.toNanos(60);
+      try {
+        api.call("/api/tablet/enroll", attempt.put("recover", true));
+      } catch (Api.RequestFailure failure) {
+        if ("enrollment_not_committed".equals(failure.code)) {
+          error = "Enrollment was not confirmed. Retry the same invitation if it is still valid.";
+          return false;
+        }
+        throw failure;
+      }
+      finishEnrollment();
+      return true;
+    }
+  }
+
+  private static final String TABLET_PAIRING = "tablet-pairing";
+  private volatile JSONObject tabletPairing = new JSONObject();
+  private final java.util.concurrent.atomic.AtomicBoolean pairingRequested = new java.util.concurrent.atomic.AtomicBoolean();
+  private volatile long nextPairingPoll;
+
+  private JSONObject pairingRequest() {
+    return vault.object(TABLET_PAIRING);
+  }
+
+  private void showPairingStatus(String status, String error) throws JSONException {
+    JSONObject current = new JSONObject(tabletPairing.toString());
+    current.put("status", status).put("error", error);
+    tabletPairing = current;
+  }
+
+  synchronized void openTabletPairing(boolean replace, boolean renew) {
+    if (busy || updateBlocksPlayer() || (hasStoredEnrollment() && !replace)
+        || !pairingRequested.compareAndSet(false, true)) return;
+    heartbeat.execute(() -> {
+      synchronized (enrollmentState) {
+        try {
+          JSONObject request = pairingRequest();
+          if (busy) return;
+          if (renew && !java.util.Set.of("expired", "declined", "unavailable", "assignment")
+              .contains(tabletPairing.optString("status"))) return;
+          if (request.length() == 0 || renew) {
+            byte[] secret = new byte[32];
+            new java.security.SecureRandom().nextBytes(secret);
+            int flags = android.util.Base64.URL_SAFE | android.util.Base64.NO_PADDING | android.util.Base64.NO_WRAP;
+            request = new JSONObject().put("id", java.util.UUID.randomUUID().toString())
+                .put("claim", android.util.Base64.encodeToString(secret, flags)).put("replace", replace);
+            vault.put(TABLET_PAIRING, request.toString());
+            tabletPairing = new JSONObject();
+          }
+          nextPairingPoll = android.os.SystemClock.elapsedRealtime() + 5_000;
+          // Claim first so a lost response can be recovered even after expiry.
+          JSONObject result = api.call("/api/tablet/pairing", request.put("action", "claim"));
+          String status = result.optString("status");
+          if ("enrolled".equals(status)) {
+            finishEnrollment();
+            showPairingStatus("enrolled", "");
+            refresh();
+            return;
+          }
+          if (!"unavailable".equals(status) && !"pending".equals(status)) {
+            showPairingStatus(status, result.optString("error"));
+            return;
+          }
+          if ("unavailable".equals(status) && !tabletPairing.optString("pin").isEmpty()) {
+            showPairingStatus("unavailable", "");
+            return;
+          }
+          if ("pending".equals(status) && !tabletPairing.optString("pin").isEmpty()) {
+            showPairingStatus("pending", "");
+            return;
+          }
+          result = api.call("/api/tablet/pairing", request.put("action", "create"));
+          String pin = result.optString("pin");
+          JSONObject presentation = new JSONObject().put("status", result.optString("status"));
+          if (pin.matches("[0-9]{6}")) {
+            String link = result.getString("link");
+            if (!(BuildConfig.APP_ORIGIN + "/admin/pair-device?request=" + request.getString("id")).equals(link))
+              throw new IllegalStateException("Pairing returned an unexpected address.");
+            presentation.put("pin", pin).put("qr", pairingQr(link)).put("expiresAt", result.optString("expiresAt"));
+          }
+          tabletPairing = presentation;
+          nextPairingPoll = android.os.SystemClock.elapsedRealtime() + 5_000;
+        } catch (Exception unavailable) {
+          try { showPairingStatus(ConnectionNotice.message(context, api.serverReachable).startsWith("No internet") ? "offline" : "server-unavailable",
+              "The pairing request is saved. Check the connection and retry."); }
+          catch (JSONException ignored) { }
+        } finally {
+          pairingRequested.set(false);
+        }
+      }
+    });
+  }
+
+  void pollTabletPairing() {
+    JSONObject request = pairingRequest();
+    String state = tabletPairing.optString("status");
+    if (!visible || request.length() == 0
+        || !java.util.Set.of("pending", "approved", "offline", "server-unavailable").contains(state)
+        || android.os.SystemClock.elapsedRealtime() < nextPairingPoll) return;
+    nextPairingPoll = android.os.SystemClock.elapsedRealtime() + 5_000;
+    openTabletPairing(request.optBoolean("replace"), false);
+  }
+
+  private static String pairingQr(String link) throws Exception {
+    var matrix = new com.google.zxing.qrcode.QRCodeWriter().encode(
+        link, com.google.zxing.BarcodeFormat.QR_CODE, 288, 288);
+    android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(288, 288, android.graphics.Bitmap.Config.ARGB_8888);
+    try (java.io.ByteArrayOutputStream image = new java.io.ByteArrayOutputStream()) {
+      int[] pixels = new int[288 * 288];
+      for (int y = 0; y < 288; y++)
+        for (int x = 0; x < 288; x++) pixels[y * 288 + x] = matrix.get(x, y) ? 0xff000000 : 0xffffffff;
+      bitmap.setPixels(pixels, 0, 288, 0, 0, 288, 288);
+      if (!bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, image))
+        throw new java.io.IOException("Could not show the pairing QR.");
+      return android.util.Base64.encodeToString(image.toByteArray(), android.util.Base64.NO_WRAP);
+    } finally {
+      bitmap.recycle();
+    }
+  }
+  private void finishEnrollment() throws Exception {
+    try { emailHistory.remove(""); }
+    catch (Exception ignored) { /* The new credential already isolates the previous history. */ }
+    vault.put("device-id", "");
+    server = new JSONObject();
+    clearCameraCache();
+    vault.put(TABLET_PAIRING, "");
+    tabletPairing = new JSONObject();
+    vault.put("pending-enrollment", "");
+    error = "";
+    message = "Tablet enrolled. Retrieving its assigned camera settings…";
+  }
+
   void enroll(String code, boolean replace) {
-    if(hasStoredEnrollment() && !replace){error="This app is already registered. Use Re-enroll device only when intentionally replacing its registration.";return;}
+    String enteredCode = code.trim();
+    if (!EnrollmentLink.pairingCode(enteredCode) && !enteredCode.matches("[A-Za-z0-9_-]{24}")) {
+      error = "Enter the full pairing code from Admin.";
+      return;
+    }
+    try { submitEnrollment(new JSONObject().put("code", enteredCode).put("replace", replace)); }
+    catch (JSONException invalid) { error = "Could not read the enrollment code."; }
+  }
+
+  void enrollQr(String invite, String pin, boolean replace) {
+    if (!invite.matches("[A-Za-z0-9_-]{24}") || !pin.matches("[0-9]{6}")) {
+      error = "Scan the enrollment QR and enter the six-digit PIN from Admin.";
+      return;
+    }
+    try { submitEnrollment(new JSONObject().put("invite", invite).put("pin", pin).put("replace", replace)); }
+    catch (JSONException invalid) { error = "Could not read the enrollment invitation."; }
+  }
+
+  private void submitEnrollment(JSONObject requested) {
+    if(hasStoredEnrollment() && !requested.optBoolean("replace")) {
+      error="This app is already registered. Use Re-enroll device only when intentionally replacing its registration.";
+      return;
+    }
     if (!claim()) return;
     work.execute(
         () -> {
           try {
-            api.call(
-                "/api/tablet/enroll",
-                new JSONObject().put("code", code.trim()).put("replace", replace));
-            vault.put("device-id", "");
-            server = new JSONObject();
-            clearCameraCache();
-            error = "";
-            message = "Tablet enrolled. Retrieving its assigned camera settings…";
+            synchronized (enrollmentState) {
+              JSONObject attempt = vault.object("pending-enrollment");
+              if (!requested.optString("code").equals(attempt.optString("code"))
+                  || !requested.optString("invite").equals(attempt.optString("invite"))
+                  || !requested.optString("pin").equals(attempt.optString("pin"))
+                  || requested.optBoolean("replace") != attempt.optBoolean("replace")) {
+                byte[] secret = new byte[32];
+                new java.security.SecureRandom().nextBytes(secret);
+                int encoding = android.util.Base64.URL_SAFE | android.util.Base64.NO_PADDING | android.util.Base64.NO_WRAP;
+                attempt = requested.put("attempt", android.util.Base64.encodeToString(secret, encoding));
+                vault.put("pending-enrollment", attempt.toString());
+              }
+              nextEnrollmentRecoveryNanos = 0;
+              try { api.call("/api/tablet/enroll", attempt); }
+              catch (Api.RequestFailure failure) {
+                // These responses reject the request before issuing a device credential.
+                if (failure.httpStatus == 400 || failure.httpStatus == 403
+                    || failure.httpStatus == 409 || failure.httpStatus == 422) {
+                  vault.put("pending-enrollment", "");
+                }
+                if (failure.httpStatus == 400 && EnrollmentLink.pairingCode(attempt.optString("code"))
+                    && "Enter the full enrollment code from your administrator.".equals(failure.getMessage()))
+                  throw new Exception("This server rejected the 12-character code. Use an invitation from the same Admin site as this app.");
+                throw failure;
+              }
+              finishEnrollment();
+            }
             refresh();
           } catch (Exception e) {
             error = e.getMessage();
@@ -1285,7 +1615,7 @@ final class Engine {
             refresh();
             busy = false;
             if (visible) syncCamera();
-            else if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
+            else RecorderService.stopWhenIdle();
           });
       return;
     }
@@ -1326,14 +1656,14 @@ final class Engine {
             if (updated) clearCameraTestReview();
             phase = updated ? "idle" : "review";
             busy = false;
-            if (!uploadWorkerRunning.get()) RecorderService.stopWhenIdle();
+            RecorderService.stopWhenIdle();
             refresh();
           }
         });
   }
 
-  private JSONArray recipientEmails(String payload) throws Exception {
-    JSONArray input = new JSONArray(payload), result = new JSONArray();
+  private JSONArray recipientEmails(JSONArray input) throws Exception {
+    JSONArray result = new JSONArray();
     HashSet<String> unique = new HashSet<>();
     if (input.length() < 1 || input.length() > 4)
       throw new Exception("Enter at least one email address on either team.");
@@ -1349,17 +1679,32 @@ final class Engine {
     return result;
   }
 
-  void start(String recipientJson) {
+  void start(String recipientJson, long bridgeReceivedNanos) {
+    if (!claim()) {
+      noteRepeatedStart();
+      return;
+    }
     startHasRecoverableFootage = false;
-    if (updateBlocksPlayer()) { error = "Check and install the required Android update first."; return; }
+    if (updateBlocksPlayer()) {
+      error = "Check and install the required Android update first.";
+      busy = false;
+      return;
+    }
     final JSONArray recipients;
+    final JSONArray consent;
+    final int webDelayMs;
     try {
-      recipients = recipientEmails(recipientJson);
+      JSONObject request = recipientJson.startsWith("{") ? new JSONObject(recipientJson) : null;
+      recipients = recipientEmails(request == null ? new JSONArray(recipientJson) : request.getJSONArray("emails"));
+      consent = request == null ? null : request.optJSONArray("remember");
+      webDelayMs = request == null ? 0 : request.optInt("tapDelayMs", 0);
     } catch (Exception e) {
       phase = "error";
       error = e.getMessage();
+      busy = false;
       return;
     }
+    final RecorderDiagnostics.Trace trace = diagnostics.beginCapture(vault.get("device-id"), queuedWorkCount(), bridgeReceivedNanos, webDelayMs);
     final String email = recipients.optString(0);
     JSONObject configured = server.optJSONObject("device");
     if (!cameraReady(configured)) {
@@ -1371,30 +1716,40 @@ final class Engine {
       else
         error =
             "Open Device setup, choose a supported camera mode, and run the camera test.";
+      trace.finish(new CameraCapture.StartFailure(error));
+      busy = false;
       return;
     }
-    if (!claim()) return;
+    captureTrace = trace;
+    trace.accepted();
+    captureAttempt = UUID.randomUUID().toString();
+    phase = "connecting";
+    message = "Preparing your recording…";
     try {
       startService(true, false);
     } catch (Exception e) {
-      busy = false;
+      trace.finish(e);
       phase = "error";
       error = "Allow camera and microphone permissions, then try again.";
+      captureAttempt = "";
+      captureTrace = null;
+      busy = false;
       return;
     }
-    phase = "connecting";
-    message = "Connecting to your court camera…";
     work.execute(
         () -> {
           String sid = "";
           File file = null;
           try {
+            if (stop) throw new CameraCapture.StartCancelled();
+            trace.stage("release_check");
             refreshRelease();
             if (updateBlocksPlayer()) throw new Exception("Install the required Android update before recording.");
             JSONObject camera = vault.object("camera");
             if (camera.length() == 0) throw new Exception("Configure and test the camera first.");
-            releaseCapturedRecordings();
+            trace.stage("reconcile");
             updateServer(api.call("/api/tablet", null));
+            releaseBlockingCapture();
             JSONObject device = server.optJSONObject("device");
             if (device == null) throw new Exception("Enroll this tablet first.");
             if (!cameraReady(device))
@@ -1405,11 +1760,14 @@ final class Engine {
             dir.mkdirs();
             if (dir.getUsableSpace() < requiredRecordingBytes(seconds, recordingBitrate))
               throw new Exception("Not enough tablet storage for this match.");
+            if (stop) throw new CameraCapture.StartCancelled();
             JSONObject attempt = vault.object("start-request");
             if (!recipients.toString().equals(attempt.optJSONArray("emails") == null ? "" : attempt.optJSONArray("emails").toString()))
               attempt =
                   new JSONObject().put("email", email).put("emails", recipients).put("key", UUID.randomUUID().toString());
             vault.put("start-request", attempt.toString());
+            String historyEnrollment = consent == null ? "" : emailHistory.enrollment();
+            trace.stage("reserve");
             sid =
                 api.tablet(
                         "start",
@@ -1417,6 +1775,7 @@ final class Engine {
                             .put("revision", vault.get("camera-revision")))
                     .getString("id");
             UUID.fromString(sid);
+            trace.session(sid);
             file = new File(dir, sid + ".mp4");
             if (file.exists())
               throw new Exception(
@@ -1438,9 +1797,15 @@ final class Engine {
             activeSession = sid;
             uploadPercent = -1;
             vault.put("start-request", "");
+            try { emailHistory.remember(historyEnrollment, recipients, consent); }
+            catch (Exception ignored) { /* Optional local history must never block recording. */ }
             final String id = sid;
+            message = "Preparing camera…";
+            trace.stage("camera_prepare");
             long capturedMillis;
             try {
+              if (stop) throw new CameraCapture.StartCancelled();
+              message = "Preparing the camera and waiting for video…";
               capturedMillis =
                   captureCamera(
                   camera,
@@ -1449,27 +1814,31 @@ final class Engine {
                   3,
                   new CameraCapture.Listener() {
                     public void ready() {
-                      phase = "countdown";
-                      message = "Recording starts in 3…";
+                      trace.stage("countdown");
                     }
 
-                    public void countdown(int value) {
-                      countdown = value;
-                      if (value > 0) {
-                        phase = "countdown";
-                        message = "Recording starts in " + value + "…";
-                      } else {
-                        phase = "connecting";
-                        message = "Starting recording…";
+                    public void preparation(String stage) { trace.stage(stage); }
+                    @Override public void countdown(int value) {
+                      synchronized (Engine.this) {
+                        if (stop) return;
+                        countdown = value;
+                        if (value > 0) {
+                          phase = "countdown";
+                          message = "Recording starts in " + value + "…";
+                        }
                       }
                     }
 
                     public void started() throws Exception {
-                      countdown = 0;
-                      recordingStartedNanos = System.nanoTime();
-                      elapsed = 0;
-                      phase = "recording";
-                      message = "Recording your match";
+                      synchronized (Engine.this) {
+                        if (stop) throw new CameraCapture.StartCancelled();
+                        countdown = 0;
+                        recordingStartedNanos = System.nanoTime();
+                        elapsed = 0;
+                        phase = "recording";
+                        message = "Recording your match";
+                      }
+                      trace.stage("capture");
                       heartbeat.execute(
                           () -> {
                             try {
@@ -1497,38 +1866,56 @@ final class Engine {
                     }
 
                     public void finalizing() {
+                      try {
+                        JSONObject item = queueItem(id);
+                        if ("recording".equals(item.optString("status"))) {
+                          item.put("captureEndedNormally", true);
+                          saveQueueItem(item);
+                        }
+                      } catch (Exception ignored) { }
+                      trace.stage("finalize");
                       phase = "finalizing";
                       message = "Finalizing the complete video… Keep this app open.";
                     }
+
+                    public void interrupted(CameraCapture.Interruption interruption) {
+                      try { noteCaptureInterruption(id, interruption); }
+                      catch (Exception ignored) { }
+                      phase = "finalizing";
+                      message = "Recording interrupted. Saving available footage…";
+                    }
+
+                    public boolean validateSavedMediaInBackground() { return true; }
                   });
             } catch (Exception e) {
-              String detail = e.getMessage();
-              String reason = e instanceof RecordingAccuracy.Failure
-                  || (detail != null && detail.startsWith("The USB camera"))
-                      ? detail : "Recording interrupted.";
-              boolean savedFootage = file.isFile() && file.length() >= 1024;
-              throw new Exception(reason + (savedFootage
-                  ? " Any saved footage remains on this device. Use Recover saved video on the welcome screen."
-                  : " Reconnect the camera and try again."));
+              trace.finish(e);
+              if (e instanceof CameraCapture.StartCancelled)
+                throw new Exception(error.isEmpty() ? e.getMessage() : error, e);
+              if (recordingStartedNanos > 0 && !queueItem(sid).optBoolean("captureEndedNormally")) {
+                CameraCapture.Interruption interruption = CameraCapture.Interruption.observed(e);
+                noteCaptureInterruption(sid, interruption);
+                if (interruption.code == CameraCapture.InterruptionCode.CAMERA_DISCONNECTED
+                    || interruption.code == CameraCapture.InterruptionCode.CAMERA_FAILURE) requireCameraCheck();
+              }
+              if (queueItem(sid).has("captureInterruptionCode") && LiveLogoEvidence.hasSeal(file)) {
+                // The stopped media can be shorter than the wall clock. Validate
+                // the tracks and use their actual duration on the upload worker.
+                capturedMillis = -1;
+              } else {
+                String detail = e.getMessage();
+                String reason = e instanceof RecordingAccuracy.Failure
+                    || e instanceof CameraCapture.StartFailure || e instanceof CameraCapture.Interruption
+                    || (detail != null && detail.startsWith("The USB camera"))
+                        ? detail : "Could not save a complete recording.";
+                boolean savedFootage = file.isFile() && file.length() >= 1024;
+                throw new Exception(reason + (savedFootage
+                    ? " The original is in Saved videos." : " Reconnect the camera and try again."), e);
+              }
             }
             phase = "finalizing";
             message = "Saving the complete video…";
-            // Persist capture results before contacting the network. The captured
-            // event below releases the server slot and is retried after outages.
-            LiveLogoEvidence.requireVerified(file);
-            capturedMillis = RecordedVideo.validate(file, capturedMillis, expectsAudio(camera));
-            JSONObject queued = queueItem(sid);
-            queued
-                .put("durationMs", capturedMillis)
-                .put("bytes", file.length())
-                .put("branded", true)
-                .put("brandingState", "complete")
-                .put("brandingProgress", 100)
-                .put("captureReleased", false)
-                .put("status", "saved_locally")
-                .put("lastError", "")
-                .put("nextRetryAt", 0);
-            saveQueueItem(queued);
+            JSONObject queued = saveFinalizedCapture(sid, file, capturedMillis);
+            trace.finish(null);
             latestSavedSession = sid;
             JSONObject queueReport = new JSONObject(queued.toString());
             heartbeat.execute(
@@ -1543,14 +1930,15 @@ final class Engine {
                   }
                 });
             phase = "complete";
-            message =
-                capturedMillis < 60_000
-                    ? "Recording saved locally. Clips under 1 minute are not uploaded or emailed."
-                    : "Video saved safely. You can start another match.";
+            message = queued.has("captureInterruptionCode")
+                ? "Recording interrupted. Saved footage is being checked."
+                : "Video saved. It will be checked in the background. You can start another match.";
           } catch (Exception e) {
+            trace.finish(e);
             startHasRecoverableFootage = file != null && file.isFile() && file.length() >= 1024;
             error = e.getMessage();
             phase = "error";
+            boolean failureJournaled = false;
             if (!sid.isEmpty())
               try {
                 JSONObject failed = queueItem(sid);
@@ -1560,11 +1948,23 @@ final class Engine {
                       .put("lastError", error)
                       .put("bytes", file != null && file.isFile() ? file.length() : 0)
                       .put("localAvailable", file != null && file.isFile() && file.length() > 0);
+                  if (failed.has("captureInterruptionCode"))
+                    failed.put("validationFailed", true).put("validationPending", false)
+                        .put("failureReportPending", true);
                   saveQueueItem(failed);
+                  failureJournaled = true;
                 }
               } catch (Exception ignored) {
               }
-            if (!sid.isEmpty())
+            if (failureJournaled) {
+              String failedSession = sid;
+              try {
+                heartbeat.execute(() -> {
+                  try { api.tablet("failed", captureEventFields(queueItem(failedSession))); }
+                  catch (Exception ignored) { /* Heartbeat or the next start can reconcile the saved failure. */ }
+                });
+              } catch (RejectedExecutionException ignored) { }
+            } else if (!sid.isEmpty())
               try {
                 api.tablet("failed", new JSONObject().put("id", sid));
               } catch (Exception ignored) {
@@ -1573,7 +1973,9 @@ final class Engine {
             countdown = 0;
             recordingStartedNanos = 0;
             activeSession = "";
-            finishWork();
+            captureAttempt = "";
+            captureTrace = null;
+            finishCaptureWork();
             // The foreground capture is free as soon as the original file is
             // durable. Logo processing and upload continue independently.
             kickUploads();
@@ -1581,51 +1983,124 @@ final class Engine {
         });
   }
 
+  private JSONObject captureEventFields(JSONObject item) throws JSONException {
+    JSONObject fields = new JSONObject().put("id", item.getString("id"));
+    if (item.has("captureInterruptionCode")) {
+      fields.put("capture_interruption_code", item.getString("captureInterruptionCode"));
+      if (item.optLong("captureInterruptedAt") > 0)
+        fields.put("capture_interrupted_at", item.getLong("captureInterruptedAt"));
+    }
+    return fields;
+  }
+
+  void noteCaptureInterruption(String sid, CameraCapture.Interruption interruption) throws Exception {
+    JSONObject item = queueItem(sid);
+    if (!"recording".equals(item.optString("status")) || item.has("captureInterruptionCode")) return;
+    item.put("captureInterruptionCode", interruption.code.value)
+        .put("captureInterruptedAt", interruption.occurredAt);
+    saveQueueItem(item);
+  }
+
+  JSONObject saveFinalizedCapture(String sid, File file, long capturedMillis) throws Exception {
+    // The camera has closed and the encoder has synced its live-watermark seal.
+    // A footer check is enough to journal the handoff. The worker verifies the
+    // exact bytes and validates the tracks before preview or upload.
+    if (file.length() < 1024 || !LiveLogoEvidence.hasSeal(file))
+      throw new RecordingAccuracy.Failure("Could not finalize the saved video. Available footage was kept on this device.");
+    JSONObject item = queueItem(sid);
+    if (!"recording".equals(item.optString("status")))
+      throw new IllegalStateException("The local recording session changed before finalization.");
+    item.put("captureDurationMs", capturedMillis)
+        .put("bytes", file.length())
+        .put("validationPending", true)
+        .put("branded", false)
+        .put("brandingState", "complete")
+        .put("brandingProgress", 100)
+        .put("captureReleased", false)
+        .put("status", "saved_locally")
+        .put("lastError", "")
+        .put("nextRetryAt", 0);
+    saveQueueItem(item);
+    return item;
+  }
+
   void recover() {
     kickUploads();
   }
 
-  void requestStop() {
+  void noteRepeatedStart() {
+    RecorderDiagnostics.Trace trace = captureTrace;
+    if (trace != null) trace.repeatedStart();
+  }
+
+  void noteRepeatedStop(String attempt) {
+    RecorderDiagnostics.Trace trace = captureTrace;
+    if (trace != null && !attempt.isEmpty() && attempt.equals(captureAttempt))
+      trace.repeatedStop(RecorderDiagnostics.ActionSource.PLAYER);
+  }
+
+  void requestStop(String attempt) {
+    requestStop(attempt, RecorderDiagnostics.ActionSource.PLAYER);
+  }
+
+  synchronized void requestStop(String attempt, RecorderDiagnostics.ActionSource source) {
+    if (!busy || attempt.isEmpty() || !attempt.equals(captureAttempt)) return;
+    RecorderDiagnostics.Trace trace = captureTrace;
+    if (stop || "finalizing".equals(phase)) {
+      if (trace != null) trace.repeatedStop(source);
+      return;
+    }
+    if ("error".equals(phase) || "complete".equals(phase)) return;
+    if (trace != null) trace.stopRequested(source);
+    boolean wasRecording = "recording".equals(phase);
     stop = true;
+    countdown = 0;
     String sid = activeSession;
-    if (sid.isEmpty()) return;
     phase = "finalizing";
-    message = "Stopping recording…";
-    heartbeat.execute(
-        () -> {
-          try {
-            api.tablet("stopped", new JSONObject().put("id", sid));
-          } catch (Exception ignored) {
-          }
-        });
+    message = wasRecording ? "Stopping recording…" : "Cancelling recording start…";
+    if (!wasRecording || sid.isEmpty()) return;
+    try {
+      heartbeat.execute(() -> {
+        try { api.tablet("stopped", new JSONObject().put("id", sid)); }
+        catch (Exception ignored) { }
+      });
+    } catch (RejectedExecutionException ignored) { }
   }
 
   void retryUpload(String sid) {
     try {
       localVideoSession = sid;
       UUID.fromString(sid);
-      JSONObject item = queueItem(sid);
-      if (item.length() == 0
-          || !item.optBoolean("localAvailable", true)
-          || !belongsToCurrentDevice(item)) return;
-      String previousStatus=item.optString("status");
-      if (!java.util.Arrays.asList("failed","retrying").contains(previousStatus)) {
-        localVideoError = "This video is already queued or is not eligible for another upload.";
-        return;
+      synchronized (vault) {
+        JSONObject item = queueItem(sid);
+        if (item.length() == 0
+            || !item.optBoolean("localAvailable", true)
+            || !belongsToCurrentDevice(item)) return;
+        if (interruptedNeedsInspection(item)) {
+          localVideoError = "The interrupted video needs inspection. Save the original to this device.";
+          return;
+        }
+        String previousStatus=item.optString("status");
+        if (!java.util.Arrays.asList("failed","retrying").contains(previousStatus)) {
+          localVideoError = "This video is already queued or is not eligible for another upload.";
+          return;
+        }
+        if (sid.equals(uploadWorkerSession) || reportingUploadFailures.contains(sid)) {
+          localVideoError="An upload attempt is already running. This video remains scheduled.";
+          return;
+        }
+        localPlaybackFile(sid);
+        item
+            .put("status", "pending")
+            .put("retryCount", "failed".equals(previousStatus) ? 0 : item.optInt("retryCount"))
+            .put("serverRetryRequired", true)
+            .put("waitingForUploadTurn", false)
+            .put("nextQueueCheckAt", 0)
+            .put("failureReportPending", false)
+            .put("lastError", "")
+            .put("nextRetryAt", 0);
+        saveQueueItem(item);
       }
-      if ("retrying".equals(previousStatus) && uploadWorkerRunning.get()) {
-        localVideoError="An upload attempt is already running. This video remains scheduled.";
-        return;
-      }
-      localPlaybackFile(sid);
-      item
-          .put("status", "pending")
-          .put("retryCount", "failed".equals(previousStatus) ? 0 : item.optInt("retryCount"))
-          .put("serverRetryRequired", true)
-          .put("failureReportPending", false)
-          .put("lastError", "")
-          .put("nextRetryAt", 0);
-      saveQueueItem(item);
       localVideoError = "";
       localVideoMessage = "Retry queued. Processing and upload will resume when this tablet can connect.";
       kickUploads();
@@ -1674,10 +2149,19 @@ final class Engine {
     return file;
   }
 
-  boolean isLogoProcessing(String sid) throws Exception {
+  boolean isPreviewPending(String sid) throws Exception {
     UUID.fromString(sid);
     JSONObject item = queueItem(sid);
-    return belongsToCurrentDevice(item) && "processing".equals(item.optString("brandingState"));
+    return belongsToCurrentDevice(item) &&
+        (item.optBoolean("validationPending") || "processing".equals(item.optString("brandingState")));
+  }
+
+  boolean isInterruptedPreviewUnavailable(String sid) {
+    return interruptedNeedsInspection(queueItem(sid));
+  }
+
+  private static boolean interruptedNeedsInspection(JSONObject item) {
+    return item.has("captureInterruptionCode") && item.optBoolean("validationFailed");
   }
 
   String localVideoName(String sid) throws Exception {
@@ -1778,10 +2262,11 @@ final class Engine {
       return;
     }
     exports.execute(() -> {
-      try {
+      try (BackgroundTransfers.Ticket ticket = backgroundTransfers.begin()) {
+        awaitTransferService(ticket);
         java.util.concurrent.atomic.AtomicLong copiedBytes=new java.util.concurrent.atomic.AtomicLong();
         android.net.Uri uri = LocalVideoExporter.save(context, source, name, chosen,
-            percent -> { exportPercent = percent; RecorderService.updateExportProgress(percent); },
+            percent -> { exportPercent = percent; TransferService.updateExportProgress(percent); },
             destination -> {
               try { vault.put("export-pending-uri", destination.toString()); }
               catch (Exception failure) { throw new IllegalStateException("Could not journal the saved copy.", failure); }
@@ -1799,13 +2284,15 @@ final class Engine {
             ? "Copy saved to Movies/DinkVision. Find it in Gallery or Files."
             : "Copy saved to your chosen location. The original remains in the app.";
       } catch (Exception failure) {
-        localVideoError = "Could not save the copy. Check free storage and try again. The original remains in the app.";
+        localVideoError = backgroundTransfers.isPaused()
+            ? "Saving paused. Open Saved videos and choose Save to device again."
+            : "Could not save the copy. Check free storage and try again. The original remains in the app.";
       } finally {
         try { vault.put("export-pending-uri", ""); } catch (Exception ignored) { }
         exportWorkerRunning.set(false);
         exportingSession = "";
-        RecorderService.finishExport();
-        if (!busy && !uploadWorkerRunning.get() && !hasPendingUploadWork()) RecorderService.stopWhenIdle();
+        TransferService.finishExport();
+        TransferService.stopWhenIdle();
       }
     });
   }
@@ -1816,6 +2303,7 @@ final class Engine {
       JSONObject item = current.optJSONObject(index);
       if (item == null
           || !item.optBoolean("localAvailable", true)
+          || interruptedNeedsInspection(item)
           || !belongsToCurrentDevice(item)) continue;
       String status = item.optString("status", "saved_locally");
       if (java.util.Arrays.asList("saved_locally", "pending", "retrying", "uploading")
@@ -1835,8 +2323,19 @@ final class Engine {
     return false;
   }
 
+  boolean hasWaitingUploadTurn() {
+    JSONArray current = queue();
+    for (int i = 0; i < current.length(); i++) {
+      JSONObject item = current.optJSONObject(i);
+      if (item != null && "pending".equals(item.optString("status"))
+          && item.optBoolean("waitingForUploadTurn") && belongsToCurrentDevice(item)) return true;
+    }
+    return false;
+  }
+
   private JSONObject nextUpload() {
     long now = System.currentTimeMillis();
+    boolean yieldDuringBackoff = supportsUploadBackoff();
     JSONArray current = queue();
     JSONObject selected = null;
     JSONObject readyUpload = null;
@@ -1844,12 +2343,14 @@ final class Engine {
       JSONObject item = current.optJSONObject(index);
       if (item == null
           || !item.optBoolean("localAvailable", true)
+          || interruptedNeedsInspection(item)
           || !belongsToCurrentDevice(item)) continue;
+      if (reportingUploadFailures.contains(item.optString("id"))) continue;
       String status = item.optString("status", "saved_locally");
       if (!java.util.Arrays.asList("saved_locally", "pending", "retrying").contains(status)) continue;
-      // A branded retry can already hold this device's server FIFO position.
-      // Do not let the sole transfer worker wait behind itself with a later file.
-      // Capture runs independently and remains available during this backoff.
+      long queueWait = item.optLong("nextQueueCheckAt") - now;
+      if (yieldDuringBackoff && (item.optLong("nextRetryAt") > now || (queueWait > 0 && queueWait <= 15_000L))) continue;
+      // Preserve the original FIFO safeguard against a server without backoff scheduling.
       if (item.optBoolean("branded", false)
           && (readyUpload == null || item.optLong("createdAt") < readyUpload.optLong("createdAt")))
         readyUpload = item;
@@ -1869,11 +2370,76 @@ final class Engine {
     }
   }
 
-  void kickUploads() {
-    if (!server.optBoolean("enabled") || !uploadWorkerRunning.compareAndSet(false, true)) return;
-    JSONObject first = nextUpload();
-    if (first == null) {
+  private boolean supportsUploadBackoff() {
+    JSONObject capabilities = server.optJSONObject("capabilities");
+    return capabilities != null && capabilities.optBoolean("uploadBackoffScheduling");
+  }
+
+  private JSONObject reserveNextUpload() {
+    synchronized (vault) {
+      JSONObject item = backgroundTransfers.isPaused() ? null : nextUpload();
+      uploadWorkerSession = item == null ? "" : item.optString("id");
+      return item;
+    }
+  }
+
+  private void releaseUploadWorker() {
+    synchronized (vault) {
+      uploadWorkerSession = "";
       uploadWorkerRunning.set(false);
+    }
+  }
+
+  void pauseBackgroundTransfers() {
+    backgroundTransfers.pause();
+    localVideoMessage = BackgroundTransfers.PAUSED;
+  }
+
+  void resumeBackgroundTransfers() {
+    backgroundTransfers.foregroundEntered();
+    if (BackgroundTransfers.PAUSED.equals(localVideoMessage)) localVideoMessage = "";
+    try { heartbeat.execute(this::kickUploads); }
+    catch (RejectedExecutionException ignored) { }
+  }
+
+  private void awaitTransferService(BackgroundTransfers.Ticket ticket) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (!TransferService.isReady()) {
+      ticket.check();
+      if (System.nanoTime() >= deadline)
+        throw new java.io.IOException("Background transfer service did not start.");
+      Thread.sleep(25);
+    }
+    ticket.check();
+  }
+
+  void pauseUploadItem(JSONObject item) throws Exception {
+    item.put("status", item.optBoolean("branded") ? "pending" : "saved_locally")
+        .put("lastError", BackgroundTransfers.PAUSED);
+    if ("processing".equals(item.optString("brandingState")))
+      item.put("brandingState", "");
+    saveQueueItem(item);
+    uploadPercent = -1;
+    String session = item.getString("id");
+    try {
+      heartbeat.execute(() -> {
+        try {
+          JSONObject current = queueItem(session);
+          if (backgroundTransfers.isPaused()
+              && BackgroundTransfers.PAUSED.equals(current.optString("lastError")))
+            reportQueueItem(current);
+        } catch (Exception ignored) { }
+      });
+    }
+    catch (RejectedExecutionException ignored) { }
+  }
+
+  void kickUploads() {
+    if (backgroundTransfers.isPaused() || !server.optBoolean("enabled")
+        || !uploadWorkerRunning.compareAndSet(false, true)) return;
+    JSONObject first = reserveNextUpload();
+    if (first == null) {
+      releaseUploadWorker();
       if (hasPendingUploadWork()) {
         try {
           startService(false, true);
@@ -1886,31 +2452,126 @@ final class Engine {
     try {
       startService(false, true);
     } catch (Exception e) {
-      uploadWorkerRunning.set(false);
+      releaseUploadWorker();
       return;
     }
     uploads.execute(
         () -> {
-          try {
+          try (BackgroundTransfers.Ticket ticket = backgroundTransfers.begin()) {
+            try { awaitTransferService(ticket); }
+            catch (Exception unavailable) {
+              if (!ticket.cancelled()) pauseBackgroundTransfers();
+              return;
+            }
             JSONObject item = first;
-            upload(item);
-            while ((item = nextUpload()) != null) upload(item);
+            upload(item, ticket);
+            while (!ticket.cancelled() && (item = reserveNextUpload()) != null) upload(item, ticket);
+          } catch (java.io.InterruptedIOException paused) {
+            // The durable pause already owns this transition.
           } finally {
-            uploadWorkerRunning.set(false);
-            if (!busy && !hasPendingUploadWork()) RecorderService.stopWhenIdle();
+            releaseUploadWorker();
+            TransferService.stopWhenIdle();
           }
         });
   }
 
-  private void upload(JSONObject item) {
+  private void deferUploadTurn(JSONObject item, long delayMs) throws Exception {
+    item.put("status", "pending")
+        .put("waitingForUploadTurn", true)
+        .put("nextQueueCheckAt", System.currentTimeMillis() + delayMs)
+        .put("nextRetryAt", 0)
+        .put("serverRetryRequired", false)
+        .put("lastError", "");
+    saveQueueItem(item);
+    uploadPercent = -1;
+    TransferService.updateUploadProgress(-1);
+  }
+
+  private boolean stillWaitingForUploadTurn(JSONObject item) throws Exception {
+    if (!item.optBoolean("waitingForUploadTurn")) return false;
+    JSONObject response;
+    try {
+      response = api.tablet("upload-turn", new JSONObject().put("id", item.getString("id")));
+    } catch (Exception unavailable) {
+      // A status probe did not start a transfer and must not use a retry attempt.
+      deferUploadTurn(item, 15_000L);
+      return true;
+    }
+    JSONObject turn = response.getJSONObject("queue");
+    if (turn.optBoolean("allowed") || !java.util.Arrays.asList("pending", "queued", "retrying", "uploading")
+        .contains(turn.optString("state"))) return false;
+    deferUploadTurn(item, 5_000L);
+    return true;
+  }
+
+  // Commit the verified remote result first. A failed delete is local cleanup,
+  // never a failed transfer or a reason to send the file again.
+  boolean saveVerifiedUpload(JSONObject item, File file) throws Exception {
+    synchronized (vault) {
+      persistVerifiedUpload(item);
+      return releaseVerifiedUploadCopy(item, file);
+    }
+  }
+
+  private void persistVerifiedUpload(JSONObject item) throws Exception {
+    item.put("status", "uploaded")
+        .put("progress", 100)
+        .put("cleanupPending", true)
+        .put("presenceReportPending", true)
+        .put("serverRetryRequired", false)
+        .put("failureReportPending", false)
+        .put("waitingForUploadTurn", false)
+        .put("lastError", "")
+        .put("nextRetryAt", 0);
+    saveQueueItem(item);
+  }
+
+  private boolean releaseVerifiedUploadCopy(JSONObject item, File file) throws Exception {
+    if (exportWorkerRunning.get() || !belongsToCurrentDevice(item)) return false;
+    if (file.exists() && (!file.isFile() || !file.delete())) return false;
+    item.put("cleanupPending", false).put("localAvailable", false).put("presenceReportPending", true);
+    saveQueueItem(item);
+    return true;
+  }
+
+  void finishPendingUploadedCopies() throws Exception {
+    synchronized (vault) {
+      JSONArray items = queue();
+      for (int i = 0; i < items.length(); i++) {
+        JSONObject item = items.optJSONObject(i);
+        if (item == null || !item.optBoolean("cleanupPending") || !"uploaded".equals(item.optString("status"))
+            || !belongsToCurrentDevice(item)) continue;
+        String sid = item.getString("id");
+        try {
+          UUID.fromString(sid);
+          // A previous journal write may have failed after updating memory.
+          // Recommit the verified state before attempting deletion on this pass.
+          saveQueueItem(item);
+          releaseVerifiedUploadCopy(item, new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4"));
+        } catch (Exception ignored) {
+          // Retain the private copy for the next cleanup pass.
+        }
+      }
+    }
+  }
+
+  private void upload(JSONObject item, BackgroundTransfers.Ticket ticket) {
     String sid = item.optString("id");
     File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
+    RecorderDiagnostics.Trace trace=diagnostics.begin(item.optString("device"),"upload",sid,
+        queuedWorkCount(),item.optInt("retryCount"),file.length());
+    boolean yieldWhenQueued = supportsUploadBackoff();
+    boolean verifiedUpload = false;
     try {
+      ticket.check();
+      UUID.fromString(sid);
+      if (yieldWhenQueued && stillWaitingForUploadTurn(item)) return;
+      ticket.check();
+      trace.stage("validate");
       boolean retryServerQueue =
           item.optBoolean("serverRetryRequired")
-              || item.optInt("retryCount", 0) > 0
+              || (!item.optBoolean("waitingForUploadTurn") && item.optInt("retryCount", 0) > 0)
               || "retrying".equals(item.optString("status"));
-      UUID.fromString(sid);
       item.put("failureReportPending", false);
       saveQueueItem(item);
       if (!file.isFile() || file.length() < 1024)
@@ -1927,10 +2588,11 @@ final class Engine {
               ? item.optBoolean("audioExpected")
               : expectsAudio(vault.object("camera"));
       if (item.optBoolean("liveLogoRequired")) {
-        LiveLogoEvidence.requireVerified(file);
-        durationMs = RecordedVideo.validate(file, durationMs, audioExpected);
-        item.put("durationMs", durationMs).put("branded", true).put("brandingState", "complete");
+        durationMs = liveRecordingValidation.validate(file, item.optLong("captureDurationMs", durationMs), audioExpected);
+        item.put("durationMs", durationMs).put("branded", true).put("brandingState", "complete")
+            .put("validationPending", false).put("validationFailed", false);
       } else if (!item.optBoolean("branded", false)) {
+        trace.stage("branding");
         item
             .put("status", "saved_locally")
             .put("brandingState", "processing")
@@ -1943,14 +2605,14 @@ final class Engine {
         } catch (Exception ignored) {
         }
         try { durationMs =
-            VideoBranding.apply(context, file, durationMs, audioExpected, () -> false, percent -> {
+            VideoBranding.apply(context, file, durationMs, audioExpected, ticket::cancelled, percent -> {
               try {
                 item.put("brandingProgress", percent);
                 saveQueueItem(item);
-                RecorderService.updateBrandingProgress(percent);
+                TransferService.updateBrandingProgress(percent);
               } catch (Exception ignored) { }
             });
-        } finally { RecorderService.finishBranding(); }
+        } finally { TransferService.finishBranding(); }
         item
             .put("durationMs", durationMs)
             .put("branded", true)
@@ -1959,15 +2621,16 @@ final class Engine {
         RecordedVideo.validate(file, durationMs, audioExpected);
         item.put("brandingState", "complete");
       }
+      ticket.check();
       item.put("brandingProgress", 100);
       item
           .put("status", "pending")
           .put("bytes", file.length())
           .put("lastError", "");
       saveQueueItem(item);
+      trace.stage("saved_report");
       JSONObject savedFields =
-          new JSONObject()
-              .put("id", sid)
+          captureEventFields(item)
               .put("bytes", file.length())
               .put("mime", "video/mp4")
               .put("branding_state", "complete");
@@ -1979,52 +2642,81 @@ final class Engine {
             .put("lastError", new LocalOnlyException(sid).getMessage())
             .put("nextRetryAt", 0);
         saveQueueItem(item);
+        trace.finish(null);
         if (sid.equals(latestSavedSession) && "complete".equals(phase))
           message = "Recording saved locally. Clips under 1 minute are not uploaded or emailed.";
         return;
       }
-      item.put("status", "uploading").put("progress", 0);
-      saveQueueItem(item);
-      uploadPercent = 0;
-      RecorderService.updateUploadProgress(0);
-      final JSONObject uploading = item;
-      UploadTransfer.send(
-          file.length(),
-          api.uploadTransport(sid, file),
-          percent -> {
-            try {
-              uploading.put("status", "uploading").put("progress", percent);
-              saveQueueItem(uploading);
-              uploadPercent = (int) Math.max(0, Math.min(100, percent));
-              RecorderService.updateUploadProgress(uploadPercent);
-            } catch (Exception ignored) {
-            }
-          },
-          waiting -> {
-            try {
-              uploading.put("status", "pending").put("progress", waiting.optInt("percent", 0));
-              saveQueueItem(uploading);
-              uploadPercent = Math.max(0, Math.min(100, waiting.optInt("percent", 0)));
-              RecorderService.updateUploadProgress(uploadPercent);
-            } catch (Exception ignored) {
-            }
-          },
-          retryServerQueue);
-      if (!file.delete() && file.exists())
-        throw new Exception("Upload succeeded, but the local backup could not be released.");
-      item
-          .put("status", "uploaded")
-          .put("progress", 100)
-          .put("localAvailable", false)
-          .put("serverRetryRequired", false)
-          .put("lastError", "")
-          .put("nextRetryAt", 0);
-      saveQueueItem(item);
+      if (!saved.optBoolean("ready")) {
+        uploadPercent = -1;
+        final JSONObject uploading = item;
+        trace.stage("transfer");
+        UploadTransfer.send(
+            file.length(),
+            ticket.guard(api.uploadTransport(sid, file)),
+            new UploadTransfer.Progress() {
+              public void update(long percent) {
+                try {
+                  uploading.put("status", "uploading").put("progress", percent)
+                      .put("waitingForUploadTurn", false).put("nextQueueCheckAt", 0);
+                  saveQueueItem(uploading);
+                  uploadPercent = (int) percent;
+                  TransferService.updateUploadProgress(uploadPercent);
+                } catch (Exception ignored) { }
+              }
+              public void acknowledged(long bytes, long total) {
+                trace.stage("transfer");
+                trace.acknowledged(bytes);
+                try { uploading.put("uploadedBytes", bytes); } catch (JSONException ignored) { }
+                UploadTransfer.Progress.super.acknowledged(bytes, total);
+              }
+              public void verifying(long bytes) {
+                trace.acknowledged(bytes);
+                trace.stage("verify");
+                verifyingUploadSession = sid;
+                try { uploading.put("uploadedBytes", bytes); } catch (JSONException ignored) { }
+                update(99);
+              }
+            },
+            waiting -> {
+              trace.stage("queue_wait");
+              if (yieldWhenQueued) return;
+              try {
+                uploading.put("status", "pending");
+                saveQueueItem(uploading);
+                uploadPercent = -1;
+                TransferService.updateUploadProgress(-1);
+              } catch (Exception ignored) {
+              }
+            },
+            retryServerQueue, yieldWhenQueued);
+      }
+      verifiedUpload = true;
+      trace.stage("cleanup");
+      boolean released = saveVerifiedUpload(item, file);
+      trace.finish(released ? null : new java.io.IOException("Private upload copy cleanup is pending."));
       uploadPercent = 100;
-      RecorderService.updateUploadProgress(100);
+      TransferService.updateUploadProgress(100);
       if (sid.equals(latestSavedSession) && "complete".equals(phase))
         message = "Upload complete. The replay email is being sent.";
+    } catch (UploadTransfer.WaitingForTurn waiting) {
+      trace.waitingForUploadTurn();
+      try { deferUploadTurn(item, 5_000L); }
+      catch (Exception ignored) { /* A restart can recover the durable job. */ }
     } catch (Exception failure) {
+      if (!verifiedUpload && ticket.cancelled()) {
+        trace.pausedBySystem();
+        try { pauseUploadItem(item); } catch (Exception ignored) { }
+        return;
+      }
+      if (verifiedUpload) {
+        trace.finish(failure);
+        // Do not replace a verified upload with an automatic retry if local persistence fails.
+        uploadPercent = -1;
+        if (sid.equals(latestSavedSession) && "complete".equals(phase))
+          message = "Upload complete. The app copy will be released when device storage is available.";
+        return;
+      }
       try {
         int retries = item.optInt("retryCount", 0) + 1;
         String failureMessage =
@@ -2046,13 +2738,19 @@ final class Engine {
             .put("retryCount", retries)
             .put("serverRetryRequired", true)
             .put("failureReportPending", true)
+            .put("waitingForUploadTurn", false)
+            .put("nextQueueCheckAt", 0)
             .put("validationFailed", validationFailed)
             .put("lastError", failureMessage)
             .put("nextRetryAt", permanent ? 0 : System.currentTimeMillis() + delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L)));
-        if (!item.optBoolean("branded", false) && item.has("brandingState"))
+        if (!item.optBoolean("branded", false) && item.has("brandingState") && !item.optBoolean("liveLogoRequired"))
           item.put("brandingState", "failed");
+        if (validationFailed && item.has("captureInterruptionCode")) item.put("validationPending", false);
+        if (!permanent) trace.retryDelay(Math.max(0, item.optLong("nextRetryAt") - System.currentTimeMillis()));
+        trace.finish(failure);
         saveQueueItem(item);
         uploadPercent = -1;
+        TransferService.updateUploadProgress(-1);
         if (sid.equals(latestSavedSession) && "complete".equals(phase))
           message =
               (item.optBoolean("branded", false) ? "Upload" : "Logo processing")
@@ -2063,7 +2761,10 @@ final class Engine {
         } catch (Exception ignored) {
         }
       } catch (Exception ignored) {
+        trace.finish(failure);
       }
+    } finally {
+      verifyingUploadSession = "";
     }
   }
 

@@ -78,7 +78,7 @@ public class LocalFileManifestTest {
       assertEquals("A concurrent upload must not erase a completed device-copy receipt",1234,saved.getLong("exportedAt"));
       assertFalse("A stale upload must not reset an acknowledged receipt",saved.getBoolean("exportReportPending"));
       engine.vault.put("cookies",new JSONObject().put("cb-kiosk","existing-device-credential").toString());
-      engine.enroll("new-code",false);
+      engine.enroll("N".repeat(24),false);
       assertTrue(engine.error.contains("already registered"));assertFalse(engine.busy);
       assertEquals("existing-device-credential",engine.vault.object("cookies").getString("cb-kiosk"));assertNull(report.get());
     } finally {

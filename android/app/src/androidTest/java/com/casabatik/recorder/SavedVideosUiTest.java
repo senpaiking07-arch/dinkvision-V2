@@ -22,7 +22,19 @@ public class SavedVideosUiTest {
     volatile String snapshot;
     volatile boolean acknowledgeStarts=true;
     final List<String> actions = Collections.synchronizedList(new ArrayList<>());
+    final List<String> savedEmails = new CopyOnWriteArrayList<>();
     @JavascriptInterface public String state() { return snapshot; }
+    @JavascriptInterface public String emailHistory(String prefix) throws JSONException {
+      JSONArray matches = new JSONArray();
+      if (prefix.length() >= 3)
+        for (String email : savedEmails) if (email.startsWith(prefix)) matches.put(email);
+      return new JSONObject().put("hasEntries", !savedEmails.isEmpty()).put("suggestions", matches).toString();
+    }
+    @JavascriptInterface public boolean removeSavedEmail(String email) {
+      if (email.isEmpty()) savedEmails.clear();
+      else savedEmails.remove(email);
+      return true;
+    }
     @JavascriptInterface public void action(String action, String value) {
       actions.add(action + ":" + value);
       if(action.equals("start")&&acknowledgeStarts)try{
@@ -59,9 +71,11 @@ public class SavedVideosUiTest {
 
   @Test public void savedVideoControlsFitAndSendTheSelectedVideoToNative() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
+    String packageName = instrumentation.getTargetContext().getPackageName();
+    instrumentation.getUiAutomation().grantRuntimePermission(packageName, android.Manifest.permission.CAMERA);
+    instrumentation.getUiAutomation().grantRuntimePermission(packageName, android.Manifest.permission.RECORD_AUDIO);
     if (android.os.Build.VERSION.SDK_INT >= 33)
-      instrumentation.getUiAutomation().grantRuntimePermission(
-          instrumentation.getTargetContext().getPackageName(), android.Manifest.permission.POST_NOTIFICATIONS);
+      instrumentation.getUiAutomation().grantRuntimePermission(packageName, android.Manifest.permission.POST_NOTIFICATIONS);
     MainActivity activity = (MainActivity) instrumentation.startActivitySync(
         new Intent(instrumentation.getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     Engine engine = Engine.get(activity);
@@ -73,6 +87,7 @@ public class SavedVideosUiTest {
       WebView replacement = new WebView(activity);
       replacement.getSettings().setJavaScriptEnabled(true);
       replacement.getSettings().setAllowFileAccess(false);
+      MainActivity.attachRecipientInsets(replacement);
       activity.setContentView(replacement);
       testingView.set(replacement);
     });
@@ -89,6 +104,8 @@ public class SavedVideosUiTest {
               .put("bytes", 5000000).put("createdAt", 1000).put("validationFailed", true)
               .put("brandingState", "failed").put("lastError", "Saved audio and video do not end together. The original remains on this tablet.")));
     bridge.snapshot = snapshot.toString();
+    bridge.savedEmails.add("saved.player@gmail.com");
+    bridge.savedEmails.add("other.player@gmail.com");
     CountDownLatch loaded = new CountDownLatch(1);
     try {
       instrumentation.runOnMainSync(() -> {
@@ -117,6 +134,33 @@ public class SavedVideosUiTest {
         if (!"true".equals(ready)) Thread.sleep(100);
       }
       assertEquals("Player JavaScript did not load: " + evaluate(web, "document.readyState"), "true", ready);
+      assertEquals("The welcome screen opens re-enrollment on a registered tablet", "true", evaluate(web,
+          "tick();show('welcome');$('reenroll').click();!$('reenroll').hidden"));
+      assertTrue(bridge.actions.contains("setup-reenroll:"));
+      assertEquals("Enrollment and replacement offer a single QR action with an optional code", "true", evaluate(web,
+          "(()=>{for(const replace of [false,true]){showNativeModal({kind:'enrollment',replace});"
+              + "const actions=[...$('modal-actions').children];"
+              + "if(actions[0].textContent!=='Scan enrollment QR'||!actions[0].classList.contains('primary')"
+              + "||actions.some(button=>button.textContent==='Show pairing QR')||$('modal-content').querySelector('input'))return false;"
+              + "actions.find(button=>button.textContent==='Enter code instead').click();"
+              + "if(!$('modal-content').querySelector('input[name=code]'))return false;"
+              + "[...$('modal-actions').children].find(button=>button.textContent==='Back').click();"
+              + "if($('modal').dataset.kind!=='enrollment')return false;}"
+              + "$('modal-actions').querySelector('.primary').click();return $('modal').hidden;})()"));
+      assertTrue(bridge.actions.contains("scan-enrollment:replace"));
+      assertEquals("The scanned pairing code confirms once and uses the typed code action", "true", evaluate(web,
+          "(()=>{showNativeModal({kind:'enrollment-pairing',code:'Abc012_de-Fg',replace:true});"
+              + "const submit=$('modal-actions').querySelector('.primary'),replacement=submit.textContent==='Confirm replacement';"
+              + "submit.click();submit.click();return replacement&&submit.disabled;})()"));
+      assertEquals(1, bridge.actions.stream().filter(a -> a.startsWith("enroll:") && a.contains("Abc012_de-Fg")
+          && a.contains("\"replace\":true")).count());
+      assertEquals("A scanned replacement requires explicit PIN verification", "true", evaluate(web,
+          "(()=>{showNativeModal({kind:'enrollment-pin',invite:'R'.repeat(24),replace:true});"
+              + "const submit=$('modal-actions').querySelector('.primary'),replacement=submit.textContent==='Verify and replace';"
+              + "$('modal-content').querySelector('input').value='654321';submit.click();return replacement&&submit.disabled;})()"));
+      assertTrue(bridge.actions.stream().anyMatch(a -> a.startsWith("enroll-qr:") && a.contains("654321") && a.contains("\"replace\":true")));
+      evaluate(web, "window.dismissNativeModal();true");
+      System.out.println("Verified QR replacement from the Android welcome screen.");
       float density = activity.getResources().getDisplayMetrics().density;
       for (int[] size : new int[][]{{320,480},{360,640},{384,832},{568,320},{600,960},{768,1024},{800,1280},{1024,600},{1024,768},{1280,800},{1600,2560},{2560,1600}}) {
         CountDownLatch laidOut = new CountDownLatch(1);
@@ -142,7 +186,7 @@ public class SavedVideosUiTest {
             +"const heading=document.querySelector('.hero h1').getBoundingClientRect().toJSON();e.hidden=false;r.hidden=false;n.hidden=false;n.textContent='Video and audio confirmed. This tablet is ready for player mode.';"
             +"const moved=ids.filter((id,i)=>{const b=document.getElementById(id).getBoundingClientRect();return Math.abs(b.top-before[i].top)>.5||Math.abs(b.height-before[i].height)>.5;});"
             +"const after=document.querySelector('.hero h1').getBoundingClientRect();if(Math.abs(after.top-heading.top)>.5||Math.abs(after.height-heading.height)>.5)moved.push('headline');"
-            +"const top=document.querySelector('.hero .eyebrow').getBoundingClientRect().top,header=document.querySelector('header').getBoundingClientRect().bottom;"
+            +"const top=after.top,header=document.querySelector('header').getBoundingClientRect().bottom;"
             +"if(top<header-1)moved.push({issue:'heading behind header',top,header,main:document.querySelector('main').getBoundingClientRect().toJSON(),hero:document.querySelector('.hero').getBoundingClientRect().toJSON(),welcome:document.getElementById('welcome').getBoundingClientRect().toJSON(),font:getComputedStyle(document.querySelector('.hero h1')).fontSize,body:getComputedStyle(document.body).gridTemplateRows});for(const id of ['error','notice']){const b=document.getElementById(id).getBoundingClientRect();if(b.top<0||b.bottom>innerHeight||b.left<0||b.right>innerWidth)moved.push(id+' outside viewport');}"
             +"return JSON.stringify(moved);}finally{e.hidden=old.e;n.hidden=old.n;r.hidden=old.r;n.textContent=old.text;}})()");
         assertEquals(Arrays.toString(size)+" notifications must float without moving or clipping the welcome screen "+notifications,"[]",new JSONTokener(notifications).nextValue().toString());
@@ -168,6 +212,53 @@ public class SavedVideosUiTest {
             + "document.getElementById('stop').hidden=false;check('session',['stop']);check('camera-test',['camera-test-confirm','camera-test-retry']);"
             + "show('saved-videos');renderSavedVideos();return JSON.stringify(bad);})()");
         assertEquals(Arrays.toString(size) + " " + journeys, "[]", new JSONTokener(journeys).nextValue().toString());
+        String headers = evaluate(web, """
+            (() => {
+              const header = document.querySelector('header');
+              const logo = header.querySelector('.brand img');
+              const status = header.querySelector('.header-status');
+              const notice = $('connection-notice');
+              const bounds = element => element.getBoundingClientRect().toJSON();
+              const layout = () => JSON.stringify({
+                header: bounds(header), logo: bounds(logo), status: bounds(status),
+                divider: getComputedStyle(header).borderBottomColor,
+                background: getComputedStyle(header, '::before').backgroundColor
+              });
+              show('welcome');
+              const expected = layout();
+              const title = $('welcome').querySelector('h1');
+              const words = document.createRange();
+              words.selectNodeContents(title);
+              const titleBounds = bounds($('welcome'));
+              const clipped = [...words.getClientRects()].some(rect =>
+                rect.left < titleBounds.left || rect.right > titleBounds.right);
+              const mismatched = ['form', 'confirm', 'session', 'camera-test', 'saved-videos'].filter(screen => {
+                show(screen);
+                return layout() !== expected;
+              });
+              if (clipped) mismatched.push('welcome title clipped');
+              const previouslyHidden = notice.hidden;
+              notice.hidden = false;
+              if (bounds(notice).top < bounds(header).bottom || layout() !== expected)
+                mismatched.push('connection notice');
+              notice.hidden = previouslyHidden;
+              if (bounds(logo).right > bounds(status).left) mismatched.push('logo overlaps status');
+              return JSON.stringify(mismatched);
+            })()
+            """);
+        assertEquals(Arrays.toString(size) + " header changes between screens " + headers, "[]",
+            new JSONTokener(headers).nextValue().toString());
+        String keyboardLayout = evaluate(web,
+            "(()=>{show('form');clearRecipientDraft();const input=$('player-email');input.value='sav';input.dispatchEvent(new Event('input'));const backdrop=document.querySelector('.backdrop');"
+            + "const original=backdrop.getBoundingClientRect().toJSON();const keyboard=Math.round(innerHeight*.63);"
+            + "setRecipientKeyboardInset(keyboard*devicePixelRatio);"
+            + "const bad=[$('player-email'),$('add-email'),document.querySelector('#email-form .record'),...$('email-suggestions').querySelectorAll('button')].flatMap(el=>{const r=el.getBoundingClientRect();"
+            + "return r.width>=44&&r.height>=44&&r.top>=0&&r.bottom<=innerHeight-keyboard+1?[]:[{text:el.textContent,r:r.toJSON()}];});"
+            + "const anchored=JSON.stringify(original)===JSON.stringify(backdrop.getBoundingClientRect().toJSON());"
+            + "setRecipientKeyboardInset(0);clearRecipientDraft();return JSON.stringify({bad,anchored,restored:!document.body.classList.contains('recipient-ime')});})()");
+        JSONObject keyboard = new JSONObject(new JSONTokener(keyboardLayout).nextValue().toString());
+        assertEquals(Arrays.toString(size) + " keyboard bounds " + keyboard, 0, keyboard.getJSONArray("bad").length());
+        assertTrue(keyboard.toString(), keyboard.getBoolean("anchored") && keyboard.getBoolean("restored"));
         snapshot.put("testReady",true).put("testToken","layout-check").put("testHasAudio",true)
             .put("testAudioInput","Camera microphone: USB-Audio - EMEET SmartCam C60E 4K")
             .put("recordingProfile","1920 × 1080 · 60 fps target · test 59.9 fps")
@@ -182,7 +273,7 @@ public class SavedVideosUiTest {
         assertTrue(bridge.actions.contains("retry-camera-test:1280x720@60"));
         snapshot.remove("testReady");snapshot.remove("recordingProfile");bridge.snapshot=snapshot.toString();evaluate(web,"tick();true");
         String modals = evaluate(web,
-            "JSON.stringify(['enrollment','saved-enrollment','session-recovery','camera-ready-device','permission','discard','leave','remove-saved-video'].filter(kind=>{showNativeModal({kind,id:'"+first+"'});const e=document.querySelector('.modal-card'),r=e.getBoundingClientRect();"
+            "JSON.stringify(['enrollment','enrollment-code','enrollment-pin','saved-enrollment','session-recovery','camera-ready-device','permission','discard','leave','remove-saved-video'].filter(kind=>{showNativeModal({kind,id:'"+first+"'});const e=document.querySelector('.modal-card'),r=e.getBoundingClientRect();"
             + "return r.top<0||r.bottom>innerHeight+1||e.scrollHeight>e.clientHeight+1||[...document.querySelectorAll('#modal .modal-actions button')].some(b=>b.getBoundingClientRect().height<44);}));");
         assertEquals(Arrays.toString(size) + " " + modals, "[]", new JSONTokener(modals).nextValue().toString());
         evaluate(web, "window.dismissNativeModal();true");
@@ -200,19 +291,47 @@ public class SavedVideosUiTest {
         web.postDelayed(restored::countDown, 300);
       });
       assertTrue(restored.await(3, TimeUnit.SECONDS));
-      evaluate(web,"tick();show('welcome');document.getElementById('begin').click();emails=[];renderEmails();document.getElementById('player-email').value='manual.player@gmail.com';addEmail();document.getElementById('email-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));true");
+      assertEquals("History requires typing and explicit selection; forgetting and clearing affect suggestions", "true", evaluate(web,
+          "(()=>{tick();show('form');clearRecipientDraft();const input=$('player-email'),panel=$('email-suggestions');"
+          + "const type=value=>{input.value=value;input.dispatchEvent(new Event('input'));};"
+          + "type('sa');const hidden=panel.hidden&&emails.length===0;type('sav');"
+          + "const matched=!panel.hidden&&emails.length===0;panel.querySelector('button').click();"
+          + "const selected=emails[0]==='saved.player@gmail.com';clearRecipientDraft();type('sav');"
+          + "panel.querySelector('button:last-child').click();const forgotten=panel.hidden;"
+          + "$('email-history').click();document.querySelector('#modal-actions .primary').click();"
+          + "return hidden&&matched&&selected&&forgotten&&$('email-history').hidden&&emails.length===0;})()"));
+      assertEquals("Validation and editing stay in the recipient flow", "true", evaluate(web,
+          "(()=>{tick();show('welcome');$('begin').click();clearRecipientDraft();const input=$('player-email');"
+          + "const review=()=>document.querySelector('#email-form .record').click();"
+          + "review();const empty=view==='form'&&$('email-count').textContent.includes('at least one');"
+          + "input.value='not-an-address';review();const invalid=input.getAttribute('aria-invalid')==='true';"
+          + "input.value='manual.player@gmail.com';addEmail();input.value='MANUAL.PLAYER@gmail.com';"
+          + "const duplicate=!addEmail()&&emails.length===1;"
+          + "input.value='';review();const opt=$('confirmation-recipients').querySelector('input');"
+          + "const reviewed=view==='confirm'&&$('confirmation-recipients').querySelector('span').textContent==='manual.player@gmail.com'&&!opt.checked;"
+          + "opt.click();"
+          + "$('edit').click();const retained=view==='form'&&emails.length===1;review();"
+          + "return empty&&invalid&&duplicate&&reviewed&&retained&&view==='confirm';})()"));
       long startsBefore=bridge.actions.stream().filter(action->action.startsWith("start:")).count();
       assertEquals("A pending start must preserve the reviewed group", "true", evaluate(web,
           "document.getElementById('record').click();document.getElementById('record').click();emails.length===1&&emails[0]==='manual.player@gmail.com'&&document.getElementById('record').disabled"));
       assertEquals("Repeated taps must not submit another start",startsBefore+1,bridge.actions.stream().filter(action->action.startsWith("start:")).count());
+      String startAction = bridge.actions.stream().filter(action -> action.startsWith("start:")).reduce((a,b) -> b).orElseThrow();
+      JSONObject startPayload = new JSONObject(startAction.substring("start:".length()));
+      assertEquals("manual.player@gmail.com", startPayload.getJSONArray("emails").getString(0));
+      assertTrue(startPayload.getJSONArray("remember").getBoolean(0));
+      assertTrue(startPayload.getInt("tapDelayMs") >= 0);
       snapshot.put("phase","connecting").put("busy",true);bridge.snapshot=snapshot.toString();
       assertEquals("Addresses remain available while connecting", "true",evaluate(web,"tick();view==='session'&&emails.length===1"));
       snapshot.put("phase","error").put("busy",false).put("recoverable",true).put("startHasRecoverableFootage",false).put("error","Controlled start failure")
           .put("session",new JSONObject().put("id",UUID.randomUUID().toString()).put("status","requested"));bridge.snapshot=snapshot.toString();
       assertEquals("An older failed clip must not block a failed start retry for the next group", "true",evaluate(web,"tick();view==='confirm'&&emails.length===1&&!document.getElementById('record').disabled"));
       evaluate(web,"document.getElementById('record').click();true");
-      snapshot.put("phase","recording").put("busy",true).put("elapsedMs",1000);bridge.snapshot=snapshot.toString();
+      snapshot.put("phase","recording").put("busy",true).put("elapsedMs",1000).put("captureAttempt","current-capture");bridge.snapshot=snapshot.toString();
       assertEquals("Recipients clear only once capture has actually started", "true",evaluate(web,"tick();view==='session'&&emails.length===0"));
+      evaluate(web, "$('stop').click();$('stop').click();true");
+      assertEquals("Repeated Stop taps send one attempt-scoped command", 1,
+          bridge.actions.stream().filter(action -> action.equals("stop:current-capture")).count());
       snapshot.put("phase","error").put("busy",false).put("recoverable",true).put("startHasRecoverableFootage",true).put("recoveryKind","partial")
           .put("message","Video and audio confirmed. This tablet is ready for player mode.")
           .put("session",new JSONObject().put("id",first).put("status","recording"));bridge.snapshot=snapshot.toString();
@@ -221,7 +340,7 @@ public class SavedVideosUiTest {
           "document.getElementById('error-message').textContent.includes('Your recording is in Saved videos')&&!document.getElementById('error-message').textContent.includes('Controlled start failure')"));
       assertEquals("Only one notification is shown at a time with a 30-second lifetime","true",evaluate(web,
           "errorNoticeExpiresAt-performance.now()>29000&&errorNoticeExpiresAt-performance.now()<=30000&&document.getElementById('notice').hidden"));
-      Thread.sleep(30_500);
+      evaluate(web, "errorNoticeExpiresAt = statusNoticeExpiresAt = performance.now() - 1;true");
       assertEquals("Polling must not revive expired error or success notices","true",evaluate(web,
           "tick();tick();document.getElementById('error').hidden&&document.getElementById('notice').hidden"));
       snapshot.put("startHasRecoverableFootage",false).put("error","Camera connection changed. Record another test.");bridge.snapshot=snapshot.toString();
@@ -247,11 +366,23 @@ public class SavedVideosUiTest {
       assertEquals("Successful reconnection automatically closes only the stale enrollment-recovery dialog","true",evaluate(web,
           "tick();document.getElementById('modal').hidden"));
       assertEquals("An intentional replacement form must not be dismissed by a healthy state poll","true",evaluate(web,
-          "showNativeModal({kind:'enrollment',replace:true});document.querySelector('#modal-content input').value='staff-entered-code';tick();!document.getElementById('modal').hidden&&document.querySelector('#modal-content input').value==='staff-entered-code'"));
-      snapshot.put("enabled",false).put("initialized",true);bridge.snapshot=snapshot.toString();
+          "showNativeModal({kind:'enrollment-code',replace:true});document.querySelector('#modal-content input').value='staff-entered-code';tick();!document.getElementById('modal').hidden&&document.querySelector('#modal-content input').value==='staff-entered-code'"));
+      evaluate(web, "$('modal-content').querySelector('input').value='Abc012_de-Fg';$('modal-actions').querySelector('.primary').click();true");
+      snapshot.put("error","The server rejected this enrollment code.");bridge.snapshot=snapshot.toString();
+      assertEquals("Enrollment rejection keeps the code form and displays the next action","true",evaluate(web,
+          "tick();!$('modal').hidden&&!$('modal-error').hidden&&$('modal-error').textContent.includes('rejected')"
+              + "&&$('modal-content').querySelector('input').value==='Abc012_de-Fg'&&!$('modal-actions').querySelector('.primary').disabled"));
+      snapshot.put("error","");
+      snapshot.put("enabled",false).put("initialized",true).put("registrationInactive",true);bridge.snapshot=snapshot.toString();
       assertEquals("A server-rejected registration is distinguished from an internet outage","true",evaluate(web,
           "tick();showNativeModal({kind:'saved-enrollment'});document.getElementById('modal-title').textContent==='Registration needs attention'"));
-      snapshot.put("enabled",true);bridge.snapshot=snapshot.toString();evaluate(web,"tick();true");
+      snapshot.put("enabled",true).remove("registrationInactive");bridge.snapshot=snapshot.toString();evaluate(web,"tick();true");
+      assertEquals("QR enrollment requires the full PIN and accepts one submit", "true", evaluate(web,
+          "showNativeModal({kind:'enrollment-pin',invite:'Q'.repeat(24)});const p=$('modal-content').querySelector('input'),b=$('modal-actions').querySelector('.primary');"
+              + "p.value='12345';b.click();const incomplete=!$('modal-error').hidden&&!b.disabled;"
+              + "p.value='012345';b.click();b.click();incomplete&&b.disabled"));
+      assertEquals(1, bridge.actions.stream().filter(a -> a.startsWith("enroll-qr:") && a.contains("012345")).count());
+      evaluate(web, "window.dismissNativeModal();true");
       snapshot.put("tested", false); bridge.snapshot = snapshot.toString();
       assertEquals("Gmail entry must wait for camera confirmation", "true", evaluate(web,
           "tick();show('welcome');document.getElementById('begin').click();view==='welcome'&&document.getElementById('form').hidden"));
@@ -274,6 +405,8 @@ public class SavedVideosUiTest {
       snapshot.put("tested", true); bridge.snapshot = snapshot.toString();
       evaluate(web, "tick();show('form');true");
       Thread.sleep(200);
+      assertEquals("The phone header stays in view on the recipient form", "true", evaluate(web,
+          "document.querySelector('header').getBoundingClientRect().top>=0&&scrollY===0"));
       capture(activity, "form");
       evaluate(web, "window.showNativeModal({kind:'enrollment'});true");
       Thread.sleep(200);
@@ -296,6 +429,17 @@ public class SavedVideosUiTest {
       assertTrue(bridge.actions.contains("save-local-video:"+first));
       assertTrue(bridge.actions.contains("retry-upload:"+first));
       JSONObject currentVideo=snapshot.getJSONArray("savedVideos").getJSONObject(0);
+      currentVideo.put("captureInterruptionCode", "camera_disconnected").put("validationFailed", true);
+      bridge.snapshot = snapshot.toString();
+      assertEquals("An interrupted original remains exportable while playback and upload are blocked", "true",
+          evaluate(web, "tick();$('saved-details').click();"
+              + "$('saved-video-status').textContent.includes('Interrupted recording')&&$('saved-player').hidden"
+              + "&&!$('saved-preview-warning').hidden&&$('saved-retry').hidden&&!$('saved-save').disabled"
+              + "&&$('modal-copy').textContent.includes('The camera disconnected.')"));
+      evaluate(web, "window.dismissNativeModal();true");
+      currentVideo.remove("captureInterruptionCode"); currentVideo.remove("validationFailed");
+      bridge.snapshot = snapshot.toString();
+      evaluate(web, "tick();true");
       assertEquals("A failed video still exposes manual retry after all eight automatic attempts","true",evaluate(web,
           "!document.getElementById('saved-retry').hidden&&!document.getElementById('saved-retry').disabled&&document.getElementById('saved-retry').textContent==='Retry upload'"));
       currentVideo.put("status","retrying").put("retryCount",7);bridge.snapshot=snapshot.toString();
@@ -318,6 +462,11 @@ public class SavedVideosUiTest {
       currentVideo.put("brandingState","complete");bridge.snapshot=snapshot.toString();
       assertEquals("The completed branded video becomes previewable", "true", evaluate(web,
           "tick();renderSavedVideos();!document.getElementById('saved-player').hidden&&document.getElementById('saved-player').hasAttribute('src')&&document.getElementById('saved-processing').hidden"));
+      currentVideo.put("status", "uploading").put("bytes", 2_097_152).put("uploadedBytes", 2_097_152)
+          .put("progress", 99).put("verifyingUpload", true);
+      bridge.snapshot = snapshot.toString();
+      assertEquals("Drive confirmation remains distinct from upload completion", "true", evaluate(web,
+          "tick();$('saved-video-status').textContent==='Verifying upload'&&$('saved-video-meta').textContent.includes('2.0 / 2.0 MB uploaded')&&$('saved-retry').hidden"));
       assertEquals("true", evaluate(web,
           "document.getElementById('saved-previous').click();"
           + "document.getElementById('saved-details').click();"
@@ -327,9 +476,40 @@ public class SavedVideosUiTest {
       assertEquals("true", evaluate(web, "window.dismissNativeModal();tick();document.getElementById('saved-save').disabled&&document.getElementById('saved-save').textContent.includes('42%')"));
       snapshot.put("savedVideos", new JSONArray()); bridge.snapshot = snapshot.toString();
       assertEquals("true", evaluate(web, "tick();!document.getElementById('saved-empty').hidden&&document.getElementById('saved-panel').hidden&&handlePlayerBack()&&!document.getElementById('welcome').hidden"));
+      if (android.os.Build.VERSION.SDK_INT >= 30) assertDockedKeyboard(web);
     } finally {
       engine.busy = oldBusy;
       instrumentation.runOnMainSync(() -> { web.removeJavascriptInterface("CasaNative"); web.destroy(); activity.finish(); });
     }
+  }
+
+  private void assertDockedKeyboard(WebView web) throws Exception {
+    var instrumentation = InstrumentationRegistry.getInstrumentation();
+    evaluate(web, "window.dismissNativeModal();show('form');true");
+    JSONObject before = new JSONObject(new JSONTokener(evaluate(web,
+        "JSON.stringify(document.querySelector('.backdrop').getBoundingClientRect().toJSON())")).nextValue().toString());
+    JSONArray tap = new JSONArray(new JSONTokener(evaluate(web,
+        "(()=>{const r=$('player-email').getBoundingClientRect();return JSON.stringify([(r.left+r.width/2)*devicePixelRatio,(r.top+r.height/2)*devicePixelRatio]);})()"))
+        .nextValue().toString());
+    int[] location = new int[2];
+    instrumentation.runOnMainSync(() -> web.getLocationOnScreen(location));
+    String command = "input tap " + (location[0] + tap.getInt(0)) + " " + (location[1] + tap.getInt(1));
+    instrumentation.getUiAutomation().executeShellCommand(command).close();
+    awaitPlayer(web, "document.activeElement===$('player-email')&&recipientKeyboardInset>40");
+    assertEquals("Email controls must be above the docked keyboard", "true", evaluate(web,
+        "[$('player-email'),$('add-email'),document.querySelector('#email-form .record')].every(el=>el.getBoundingClientRect().bottom<=innerHeight-recipientKeyboardInset+1)"));
+    assertEquals(before.toString(), new JSONTokener(evaluate(web,
+        "JSON.stringify(document.querySelector('.backdrop').getBoundingClientRect().toJSON())")).nextValue().toString());
+    instrumentation.getUiAutomation().executeShellCommand("input keyevent KEYCODE_BACK").close();
+    awaitPlayer(web, "view==='form'&&!document.body.classList.contains('recipient-ime')");
+  }
+
+  private void awaitPlayer(WebView web, String script) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+    while (System.nanoTime() < deadline) {
+      if ("true".equals(evaluate(web, script))) return;
+      Thread.sleep(100);
+    }
+    fail("Player did not reach expected state: " + script);
   }
 }

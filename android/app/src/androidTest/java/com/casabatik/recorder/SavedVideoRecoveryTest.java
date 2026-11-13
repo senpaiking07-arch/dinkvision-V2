@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import android.content.*;
 import android.net.Uri;
 import android.provider.MediaStore;
+import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.*;
@@ -36,7 +37,6 @@ public class SavedVideoRecoveryTest {
         public Context getApplicationContext() { return this; }
         public File getFilesDir() { return root; }
         public File getCacheDir() { return root; }
-        public ComponentName startForegroundService(Intent intent) { return new ComponentName(base, RecorderService.class); }
         public SharedPreferences getSharedPreferences(String name, int mode) {
           return base.getSharedPreferences(namespace + name, mode);
         }
@@ -63,6 +63,13 @@ public class SavedVideoRecoveryTest {
       JSONArray items = engine.vault.array("upload-queue");
       for (int i = 0; i < items.length(); i++) if (id.equals(items.getJSONObject(i).getString("id"))) return items.getJSONObject(i);
       throw new AssertionError("Missing fixture item");
+    }
+    void exportGallery(String id) throws Exception {
+      try (var activity = ActivityScenario.launch(MainActivity.class)) {
+        activity.onActivity(ignored -> engine.exportLocalVideo(id, null));
+        engine.exports.submit(() -> {}).get(15, TimeUnit.SECONDS);
+        assertEquals("", engine.localVideoError);
+      }
     }
     public void close() throws Exception {
       for (Uri uri : copies) if (LocalVideoExporter.readable(context.getContentResolver(), uri.toString()))
@@ -104,9 +111,7 @@ public class SavedVideoRecoveryTest {
     try (Fixture f = new Fixture()) {
       String id = f.add(f.device, "failed");
       byte[] original = Files.readAllBytes(f.engine.localPlaybackFile(id).toPath());
-      f.engine.exportLocalVideo(id, null);
-      f.engine.exports.submit(() -> {}).get(15, TimeUnit.SECONDS);
-      assertEquals("", f.engine.localVideoError);
+      f.exportGallery(id);
       Uri uri = Uri.parse(f.item(id).getString("exportedUri")); f.copies.add(uri);
       try (InputStream copy = f.context.getContentResolver().openInputStream(uri)) {
         assertArrayEquals(original, copy.readAllBytes());
@@ -115,8 +120,7 @@ public class SavedVideoRecoveryTest {
           new String[]{MediaStore.Video.Media.IS_PENDING, MediaStore.Video.Media.RELATIVE_PATH}, null, null, null)) {
         assertTrue(row.moveToFirst()); assertEquals(0, row.getInt(0)); assertEquals("Movies/DinkVision/", row.getString(1));
       }
-      f.engine.exportLocalVideo(id, null);
-      f.engine.exports.submit(() -> {}).get(15, TimeUnit.SECONDS);
+      f.exportGallery(id);
       Uri another = Uri.parse(f.item(id).getString("exportedUri")); f.copies.add(another);
       assertNotEquals(uri, another);
       assertTrue(LocalVideoExporter.readable(f.context.getContentResolver(), uri.toString()));
@@ -159,7 +163,7 @@ public class SavedVideoRecoveryTest {
     };
     try(Fixture f=new Fixture(transport)){
       String id=f.add(f.device,"local_only");
-      f.engine.exportLocalVideo(id,null);f.engine.exports.submit(()->{}).get(15,TimeUnit.SECONDS);
+      f.exportGallery(id);
       Uri copy=Uri.parse(f.item(id).getString("exportedUri"));f.copies.add(copy);
       f.engine.removeLocalVideo(id);f.engine.exports.submit(()->{}).get(15,TimeUnit.SECONDS);
       JSONObject stale=f.item(id);
@@ -180,7 +184,7 @@ public class SavedVideoRecoveryTest {
     org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT>=29);
     try(Fixture f=new Fixture()){
       String id=f.add(f.device,"local_only");
-      f.engine.exportLocalVideo(id,null);f.engine.exports.submit(()->{}).get(15,TimeUnit.SECONDS);
+      f.exportGallery(id);
       Uri copy=Uri.parse(f.item(id).getString("exportedUri"));f.copies.add(copy);
       byte[] expected=Files.readAllBytes(f.engine.localPlaybackFile(id).toPath());
       assertTrue(LocalVideoExporter.verifiedCopy(f.context.getContentResolver(),copy.toString(),expected.length));
@@ -225,7 +229,7 @@ public class SavedVideoRecoveryTest {
       String id=f.add(f.device,"failed");File source=f.engine.localPlaybackFile(id);
       f.engine.removeLocalVideo(id);f.engine.exports.submit(()->{}).get(10,TimeUnit.SECONDS);
       assertTrue(source.isFile());assertTrue(f.engine.localVideoError.contains("Save a verified"));
-      f.engine.exportLocalVideo(id,null);f.engine.exports.submit(()->{}).get(15,TimeUnit.SECONDS);
+      f.exportGallery(id);
       Uri copy=Uri.parse(f.item(id).getString("exportedUri"));f.copies.add(copy);
       f.engine.busy=true;f.engine.removeLocalVideo(id);f.engine.exports.submit(()->{}).get(10,TimeUnit.SECONDS);
       assertTrue(source.isFile());f.engine.busy=false;
@@ -245,7 +249,7 @@ public class SavedVideoRecoveryTest {
     org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT>=29);
     try(Fixture f=new Fixture()){
       String id=f.add(f.device,"local_only");
-      f.engine.exportLocalVideo(id,null);f.engine.exports.submit(()->{}).get(15,TimeUnit.SECONDS);
+      f.exportGallery(id);
       f.copies.add(Uri.parse(f.item(id).getString("exportedUri")));
       JSONArray queue=f.engine.vault.array("upload-queue");queue.getJSONObject(0).put("removalPending",true);
       f.engine.vault.put("upload-queue",queue.toString());

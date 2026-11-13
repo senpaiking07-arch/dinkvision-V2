@@ -1,4 +1,25 @@
 import test from'node:test';import assert from'node:assert/strict';import{deviceQueueOrder,isQueuedWork,visibleDeviceQueueItem}from'../lib/device-queue-order';
+import { recordingStageLabel } from "../lib/local-video-status";
+test("Drive-acknowledged bytes distinguish transfer from verification and completion", () => {
+  const row = { upload_state: "uploading", bytes: 10_000, uploaded_bytes: 9999 };
+  assert.equal(recordingStageLabel(row, 0), "Uploading 99%");
+  assert.equal(recordingStageLabel({ ...row, uploaded_bytes: row.bytes }, 0), "Verifying upload");
+  assert.equal(recordingStageLabel({ ...row, upload_state: "uploaded" }, 0), "Uploaded");
+  assert.equal(recordingStageLabel({ upload_state: "failed",
+    recording_sessions: { capture_inspection_required: true } }, 0), "Interrupted video · inspection required");
+});
+test("deferred work appears after eligible FIFO work and changes label when its delay elapses", () => {
+  const now = Date.parse("2026-11-12T02:00:00Z");
+  const retry = { session_id: "retry", upload_state: "retrying", branding_state: "complete",
+    upload_queued_at: "2026-11-12T01:00:00Z", upload_retry_at: "2026-11-12T02:05:00Z" };
+  const waiting = { session_id: "wait", upload_state: "pending", branding_state: "complete",
+    upload_queued_at: "2026-11-12T01:55:00Z", upload_retry_at: null };
+  assert.deepEqual(deviceQueueOrder([retry, waiting], now).map(row => row.session_id), ["wait", "retry"]);
+  assert.equal(recordingStageLabel(retry, now), "Upload retry scheduled");
+  assert.equal(recordingStageLabel(waiting, now), "Waiting to upload");
+  assert.deepEqual(deviceQueueOrder([retry, waiting], now + 300_001).map(row => row.session_id), ["retry", "wait"]);
+  assert.equal(recordingStageLabel(retry, now + 300_001), "Waiting to upload");
+});
 test('Admin shows current processing first, FIFO waiting work next, then retry and history',()=>{
  const rows=[{session_id:'new',upload_state:'saved_locally',client_created_at:'2026-11-02T02:00:00Z'},
  {session_id:'old',upload_state:'pending',client_created_at:'2026-11-02T01:00:00Z'},

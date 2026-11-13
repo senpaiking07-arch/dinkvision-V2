@@ -240,18 +240,20 @@ export default function BrowserTabletSetup() {
               <div className="admin-callout" role="status">
                 <strong>Already registered as {state.device.name}</strong>
                 <p>
-                  Enter a different enrollment code to replace this browser’s
+                  Enter the new pairing code to replace this browser’s
                   current registration. This does not delete saved recording
                   logs.
                 </p>
               </div>
             )}
             <label>
-              Enrollment code
+              Pairing code
               <input
                 name="code"
                 required
                 autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder="Code from Devices & cameras"
               />
             </label>

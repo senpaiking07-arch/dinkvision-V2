@@ -47,7 +47,18 @@ test("two tenants isolate table reads, writes, device RPCs, queue claims and rev
       return {court,kiosk,device,session,file};
     };
     const fa=await fixture(a,ownerA),fb=await fixture(b,ownerB);
+    await scope(a,"","service_role");
+    const interruptionWrite = `update public.recording_sessions set capture_interruption_code=$4
+      where id=$1 and kiosk_id=$2 and tenant_id=$3 and capture_interruption_code is null returning id`;
+    await assert.rejects(() => db.query(interruptionWrite, [fa.session, fa.kiosk, a, "raw message"]), /capture_interruption_check/);
+    assert.equal((await db.query(interruptionWrite, [fa.session, fb.kiosk, a, "unknown"])).rows.length, 0);
+    assert.equal((await db.query(interruptionWrite, [fb.session, fb.kiosk, a, "unknown"])).rows.length, 0);
+    assert.equal((await db.query(interruptionWrite, [fa.session, fa.kiosk, a, "camera_disconnected"])).rows.length, 1);
+    assert.equal((await db.query(interruptionWrite, [fa.session, fa.kiosk, a, "camera_failure"])).rows.length, 0);
     await scope(a,ownerA,"authenticated");
+    const details = await db.query("select capture_interruption_code,capture_interrupted_at from public.recording_sessions where id=$1", [fa.session]);
+    assert.deepEqual(details.rows, [{capture_interruption_code:"camera_disconnected",capture_interrupted_at:null}]);
+    assert.equal((await db.query("select capture_interruption_code from public.recording_sessions where id=$1", [fb.session])).rows.length, 0);
     for(const table of ["courts","recording_sessions","recording_files","audit_events","venue_settings"]){
       const rows=await db.query<{tenant_id:string}>(`select tenant_id from public.${table}`);
       assert.ok(rows.rows.length>0,`${table} own data visible`);

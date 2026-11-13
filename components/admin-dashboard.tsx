@@ -25,6 +25,7 @@ import type {
 import { cameraOnline } from "@/lib/recorder-status";
 import { recordingIsConfirmed } from "@/lib/recording-status";
 import {recordingDiagnostics} from "@/lib/recording-diagnostics";
+import {RecorderTimeline} from "@/components/recorder-timeline";
 
 type Tab = "overview" | "courts" | "cameras" | "settings" | "logs";
 function SaveForm({
@@ -686,6 +687,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                         <details>
                           <summary>View</summary>
                           <p>ID: {session.id}</p>
+                          <RecorderTimeline sessionId={session.id}/>
                           {session.status === "recording" && !confirmed(session) && <p>The server still holds this capture open. Its last report is stale or its recording limit has passed. Reconnect the original device; preserve its saved videos while reconciling this session.</p>}
                           {session.configuration_snapshot?.capture_mode ===
                             "browser" && (
@@ -715,6 +717,17 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                               : "—"}
                           </p>
                           <p>Reason: {recordingDiagnostics(session).reason}</p>
+                          {recordingDiagnostics(session).interruption && (
+                            <p>
+                              <strong>Interrupted recording</strong>
+                              <br />
+                              {recordingDiagnostics(session).interruption}
+                              {session.capture_interrupted_at && ` · ${timestamp(session.capture_interrupted_at)}`}
+                              {recordingDiagnostics(session).recoveredDuration && (
+                                <><br />Recovered footage · {recordingDiagnostics(session).recoveredDuration}</>
+                              )}
+                            </p>
+                          )}
                           <p>Failure stage: {recordingDiagnostics(session).stage}</p>
                           {recordingDiagnostics(session).detail && <p>Device report: {recordingDiagnostics(session).detail}</p>}
                           {recordingDiagnostics(session).help && <p>What to do: {recordingDiagnostics(session).help}</p>}
