@@ -20,13 +20,14 @@ export default async function PairDevicePage({ searchParams }: {
 }) {
   let requestId = "";
   try { requestId = uuid((await searchParams).request); } catch { }
+  if (!requestId) redirect("/admin");
   const { account } = await getAccount();
-  const path = requestId ? `/admin/pair-device?request=${requestId}` : "/admin/pair-device";
+  const path = `/admin/pair-device?request=${requestId}`;
   if (!account) return <main className="auth-page">
     <section className="auth-card">
       <h1>Pair a tablet</h1>
       <p>Sign in with your venue administrator account to approve the tablet.</p>
-      <p><a className="primary" href={`/admin/login?pair=${requestId || "manual"}`}>Sign in to Admin</a></p>
+      <p><a className="primary" href={`/admin/login?pair=${requestId}`}>Sign in to Admin</a></p>
       <PairingBrowserFallback path={path} />
     </section>
   </main>;

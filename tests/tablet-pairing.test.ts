@@ -72,6 +72,22 @@ test("tablet pairing requires venue approval and private claim, survives reply l
     assert.equal(await claim(expired,"expired-proof","expired-token"), "expired");
     const rows = (await db.query("select id from kiosk_devices where tenant_id=$1 and active",[tenant])).rows;
     assert.equal(rows.length, 1);
+    const enrollmentHashes = async () => (await db.query(
+      "select enrollment_hash, consumed_enrollment_hash from browser_devices where id=$1", [device],
+    )).rows[0];
+    await db.query("update browser_devices set enrollment_hash='replacement-invitation', enrollment_expires_at=now()+interval '10 minutes' where id=$1", [device]);
+    assert.deepEqual(await enrollmentHashes(), {
+      enrollment_hash: "replacement-invitation", consumed_enrollment_hash: "private-proof",
+    });
+    await db.query("update browser_devices set enabled=false,enrollment_hash=null,setup_hash=null where id=$1", [device]);
+    assert.deepEqual(await enrollmentHashes(), {
+      enrollment_hash: null, consumed_enrollment_hash: "private-proof",
+    });
+    await db.query("update browser_devices set enabled=true,enrollment_hash='new-invitation',enrollment_expires_at=now()+interval '10 minutes' where id=$1", [device]);
+    await value("public.enroll_browser($1,$2,$3,$4,null)", ["new-invitation", "new-token", "new-setup", admin]);
+    assert.deepEqual(await enrollmentHashes(), {
+      enrollment_hash: null, consumed_enrollment_hash: "new-invitation",
+    });
   } finally {
     await db.close();
   }

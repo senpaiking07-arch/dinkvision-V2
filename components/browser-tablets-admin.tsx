@@ -1,6 +1,6 @@
 "use client";
 import {RecorderTimeline} from "@/components/recorder-timeline";
-import { EnrollmentQrDetails, enrollmentQrFromResponse, reserveEnrollmentTab, showEnrollmentTab, type EnrollmentQr } from "@/components/admin-enrollment-qr";
+import { EnrollmentInvitation, enrollmentQrFromResponse, reserveEnrollmentTab, showEnrollmentTab, type EnrollmentQr } from "@/components/admin-enrollment-qr";
 import { useEffect, useRef, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { videoRetryLabel } from "@/lib/upload-recovery";
@@ -163,7 +163,6 @@ export default function BrowserTabletsAdmin() {
           Add device
         </button>
       </div>
-      <p><a className="secondary" href="/admin/pair-device">Pair device</a></p>
       <div className="browser-device-grid">
         <section className="browser-device-column" aria-busy={loading}>
           <div className="tablet-panel-heading">
@@ -766,17 +765,13 @@ export default function BrowserTabletsAdmin() {
             aria-describedby="enroll-desc"
           >
             <h2 id="enroll-title">Enroll your device</h2>
-            <p id="enroll-desc">Scan this QR in DinkVision or enter the pairing code below. Single use · expires in 10 minutes.</p>
-            <EnrollmentQrDetails invitation={qrEnrollment} />
+            <p id="enroll-desc">Check the status of this single-use invitation.</p>
+            <EnrollmentInvitation invitation={qrEnrollment}
+              instructions="Scan this QR in DinkVision or enter the pairing code below."
+              openTab={() => {
+                if (showEnrollmentTab(reserveEnrollmentTab(), qrEnrollment)) setQrEnrollment(null);
+              }} />
             <div className="confirm-modal-actions">
-              <button type="button" className="sign-in" disabled={busy}
-                onClick={() => {
-                  if (showEnrollmentTab(reserveEnrollmentTab(), qrEnrollment)) {
-                    setQrEnrollment(null);
-                  }
-                }}>
-                Open QR tab
-              </button>
               <button
                 type="button"
                 className="primary"
