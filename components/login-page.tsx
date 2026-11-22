@@ -2,6 +2,7 @@ import LoginForm from "./login-form";
 import { isConfigured } from "@/lib/supabase-server";
 import { getAccount } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { WebsiteHeader } from "@/components/website-frame";
 
 export default async function LoginPage({
   admin = false,
@@ -13,20 +14,16 @@ export default async function LoginPage({
   const { account, problem } = await getAccount();
   if (account && (!admin || account.role === "admin"))
     redirect(account.role === "admin" ? next || "/admin" : "/");
-  return (
-    <main className="auth-page">
-      <a className="brand" href="/">
-        <img src="/dink-vision-logo.png" alt="Dink Vision" />
-      </a>
-      <section className="auth-card">
-        <div className="eyebrow">
-          {admin ? "VENUE MANAGEMENT" : "WELCOME BACK TO THE COURT"}
-        </div>
-        <h1>{admin ? "A place for every game." : "Your next good game."}</h1>
+  return <>
+    <WebsiteHeader back={{ href: "/", label: "Recording screen" }} />
+    <main className="shell website-main">
+      <div className="website-sign-in">
+        <section className="website-panel">
+        <h1>{admin ? "Venue sign-in" : "Player sign-in"}</h1>
         <p>
           {admin
             ? "Manage your courts, cameras, and club settings."
-            : "Sign in to see your courts and match recordings."}
+            : "Sign in to access your venue’s courts."}
         </p>
         {problem && (
           <p className="form-error" role="alert">
@@ -34,13 +31,10 @@ export default async function LoginPage({
           </p>
         )}
         <LoginForm admin={admin} next={next} configured={isConfigured()} />
-      </section>
-      <a className="auth-switch" href={admin ? "/login" : "/admin/login"}>
-        {admin ? "Player sign-in" : "Venue administrator? Sign in here"}
-      </a>
-      <a className="auth-switch" href="/">
-        ← Back to Venue
-      </a>
+        {!admin && <a className="auth-switch" href="/admin/login">Venue administrator sign-in</a>}
+        </section>
+        <div className="site-court-art website-sign-in-art" aria-hidden="true" />
+      </div>
     </main>
-  );
+  </>;
 }

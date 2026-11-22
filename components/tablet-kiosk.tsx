@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Pointer, Square, X, Plus } from "lucide-react";
-import CourtArt from "./court-art";
+import { ArrowLeft, ArrowRight, Camera, CircleHelp, Mail, MapPin, Square, Video, X, Plus } from "lucide-react";
+import { AdminSkeleton, SkeletonBlock } from "@/components/admin-skeleton";
 import { localPlayerRecording, hideQueuedSession } from "@/lib/player-session";
 import { BrowserCapture, tabletRequest } from "@/lib/browser-recorder";
 import { getMeta, listMeta, savedVideo, removeVideo, type LocalRecording } from "@/lib/browser-storage";
@@ -477,58 +477,46 @@ export default function TabletKiosk({
             Back
           </button>
         )}
+        {!session && screen === "welcome" && !preview && <nav className="player-header-links" aria-label="Venue tools">
+          <a href="/tablet/setup">Tablet setup</a>
+          <a href="/admin">Venue admin</a>
+        </nav>}
       </header>
-      <img
-        className="tablet-watermark"
-        src="/dink-vision-logo.png"
-        alt=""
-        aria-hidden="true"
-      />
       {!session && screen === "welcome" && (
         <>
         {completionNotice && (
           <p className="tablet-saved-toast" role="status">{completionNotice}</p>
         )}
-        <button
-          className="tablet-welcome"
-          aria-label="Tap to start recording your match"
-          onClick={() => {
-            setScreen("form");
-            setError("");
-            setCompletionNotice("");
-            lastTouch.current = Date.now();
-          }}
-        >
-          <div className="tablet-hero">
-            <div className="tablet-copy">
-              <p className="tablet-eyebrow">
-                <i />
-                GOOD GAMES DESERVE A REPLAY
-              </p>
-              <h1>
-                Your court.
-                <br />
-                Your <em>moment.</em>
-              </h1>
-              <p className="tablet-tagline">
-                The rallies. The close calls. That winning shot.
-                <br />
-                Record your match and take a little of the court home.
-              </p>
-            </div>
-            <div className="tablet-art">
-              <div className="tablet-orbit" />
-              <CourtArt />
-            </div>
+        <section className="player-hero site-court-art">
+          <div className="player-hero-content">
+            <h1>Record your match.</h1>
+            <p>Add your team’s emails and get a private replay when the upload finishes.</p>
+            <button className="player-start" type="button" onClick={() => {
+              setScreen("form");
+              setCompletionNotice("");
+              if (!connectionError.current) setError("");
+              lastTouch.current = Date.now();
+            }}><Video size={21} aria-hidden="true" /> Set up recording <ArrowRight size={18} aria-hidden="true" /></button>
           </div>
-          <div className="tablet-tap">
-            <div className="tap-hand">
-              <span />
-              <Pointer strokeWidth={1.7} />
+        </section>
+        <div className="player-quick-info">
+          <section className="player-info-card">
+            <MapPin size={21} aria-hidden="true" />
+            <div><h2>Assigned court</h2>
+              {!state && !error ? <AdminSkeleton label="Checking court assignment"><SkeletonBlock className="is-medium" /></AdminSkeleton>
+                : !state ? <p>Venue connection unavailable</p>
+                  : <p>{selected?.name || (state.enabled ? "Court assignment needed" : "Tablet setup required")}</p>}
             </div>
-            <span>Tap to start</span>
-          </div>
-        </button>
+            {selected && <span className={`recorder-state ${selected.camera_status === "online" ? "is-success" : "is-warning"}`}>
+              {selected.camera_status === "online" ? "Camera ready" : "Camera needs attention"}
+            </span>}
+          </section>
+          <section className="player-info-card">
+            <Mail size={21} aria-hidden="true" />
+            <div><h2>Find your replay</h2><p>Open the link sent to the email you entered before recording.</p></div>
+            {!preview && state?.enabled && state.browser && <a href="/tablet/clips">Saved videos <ArrowRight size={15} aria-hidden="true" /></a>}
+          </section>
+        </div>
         </>
       )}
       {!session && screen === "form" && (
@@ -538,11 +526,15 @@ export default function TabletKiosk({
             Add one email address at a time. You can register up to 4 recipients.
           </p>
           {!state ? (
-            <p role="status">Connecting to the venue…</p>
+            error ? <p className="tablet-helper" role="status">Venue connection unavailable</p>
+              : <div className="player-form-skeleton"><AdminSkeleton label="Connecting to the venue">
+                  <SkeletonBlock className="is-card" /><SkeletonBlock className="is-field" /><SkeletonBlock className="is-field" />
+                </AdminSkeleton></div>
           ) : !state.enabled ? (
             <div className="tablet-setup">
+              <CircleHelp size={26} aria-hidden="true" />
               <p>
-                This tablet needs a one-time setup by the venue administrator.
+                Ask the venue administrator to register this tablet before recording.
               </p>
               <a href="/tablet/setup">Register this tablet</a>
             </div>
@@ -562,7 +554,7 @@ export default function TabletKiosk({
               <div className="tablet-assigned-entry">
                 <label>Assigned court</label>
                 <div className="tablet-assigned-court">
-                  {selected?.name || "Court assignment needed"}
+                  <span><Camera size={20} aria-hidden="true" /> {selected?.name || "Court assignment needed"}</span>
                   {selected?.camera_status !== "online" && (
                     <small>
                       Ask the administrator to check this tablet and camera.
@@ -602,7 +594,7 @@ export default function TabletKiosk({
                     <Plus size={17} /> Add email
                   </button>
                 </div>
-                <p className="tablet-email-hint">Registered emails ({emails.length}/4) · At least 1 is required.</p>
+                <p className="tablet-email-hint">{emails.length} of 4 recipients added</p>
                 {emails.length > 0 && (
                   <div className="tablet-email-list" aria-label="Added email accounts">
                     {emails.map((address) => (
@@ -632,11 +624,8 @@ export default function TabletKiosk({
                 }
               >
                 <i />
-                <span>
-                  Start
-                  <br />
-                  Recording
-                </span>
+                <span>Review and record</span>
+                <ArrowRight size={19} aria-hidden="true" />
               </button>
               <p className="tablet-helper">
                 At least one valid email address is required. Added players receive the same replay.
@@ -711,7 +700,7 @@ export default function TabletKiosk({
             {["deleted", "deleting"].includes(session.status)
               ? "This replay has expired."
               : session.status === "recording"
-                ? "Stay in the game."
+                ? "Recording in progress"
                 : session.status === "requested" ||
                     session.status === "starting"
                   ? "Getting ready…"
@@ -729,7 +718,7 @@ export default function TabletKiosk({
           </h1>
           {session.status === "recording" ? (
             <>
-              <p className="tablet-countdown">{clock}</p>
+              <p className="tablet-countdown" role="timer" aria-live="off">{clock}</p>
               <p>
                 {state?.browser
                   ? "Keep this recording tab open and the device awake. You can switch tabs; return here to stop recording."

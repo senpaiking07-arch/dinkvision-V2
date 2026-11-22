@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import PairTablet from "@/components/pair-tablet";
 import PairingBrowserFallback from "@/components/pairing-browser-fallback";
+import { WebsiteMessage } from "@/components/website-frame";
 import { getAccount } from "@/lib/auth";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { serverSupabase } from "@/lib/supabase-server";
@@ -23,14 +24,11 @@ export default async function PairDevicePage({ searchParams }: {
   if (!requestId) redirect("/admin");
   const { account } = await getAccount();
   const path = `/admin/pair-device?request=${requestId}`;
-  if (!account) return <main className="auth-page">
-    <section className="auth-card">
-      <h1>Pair a tablet</h1>
+  if (!account) return <WebsiteMessage title="Pair a tablet">
       <p>Sign in with your venue administrator account to approve the tablet.</p>
       <p><a className="primary" href={`/admin/login?pair=${requestId}`}>Sign in to Admin</a></p>
       <PairingBrowserFallback path={path} />
-    </section>
-  </main>;
+  </WebsiteMessage>;
   if (account.role !== "admin") redirect("/");
   const selected = (await cookies()).get(TENANT_COOKIE)?.value;
   const tenant = selected ? uuid(selected) : DEFAULT_TENANT_ID;
@@ -46,14 +44,11 @@ export default async function PairDevicePage({ searchParams }: {
     const court = activeCourts.get(device.court_id);
     return court ? [{ id: device.id, name: device.name, courtId: device.court_id, court }] : [];
   });
-  return <main className="auth-page">
-    <section className="auth-card">
-      <h1>Pair a tablet</h1>
+  return <WebsiteMessage title="Pair a tablet">
       <p>Match the six digits on the tablet. Select the device and court you intend to activate.</p>
       {devices.error || courts.error ? <p role="alert">Device assignments are unavailable. Reload to try again.</p>
         : <PairTablet requestId={requestId} devices={choices} />}
       <PairingBrowserFallback path={path} />
-      <p><a href="/admin">Back to Admin</a></p>
-    </section>
-  </main>;
+      <p><a className="sign-in" href="/admin">Back to Admin</a></p>
+  </WebsiteMessage>;
 }

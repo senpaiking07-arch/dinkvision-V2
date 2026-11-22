@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { enrollmentPin } from "@/lib/tablet-enrollment";
+import { AdminSkeleton, SkeletonBlock } from "@/components/admin-skeleton";
 
 export default function TabletQrEnrollment({ invite }: { invite: string }) {
   const [pin, setPin] = useState("");
@@ -24,17 +25,17 @@ export default function TabletQrEnrollment({ invite }: { invite: string }) {
     setLoaded(true);
   }, []);
   const credential = code || invite;
-  if (!credential)
-    return <p role="status">{loaded ? "Scan a valid enrollment QR from Devices & cameras in Admin." : "Checking enrollment invitation…"}</p>;
+  if (!loaded) return <AdminSkeleton label="Checking enrollment invitation"><SkeletonBlock className="is-field" /></AdminSkeleton>;
+  if (!credential) return <p role="status">Scan a valid enrollment QR from Devices &amp; cameras in Admin.</p>;
   const appLink = `intent://enroll/${credential}#Intent;scheme=dinkvision-recorder;package=${appPackage};end`;
 
   return (
     <>
       <p>{code ? "Open DinkVision to confirm pairing on this tablet." : "For the Android recorder, open the app and enter the six-digit PIN shown in Admin."}</p>
       <p><a className="sign-in primary" href={appLink}>Open DinkVision Android app</a></p>
-      <details>
+      <details className="website-disclosure">
         <summary>Enroll the browser instead</summary>
-        <form onSubmit={async (event) => {
+        <form className="stack-form" onSubmit={async (event) => {
           event.preventDefault();
           if ((!code && !enrollmentPin.test(pin)) || submitting.current) return;
           submitting.current = true;

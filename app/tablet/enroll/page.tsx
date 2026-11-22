@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import TabletQrEnrollment from "@/components/tablet-qr-enrollment";
 import { legacyEnrollmentCode } from "@/lib/tablet-enrollment";
+import { WebsiteMessage } from "@/components/website-frame";
 import "../../admin.css";
 
 export const metadata: Metadata = {
@@ -14,11 +15,8 @@ export default async function EnrollmentPage({ searchParams }: {
 }) {
   const { invite } = await searchParams;
   return (
-    <main className="shell admin-main">
-      <section className="confirm-modal">
-        <h1>Enroll this tablet</h1>
+    <WebsiteMessage title="Pair this tablet">
         <TabletQrEnrollment invite={typeof invite === "string" && legacyEnrollmentCode.test(invite) ? invite : ""} />
-      </section>
-    </main>
+    </WebsiteMessage>
   );
 }

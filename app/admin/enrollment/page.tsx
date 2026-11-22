@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import AdminEnrollmentQr from "@/components/admin-enrollment-qr";
+import { WebsiteHeader } from "@/components/website-frame";
 import { getAccount } from "@/lib/auth";
 
 export const metadata: Metadata = {
@@ -13,5 +14,8 @@ export default async function AdminEnrollmentPage() {
   const { account } = await getAccount();
   if (!account) redirect("/admin/login");
   if (account.role !== "admin") redirect("/");
-  return <main className="auth-page"><AdminEnrollmentQr /></main>;
+  return <>
+    <WebsiteHeader />
+    <main className="shell website-main"><AdminEnrollmentQr /></main>
+  </>;
 }

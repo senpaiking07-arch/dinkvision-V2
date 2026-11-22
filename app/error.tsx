@@ -1,20 +1,14 @@
 "use client";
+import { WebsiteMessage } from "@/components/website-frame";
+
 export default function ErrorPage({ reset }: { reset: () => void }) {
   return (
-    <main className="auth-page">
-      <section className="auth-card">
-        <h1>A short pause.</h1>
-        <p>
-          The service is temporarily unavailable. Your recordings and settings
-          have not been changed by this page.
-        </p>
-        <button className="primary" onClick={reset}>
-          Try again
-        </button>
-        <a className="auth-switch" href="/">
-          Back to Dink Vision
-        </a>
-      </section>
-    </main>
+    <WebsiteMessage title="DinkVision could not load">
+      <p>Try loading this page again or return to the recording screen.</p>
+      <div className="website-actions">
+        <button className="primary" onClick={reset}>Try again</button>
+        <a className="sign-in" href="/">Recording screen</a>
+      </div>
+    </WebsiteMessage>
   );
 }

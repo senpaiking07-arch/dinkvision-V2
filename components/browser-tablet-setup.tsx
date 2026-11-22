@@ -1,5 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { AdminSkeleton, SkeletonBlock } from "@/components/admin-skeleton";
+import { WebsiteHeader } from "@/components/website-frame";
 import {
   openCamera,
   testCamera,
@@ -202,15 +204,19 @@ export default function BrowserTabletSetup() {
     });
   }
   return (
-    <main className="shell admin-main">
-      <section className="admin-card tablet-enrollment">
-        <a href="/">← Player screen</a>
-        <h1>Set up this tablet</h1>
-        <p>Dink Vision · Browser recording</p>
+    <>
+    <WebsiteHeader back={{ href: "/", label: "Recording screen" }} />
+    <main className="shell website-main">
+      <section className="admin-card website-panel tablet-enrollment">
+        <header className="website-page-heading">
+          <div><h1>Tablet setup</h1><p>Register this browser and test its camera before recording.</p></div>
+        </header>
         {!state ? (
           error && !busy ? (
-            <button type="button" onClick={() => void run(refresh)}>Retry connection</button>
-          ) : <p role="status">Loading registration…</p>
+            <button className="sign-in" type="button" onClick={() => void run(refresh)}>Retry connection</button>
+          ) : <AdminSkeleton label="Loading tablet registration">
+                <SkeletonBlock className="is-card" /><SkeletonBlock className="is-field" />
+              </AdminSkeleton>
         ) : !state.enabled || reenrolling ? (
           <form
             className="stack-form"
@@ -658,5 +664,6 @@ export default function BrowserTabletSetup() {
         </p>
       </section>
     </main>
+    </>
   );
 }

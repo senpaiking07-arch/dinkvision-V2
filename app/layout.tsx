@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./design-tokens.css";
 import "./globals.css";
 import "./admin.css";
+import "./website.css";
 
 export const metadata: Metadata = {
   title: "Dink Vision | Your court. Your moment.",

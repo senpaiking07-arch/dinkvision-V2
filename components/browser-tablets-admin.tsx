@@ -2,7 +2,7 @@
 import {RecorderTimeline} from "@/components/recorder-timeline";
 import { EnrollmentInvitation, enrollmentQrFromResponse, reserveEnrollmentTab, showEnrollmentTab, type EnrollmentQr } from "@/components/admin-enrollment-qr";
 import { useEffect, useRef, useState } from "react";
-import { Camera, ChevronRight, CloudUpload, Monitor, Plus, RefreshCw, Search, Settings2, Smartphone, Trash2, TriangleAlert, Wifi } from "lucide-react";
+import { ArrowLeft, Camera, ChevronRight, CloudUpload, Monitor, Plus, QrCode, RefreshCw, Search, Settings2, Smartphone, Trash2, TriangleAlert, Wifi } from "lucide-react";
 import { recordingIsConfirmed } from "@/lib/recording-status";
 import { devicePresence } from "@/lib/device-presence";
 import AdminDeviceQueue, { formatDeviceTime, uploadCounts } from "@/components/admin-device-queue";
@@ -167,10 +167,9 @@ export default function BrowserTabletsAdmin() {
     started_at: capture.recording_sessions.started_at || null,
     duration_seconds: capture.recording_sessions.duration_seconds,
   }, { session_id: capture.session_id, last_seen_at: capture.last_seen_at || null }, now);
-  const activeCourts = courts.filter(court => court.active);
-  const availableCourts = activeCourts.filter(court => court.id === editing?.court_id ||
-    !devices.some(device => device.id !== editing?.id && device.court_id === court.id));
-  const hiddenCourtCount = activeCourts.length - availableCourts.length;
+  const availableCourts = courts.filter(court => court.id === editing?.court_id ||
+    (court.active && !devices.some(device => device.id !== editing?.id && device.court_id === court.id)));
+  const hiddenCourtCount = courts.filter(court => court.active).length - availableCourts.filter(court => court.active).length;
   const hardware = selected?.device_info;
   const native = selected?.recorder_mode === "android_rtsp" || !!hardware;
   function openDevice(id: string) {
@@ -309,7 +308,7 @@ export default function BrowserTabletsAdmin() {
           {showEditor && <div className="recorder-detail-content recorder-editor-content">
             {!!devices.length && <button className="recorder-text-action" type="button" disabled={busy} onClick={() => {
               setPanel("overview"); setError("");
-            }}>← Back to recorder overview</button>}
+            }}><ArrowLeft size={16} aria-hidden="true" /> Back to recorder overview</button>}
         <form
           ref={tabletEditor}
           key={`${editing?.id || "new"}-${newTabletVersion}`}
@@ -325,8 +324,9 @@ export default function BrowserTabletsAdmin() {
             });
           }}
         >
-          <div className="tablet-editor-heading">
+          <header className="device-editor-header">
             <div>
+              {editing && <div className="recorder-device-kind"><Settings2 size={16} aria-hidden="true" />{editing.name}</div>}
               <h3>{editing ? "Manage device" : "Add device"}</h3>
               <p>
                 {editing
@@ -334,11 +334,12 @@ export default function BrowserTabletsAdmin() {
                   : "Name the device, assign its court, then enroll and select its camera on the physical device."}
               </p>
             </div>
-            <span className="status-tag">
-              {editing ? "Editing" : "New device"}
-            </span>
-          </div>
-          <fieldset className="tablet-fields" disabled={busy || loading}>
+            {editing && selectedEntry && <span className={`recorder-state ${selectedEntry.presence.connected ? "is-success" : editing.enabled ? "is-warning" : ""}`}>
+              {selectedEntry.presence.label}
+            </span>}
+          </header>
+          <fieldset className="tablet-fields device-editor-fields" disabled={busy || loading}>
+            <legend>Device details</legend>
             <label>
               <span>Device name</span>
               <input
@@ -354,9 +355,9 @@ export default function BrowserTabletsAdmin() {
               <span>Assigned court</span>
               <select name="court_id" defaultValue={editing?.court_id || ""}>
                 <option value="">Unassigned</option>
-                {availableCourts.map((court: any) => (
+                {availableCourts.map(court => (
                     <option key={court.id} value={court.id}>
-                      {court.name}
+                      {court.name}{court.active ? "" : " (inactive)"}
                     </option>
                   ))}
               </select>
@@ -366,35 +367,21 @@ export default function BrowserTabletsAdmin() {
                   : "Only active, available courts are shown."}
               </small>
             </label>
-            <div className="automatic-audio-note">
-              <strong>Camera setup happens on this device</strong>
-              <span>
-                After enrollment, open the website’s tablet setup for browser
-                recording or Device setup in the Android APK. The device will
-                choose and test its own camera without another enrollment code.
-              </span>
-            </div>
           </fieldset>
-          {editing && (
-            <div className="tablet-device-details">
-              <span>Device ID</span>
-              <code>{editing.id}</code>
-              <p>
-                {editing.diagnostic ||
-                  "Camera settings and permissions are configured on the physical tablet."}
-              </p>
-            </div>
-          )}
-          <div className="tablet-primary-action">
+          <div className="device-editor-save">
             <button className="primary" type="submit" disabled={busy || loading}>
               {editing ? "Save changes" : "Create pairing invitation"}
             </button>
           </div>
+          <div className="device-editor-camera recorder-facts">
+            <h4><Camera size={17} aria-hidden="true" /> Camera setup</h4>
+            <p>Open Device setup in the Android app, or Tablet setup on a browser recorder, to select and test its camera.</p>
+          </div>
           {editing && editing.enabled && (
-            <div className="tablet-management-actions">
+            <section className="device-editor-access recorder-facts">
               <div>
-                <strong>Device actions</strong>
-                <p>Enrollment changes apply to this device only. Run camera checks on the physical recorder.</p>
+                <h4><QrCode size={17} aria-hidden="true" /> Pairing &amp; access</h4>
+                <p>Create an invitation for this recorder or disable its access.</p>
               </div>
               <div className="save-row">
                 <button
@@ -423,12 +410,12 @@ export default function BrowserTabletsAdmin() {
                   Disable device
                 </button>
               </div>
-            </div>
+            </section>
           )}
           {editing && !editing.enabled && (
-            <div className="tablet-management-actions tablet-reenable">
+            <section className="device-editor-access recorder-facts">
               <div>
-                <strong>Device disabled</strong>
+                <h4><QrCode size={17} aria-hidden="true" /> Re-enable this recorder</h4>
                 <p>
                   Re-enabling creates a fresh one-time QR. Scan it on the
                   physical device to reconnect securely.
@@ -454,24 +441,31 @@ export default function BrowserTabletsAdmin() {
                   Assign and save a court before re-enabling this device.
                 </p>
               )}
-            </div>
+            </section>
           )}
           {editing && (
-            <div className="device-danger-zone">
-              <div>
-                <strong>Delete device</strong>
-                <p>Permanently delete this device and its enrollment, even during an active recording or upload. The recording is stopped and its upload cancelled; recording logs and uploaded videos are kept.</p>
+            <>
+              <details className="recorder-disclosure device-editor-technical">
+                <summary>Technical details</summary>
+                <p>Device ID <code>{editing.id}</code></p>
+                {editing.diagnostic && <p>{editing.diagnostic}</p>}
+              </details>
+              <div className="device-danger-zone">
+                <div>
+                  <strong>Delete device</strong>
+                  <p>Remove this device and its enrollment. Active recordings and uploads stop. Recording logs and uploaded videos stay available.</p>
+                </div>
+                <button
+                  type="button"
+                  className="remove-device-button"
+                  disabled={busy}
+                  onClick={() => setRemoving(editing)}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                  Delete device
+                </button>
               </div>
-              <button
-                type="button"
-                className="remove-device-button"
-                disabled={busy}
-                onClick={() => setRemoving(editing)}
-              >
-                <Trash2 size={16} />
-                Delete device
-              </button>
-            </div>
+            </>
           )}
         </form>
           </div>}

@@ -162,13 +162,17 @@ export default function AdminEnrollmentQr() {
   }, []);
 
   return (
-    <section className="auth-card enrollment-qr-card">
+    <section className="website-panel website-message enrollment-qr-card">
       <h1>Device enrollment</h1>
       {invitation ? (
         <EnrollmentInvitation invitation={invitation} closeTabOnSuccess
           instructions="Open enrollment in DinkVision. Scan the QR or enter the code below. On a registered tablet, start with Re-enroll device." />
+      ) : loaded ? (
+        <p role="status">This invitation has expired or is unavailable. Open Devices &amp; cameras in Admin to create a new QR.</p>
       ) : (
-        <p role="status">{loaded ? "This invitation has expired or is unavailable. Open Devices & cameras in Admin to create a new QR." : "Loading enrollment invitation…"}</p>
+        <div role="status"><span className="admin-sr-only">Loading enrollment invitation</span>
+          <span className="admin-skeleton-block enrollment-qr-skeleton" aria-hidden="true" />
+        </div>
       )}
       <a href="/admin" className="sign-in">Back to Admin</a>
     </section>
