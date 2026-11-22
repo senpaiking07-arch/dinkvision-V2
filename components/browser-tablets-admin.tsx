@@ -2,33 +2,34 @@
 import {RecorderTimeline} from "@/components/recorder-timeline";
 import { EnrollmentInvitation, enrollmentQrFromResponse, reserveEnrollmentTab, showEnrollmentTab, type EnrollmentQr } from "@/components/admin-enrollment-qr";
 import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
-import { videoRetryLabel } from "@/lib/upload-recovery";
-import { captureInterruptionLabel } from "@/lib/capture-interruption";
-import { recordingDisplayLabel } from "@/lib/recording-label";
+import { Camera, ChevronRight, CloudUpload, Monitor, Plus, RefreshCw, Search, Settings2, Smartphone, Trash2, TriangleAlert, Wifi } from "lucide-react";
 import { recordingIsConfirmed } from "@/lib/recording-status";
-import type { DeviceInfo } from "@/lib/device-info";
-import { localProcessingLabel, reportedBrandingProgress, recordingStageLabel } from "@/lib/local-video-status";
 import { devicePresence } from "@/lib/device-presence";
-import {recordingSizeMb,uploadSizeMb} from "@/lib/recording-size";
-import {deviceQueueOrder,isQueuedWork,visibleDeviceQueueItem,isLocalOnlyHistory} from "@/lib/device-queue-order";
+import AdminDeviceQueue, { formatDeviceTime, uploadCounts } from "@/components/admin-device-queue";
+import type { AdminDevice, AdminDevicesData, DeviceRecording } from "./admin-device-types";
 
 type AdminTabletAction = {action: string; id?: string; [key: string]: unknown};
 
 export default function BrowserTabletsAdmin() {
-  const [data, setData] = useState<any>(null),
+  const [data, setData] = useState<AdminDevicesData | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [qrEnrollment, setQrEnrollment] = useState<EnrollmentQr | null>(null),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
-    [selected, setSelected] = useState<any>(null),
-    [removing, setRemoving] = useState<any>(null),
-    [cancellingUpload, setCancellingUpload] = useState<any>(null);
+    [selectedId, setSelectedId] = useState<string | null>(null),
+    [removing, setRemoving] = useState<AdminDevice | null>(null),
+    [cancellingUpload, setCancellingUpload] = useState<{device: AdminDevice; recording: DeviceRecording} | null>(null);
+  const [panel, setPanel] = useState<"overview" | "create" | "manage">("overview");
+  const [search, setSearch] = useState("");
+  const [onlyAttention, setOnlyAttention] = useState(false);
   const [newTabletVersion, setNewTabletVersion] = useState(0);
   const [connectionNotice, setConnectionNotice] = useState("");
   const [replacingEnrollment,setReplacingEnrollment]=useState<AdminTabletAction|null>(null);
   const tabletEditor = useRef<HTMLFormElement>(null);
+  const detailPanel = useRef<HTMLElement>(null);
+  const refreshSequence = useRef(0);
+  const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
     if (!newTabletVersion) return;
     tabletEditor.current?.scrollIntoView({
@@ -40,28 +41,37 @@ export default function BrowserTabletsAdmin() {
       ?.focus({ preventScroll: true });
   }, [newTabletVersion]);
   async function refresh() {
+    const request = ++refreshSequence.current;
     try {
-      const r = await fetch("/api/admin/tablets");
-      setConnectionNotice(navigator.onLine ? "" : "No internet connection detected. Displayed device states may be stale.");
+      const r = await fetch("/api/admin/tablets", { cache: "no-store", signal: AbortSignal.timeout(12000) });
       const d = await r.json();
-      if (!r.ok) throw Error(d.error);
+      if (!r.ok) throw Error(d.error || "Device status is unavailable.");
+      if (request !== refreshSequence.current) return;
+      setConnectionNotice("");
       setData({...d,receivedAt:Date.now()});
       return d;
     } catch (e) {
-      if (e instanceof TypeError) setConnectionNotice(navigator.onLine
-        ? "Network available, but the application server cannot be reached. Internet access is not verified. Retrying automatically."
-        : "No internet connection detected. Displayed device states may be stale.");
-      else setError((e as Error).message);
+      if (request !== refreshSequence.current) return;
+      setConnectionNotice(navigator.onLine
+        ? e instanceof TypeError || e instanceof DOMException
+          ? "Could not refresh device status. Showing the last report while we reconnect."
+          : (e as Error).message
+        : "You’re offline. Device information may be out of date.");
     } finally {
-      setLoading(false);
+      if (request === refreshSequence.current) setLoading(false);
     }
   }
   useEffect(() => {
-    void refresh();
-    const t = setInterval(() => void refresh(), 3000);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      await refresh();
+      if (!stopped) timer = setTimeout(() => void poll(), 3000);
+    }
+    void poll();
     const offline = () => setConnectionNotice("No internet connection detected. Displayed device states may be stale.");
     window.addEventListener("offline", offline);
-    return () => { clearInterval(t); window.removeEventListener("offline", offline); };
+    return () => { stopped = true; ++refreshSequence.current; clearTimeout(timer); window.removeEventListener("offline", offline); };
   }, []);
   async function action(body: AdminTabletAction) {
     const opensQr = body.action === "enroll" || (body.action === "save" && !body.id);
@@ -85,12 +95,13 @@ export default function BrowserTabletsAdmin() {
         openedInvitation = showEnrollmentTab(qrTab, invitation);
         if (!openedInvitation) setQrEnrollment(invitation);
       }
-      const updated = await refresh();
-      const selectedId = d.id || selected?.id;
-      if (selectedId && updated)
-        setSelected(
-          updated.devices.find((item: any) => item.id === selectedId) || null,
-        );
+      if (body.action === "save") {
+        if (d.id || body.id) setSelectedId(d.id || body.id);
+        setPanel("overview");
+        setNotice(body.id ? "Device settings saved." : "Device added. Scan the pairing QR on the recorder.");
+      }
+      if (body.action === "disable") setNotice("Device disabled.");
+      await refresh();
       return true;
     } catch (e) {
       setError((e as Error).message);
@@ -120,286 +131,188 @@ export default function BrowserTabletsAdmin() {
       setBusy(false);
     }
   }
-  const activeCourts = (data?.courts || []).filter(
-    (court: any) => court.active,
+  const devices = data?.devices || [];
+  const courts = data?.courts || [];
+  const selected = devices.find(device => device.id === selectedId) || devices[0] || null;
+  const editing = panel === "manage" ? selected : null;
+  const showEditor = panel !== "overview" || (!!data && devices.length === 0);
+  const zone = data?.timeZone;
+  const now = (Date.parse(data?.serverTime || "") || data?.receivedAt || Date.now())
+    + (data?.receivedAt ? Math.max(0, Date.now() - data.receivedAt) : 0);
+  const recordingsByDevice = new Map<string, DeviceRecording[]>();
+  for (const recording of data?.recordings || []) {
+    const list = recordingsByDevice.get(recording.device_id) || [];
+    list.push(recording);
+    recordingsByDevice.set(recording.device_id, list);
+  }
+  const counts = uploadCounts(data?.recordings || []);
+  const directory = devices.map(device => {
+    const court = courts.find(item => item.id === device.court_id)?.name || "Unassigned";
+    const presence = devicePresence(device, now);
+    const failed = uploadCounts(recordingsByDevice.get(device.id) || []).failed;
+    return { device, court, presence, failed, attention: device.enabled && (!presence.connected || !device.tested_at || failed > 0) };
+  });
+  const query = search.trim().toLowerCase();
+  const filtered = directory.filter(entry =>
+    (!onlyAttention || entry.attention) &&
+    (!query || [entry.device.name, entry.court, entry.device.device_info?.model, entry.device.camera_name,
+      ...(entry.device.device_info?.usb_cameras || []).map(camera => camera.name)].some(value => value?.toLowerCase().includes(query)))
   );
-  const availableCourts = activeCourts.filter(
-    (court: any) =>
-      court.id === selected?.court_id ||
-      !(data?.devices || []).some(
-        (device: any) =>
-          device.id !== selected?.id && device.court_id === court.id,
-      ),
-  );
+  const selectedEntry = directory.find(entry => entry.device.id === selected?.id);
+  const selectedRows = selected ? recordingsByDevice.get(selected.id) || [] : [];
+  const capture = selectedRows.find(row => row.recording_sessions?.status === "recording");
+  const confirmedCapture = capture?.recording_sessions?.status === "recording" && recordingIsConfirmed({
+    status: capture.recording_sessions.status,
+    started_at: capture.recording_sessions.started_at || null,
+    duration_seconds: capture.recording_sessions.duration_seconds,
+  }, { session_id: capture.session_id, last_seen_at: capture.last_seen_at || null }, now);
+  const activeCourts = courts.filter(court => court.active);
+  const availableCourts = activeCourts.filter(court => court.id === editing?.court_id ||
+    !devices.some(device => device.id !== editing?.id && device.court_id === court.id));
   const hiddenCourtCount = activeCourts.length - availableCourts.length;
-  const selectedRecording = selected
-    ? data?.recordings?.find((item: any) => item.device_id === selected.id)
-    : null;
-  const canCancelSelectedUpload =
-    selectedRecording &&
-    ["queued", "uploading", "failed"].includes(
-      selectedRecording.upload_state,
-    );
-  const selectedRetryLabel = videoRetryLabel(selectedRecording, selected?.recorder_mode === "android_rtsp");
+  const hardware = selected?.device_info;
+  const native = selected?.recorder_mode === "android_rtsp" || !!hardware;
+  function openDevice(id: string) {
+    setSelectedId(id);
+    setPanel("overview");
+    setError("");
+    if (window.matchMedia("(max-width: 760px)").matches) {
+      requestAnimationFrame(() => detailPanel.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+    }
+  }
   return (
-    <section className="admin-card browser-devices">
-      {connectionNotice && <p role="status" className="form-note">{connectionNotice}</p>}
-      {notice && <p role="status" className="form-note">{notice}</p>}
-      <div className="section-heading">
+    <section className="admin-card browser-devices recorder-workspace" aria-labelledby="recorder-workspace-title">
+      <header className="recorder-workspace-header">
         <div>
-          <h2>Devices & cameras</h2>
-          <p>Dink Vision · Manage browser and Android camera devices.</p>
+          <h2 id="recorder-workspace-title">Devices &amp; cameras</h2>
+          <p>Check a court recorder, review its camera setup, or manage its uploads.</p>
+          {data?.serverTime && <p>{connectionNotice ? "Last successful refresh" : "Last refreshed"} · {formatDeviceTime(data.serverTime, zone)}</p>}
         </div>
-        <button
-          className="secondary"
-          type="button"
-          disabled={busy || loading}
-          onClick={() => {
-            setSelected(null);
-            setError("");
-            setNewTabletVersion((v) => v + 1);
-          }}
-        >
-          Add device
-        </button>
-      </div>
-      <div className="browser-device-grid">
-        <section className="browser-device-column" aria-busy={loading}>
-          <div className="tablet-panel-heading">
-            <div>
-              <h3>Registered devices</h3>
-              <p>Select a device to review its court and connection status.</p>
-            </div>
-            {data && (
-              <span className="tablet-count">
-                {data.devices.length} {data.devices.length === 1 ? "device" : "devices"}
-              </span>
-            )}
-          </div>
-          <div className="browser-device-list">
-          {loading && (
-            <div className="tablet-loading" role="status">
-              <span className="tablet-loading-spinner" aria-hidden="true" />
-              <div>
-                <strong>Loading devices…</strong>
-                <small>Checking assignments and camera status.</small>
-              </div>
-            </div>
-          )}
-          {!loading && data?.devices?.map((d: any) => {
-            const now=(Date.parse(data.serverTime||"")||Date.now())+Math.max(0,Date.now()-(data.receivedAt||Date.now()));
-            const deviceQueue = data.recordings.filter(
-              (r: any) => r.device_id === d.id && visibleDeviceQueueItem(r,now),
-            );
-            const recording = deviceQueue[0];
-            const queueSummary = (status: string) =>
-              deviceQueue.filter((r: any) => r.upload_state === status).length;
-            const activeQueueCount =
-              queueSummary("pending") + queueSummary("queued") + queueSummary("retrying");
-            const queueItems = deviceQueueOrder(deviceQueue.filter((item: any) =>
-              ["saved_locally", "pending", "queued", "retrying", "uploading", "failed", "local_only","uploaded"].includes(
-                item.upload_state,
-              ),
-            ), now);
-            const historyQueue=queueItems.filter(isLocalOnlyHistory);
-            const visibleQueue=queueItems.filter(item=>!isLocalOnlyHistory(item));
-            const queuePositions=new Map(queueItems.filter(isQueuedWork).map((item,index)=>[item.session_id,index+1]));
-            const presence=devicePresence(d,now),online=presence.connected,deviceStatus=presence.label;
-            const captureUnconfirmed = recording?.recording_sessions?.status === "recording" &&
-              !recordingIsConfirmed(recording.recording_sessions, recording, now);
-            const readyFile = recording?.recording_sessions?.recording_files?.find(
-              (file: any) => file.status === "ready" && file.storage_provider === "r2" && file.storage_key,
-            );
-            const emailStatus = readyFile?.email_jobs?.status;
-            const selectDevice = () => {
-              setSelected(d);
-            };
-            const hardware = d.device_info as DeviceInfo | null;
-            return (
-              <div
-                className={`browser-device-card ${selected?.id === d.id ? "selected" : ""}`}
-                key={d.id}
-                role="button"
-                tabIndex={0}
-                onClick={selectDevice}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key !== "Enter" && event.key !== " ") return;
-                  event.preventDefault();
-                  selectDevice();
-                }}
-              >
-                <strong>{d.name}</strong>
-                <span>
-                  {data.courts.find((c: any) => c.id === d.court_id)?.name ||
-                    "No court assigned"}
-                </span>
-                <span className="tablet-status-line">
-                  {!online && (
-                    <span className="device-status-pill">{deviceStatus}</span>
-                  )}
-                  <span>
-                    {d.tested_at
-                      ? "Camera ready"
-                      : d.recorder_mode !== "browser"
-                        ? "Automatic camera check pending"
-                        : "Camera setup needed"}
-                  </span>
-                </span>
-                <small>
-                  {d.camera_name || "No camera selected"}
-                  {recording ? ` · ${captureUnconfirmed ? "recording unconfirmed" : recording.upload_state === "local_only" ? "local clip saved" : recording.upload_state === "failed" ? "needs attention" : recording.recording_sessions.status}` : ""}
-                  {recording && localProcessingLabel(recording, now) ? ` · ${localProcessingLabel(recording, now)}` : ""}
-                </small>
-                <details className="device-hardware-details" onClick={event => event.stopPropagation()}>
-                  <summary>Device details</summary>
-                  {hardware ? <dl>
-                    <dt>Device</dt><dd>{hardware.manufacturer} {hardware.model}</dd>
-                    <dt>Android</dt><dd>{hardware.android_version} · API {hardware.android_sdk}</dd>
-                    <dt>APK</dt><dd>{hardware.app_version} · build {hardware.app_version_code}</dd>
-                    <dt>USB cameras attached</dt><dd>{hardware.usb_cameras.length ? hardware.usb_cameras.map(camera => camera.name).join(", ") : "None reported"}</dd>
-                    <dt>Camera configuration</dt><dd>{d.camera_name || "Not configured"}</dd>
-                    <dt>Microphone (last report)</dt><dd>{hardware.microphone_input || "Not reported yet"}</dd>
-                    <dt>Camera mode (last report)</dt><dd>{hardware.recording_profile || "Run the camera check to report resolution and target frame rate"}</dd>
-                    <dt>Last report</dt><dd>{new Date(hardware.reported_at).toLocaleString()}</dd>
-                  </dl> : <p>Device details have not been reported yet.</p>}
-                  <small>Reported by the device. Attached cameras still require a successful recording test.</small>
-                    <RecorderTimeline deviceId={d.id}/>
-                </details>
-                <span className="device-queue-overview">
-                  <strong>Upload queue</strong>
-                  <span>{deviceQueue.filter((item:any)=>item.local_available!==false&&["saved_locally","local_only"].includes(item.upload_state)).length} saved</span>
-                  <span>{activeQueueCount} pending</span>
-                  <span>{queueSummary("uploading")} uploading</span>
-                  <span>{queueSummary("failed")} failed</span>
-                </span>
-                {[{history:false,items:visibleQueue},{history:true,items:historyQueue}].map(group => {
-                  const Wrapper = group.history ? 'details' : 'div';
-                  return group.items.length > 0 && (
-                  <Wrapper key={String(group.history)} className="device-queue-items" aria-label={`${d.name} ${group.history ? 'local-only history' : 'upload items'}`} onClick={event=>event.stopPropagation()}>
-                    {group.history && <summary>Local-only videos ({historyQueue.length})</summary>}
-                    {group.items.map((item: any) => {
-                      const itemRetryLabel = videoRetryLabel(item, d.recorder_mode === "android_rtsp");
-                      const interruption = captureInterruptionLabel(item.recording_sessions?.capture_interruption_code);
-                      const label = recordingDisplayLabel(item.recording_sessions, item.client_created_at, data.timeZone);
-                      const brandingPercent=reportedBrandingProgress(item);
-                      const brandingLive=localProcessingLabel(item,now)==="Adding logo";
-                      const percent = item.bytes
-                        ? Math.min(
-                            100,
-                            Math.floor(
-                              (Number(item.uploaded_bytes || 0) / Number(item.bytes)) * 100,
-                            ),
-                          )
-                        : 0;
-                      const errorDetail = item.recording_sessions?.capture_inspection_required && item.local_available !== false
-                        ? "Save the original from Saved videos on the tablet for inspection."
-                        : (item.branding_state ? `Logo: ${String(item.branding_state).replaceAll("_", " ")}. ` : "Logo status unavailable. ") +
-                          (item.last_error || item.safe_error || "No detailed error was reported by the device.");
-                      return (
-                        <span className="device-queue-item" key={item.job_id || item.session_id} data-session-id={item.session_id}>
-                          {queuePositions.has(item.session_id) && <span className="device-queue-number" aria-label={`Device queue order ${queuePositions.get(item.session_id)}`}>{queuePositions.get(item.session_id)}</span>}
-                          <a className="device-queue-item-title" href={`/admin?recording=${encodeURIComponent(item.session_id)}`}
-                            title={`${label.full} · Open recording log`} aria-label={`Open recording log for ${label.full}`}
-                            onClick={event => event.stopPropagation()}>
-                            <span className="device-queue-item-date">{label.date}</span>
-                            <span className="device-queue-item-recipients">{label.recipients}</span>
-                          </a>
-                          <span className="device-queue-item-state">
-                            {recordingStageLabel(item, now, d.recorder_mode === "android_rtsp")}
-                          </span>
-                          {interruption && <span className="device-queue-item-copy">Capture ended early · {interruption}</span>}
-                          <span className="device-queue-item-size">{item.upload_state==="uploading"
-                            ? uploadSizeMb(item.uploaded_bytes,item.bytes)
-                            : `${item.branding_state==="processing"?"Source video":"Video size"}: ${recordingSizeMb(item.bytes)}`}</span>
-                          {item.upload_state === "uploading" && item.branding_state !== "processing" && <span className="device-upload-meter" role="progressbar"
-                            aria-label={`Upload progress for ${label.full}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
-                            <i style={{width:`${percent}%`}} />
-                          </span>}
-                          {item.branding_state === "processing" && <span className="device-logo-progress">
-                            <span>{brandingPercent === null ? brandingLive ? "Device has not reported a percentage yet" : "Waiting for device to report progress"
-                              : brandingLive ? `Adding logo · ${brandingPercent}%`
-                              : `Last reported · ${brandingPercent}%`}</span>
-                            {brandingPercent !== null ? <progress max={100} value={brandingPercent} aria-label="Logo processing progress" />
-                              : <span className="device-progress-unreported" aria-hidden="true" />}
-                          </span>}
-                          {item.device_copy_saved_at && <span className="device-queue-item-copy">Copy exported to Gallery / Files · {new Date(item.device_copy_saved_at).toLocaleString()}</span>}
-                          {item.upload_state === "failed" && (
-                            <span className="device-queue-item-error">{errorDetail}</span>
-                          )}
-                          {itemRetryLabel && (
-                            <button
-                              type="button"
-                              className="device-continue-upload device-queue-retry"
-                              disabled={busy}
-                              aria-label={`${itemRetryLabel} for ${label.full}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void action({
-                                  action: "retry-upload",
-                                  id: d.id,
-                                  session_id: item.session_id,
-                                }).then((ok) => {
-                                  if (ok)
-                                    setNotice("Retry requested. The original tablet must connect to process and upload this video. Validation must pass before upload.");
-                                });
-                              }}
-                            >
-                              {busy ? "Requesting…" : itemRetryLabel}
-                            </button>
-                          )}
-                        </span>
-                      );
-                    })}
-                  </Wrapper>
-                );})}
-                {readyFile && (
-                  <span className="device-upload-status">
-                    <span>
-                      <strong>Upload complete</strong>
-                      <small>
-                        {emailStatus === "sent" ? "Replay email sent. Check Gmail and Spam."
-                          : emailStatus === "failed" ? "Your video is saved. Replay email failed; retry below."
-                            : emailStatus === "unknown" ? "Your video is saved. Email delivery needs administrator review."
-                              : "Your video is saved. Replay email is pending."}
-                      </small>
-                      {emailStatus === "failed" && (
-                        <button type="button" className="device-continue-upload" disabled={busy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void retryEmail(readyFile.id);
-                          }}>
-                          {busy ? "Requesting…" : "Retry replay email"}
-                        </button>
-                      )}
+        <div className="recorder-workspace-actions">
+          <button className="secondary" type="button" disabled={refreshing || loading} onClick={async () => {
+            setRefreshing(true);
+            try { await refresh(); } finally { setRefreshing(false); }
+          }}><RefreshCw size={16} aria-hidden="true" /> {refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button className="primary" type="button" disabled={busy || loading} onClick={() => {
+            setPanel("create"); setError(""); setNewTabletVersion(version => version + 1);
+          }}><Plus size={18} aria-hidden="true" /> Add device</button>
+        </div>
+      </header>
+      {connectionNotice && <p role="status" className="recorder-alert"><TriangleAlert size={17} aria-hidden="true" />{connectionNotice}</p>}
+      {notice && <p role="status" className="recorder-alert is-success">{notice}</p>}
+      {error && <p role="alert" className="recorder-alert is-danger">{error}</p>}
+      {data && <dl className="recorder-overview-stats" aria-label="Recorder status overview">
+        <div><dt><Wifi size={16} aria-hidden="true" /> Connected</dt><dd>{directory.filter(entry => entry.presence.connected).length}<span> / {devices.length} devices</span></dd></div>
+        <div><dt><Camera size={16} aria-hidden="true" /> Camera checks due</dt><dd>{devices.filter(device => device.enabled && device.kiosk_id && !device.tested_at).length}</dd></div>
+        <div><dt><CloudUpload size={16} aria-hidden="true" /> Uploads in progress</dt><dd>{counts.uploading}<span> · {counts.waiting} waiting</span></dd></div>
+        <div><dt><TriangleAlert size={16} aria-hidden="true" /> Failed uploads</dt><dd>{counts.failed}</dd></div>
+      </dl>}
+      <div className="recorder-workspace-grid">
+        <section className="recorder-directory" aria-busy={loading} aria-label="Registered devices">
+          <div className="recorder-directory-heading"><h3>Recorders</h3>{data && <span>{devices.length}</span>}</div>
+          {loading && <p role="status" className="recorder-directory-empty">Loading recorders…</p>}
+          {!loading && !data && <p className="recorder-directory-empty">Select Refresh to try again.</p>}
+          {!!devices.length && <>
+            <label className="recorder-search"><Search size={16} aria-hidden="true" />
+              <input type="search" aria-label="Find a recorder" placeholder="Find a recorder or court" value={search} onChange={event => setSearch(event.target.value)} />
+            </label>
+            <label className="recorder-attention-filter">
+              <input type="checkbox" checked={onlyAttention} onChange={event => setOnlyAttention(event.target.checked)} /> Needs attention only
+            </label>
+            <ul className="recorder-directory-list">
+              {filtered.map(({ device, court, presence, failed }) => {
+                const active = panel !== "create" && selected?.id === device.id;
+                const Icon = device.recorder_mode === "android_rtsp" || device.device_info ? Smartphone : Monitor;
+                return <li key={device.id}>
+                  <button type="button" aria-pressed={active} aria-controls="recorder-device-panel"
+                    className={`recorder-directory-item ${active ? "is-selected" : ""}`} onClick={() => openDevice(device.id)}>
+                    <span className="recorder-directory-icon"><Icon size={21} aria-hidden="true" /></span>
+                    <span className="recorder-directory-copy">
+                      <strong>{device.name}</strong><span>{court}</span>
+                      <span className="recorder-directory-status"><i className={presence.connected ? "is-connected" : ""} aria-hidden="true" />{presence.label}
+                        {failed > 0 && <span className="recorder-directory-failed"> · {failed} failed</span>}
+                      </span>
                     </span>
-                  </span>
-                )}
-              </div>
-            );
-          })}
-          {!loading && data?.devices?.length === 0 && (
-            <div className="tablet-empty-state">
-              <strong>No devices registered yet</strong>
-              <p>
-                Use Add device to name the recorder and assign its court. The
-                camera is selected and tested on the enrolled physical device.
-              </p>
-            </div>
-          )}
-          </div>
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </button>
+                </li>;
+              })}
+            </ul>
+            {!filtered.length && <p className="recorder-directory-empty">No recorders match. Clear the search or filter to see all devices.</p>}
+          </>}
+          {!!data && !devices.length && <p className="recorder-directory-empty">No recorders registered. Add your first device to get a pairing QR.</p>}
         </section>
-        <section className="tablet-editor-panel">
+        <section className="recorder-device-panel" id="recorder-device-panel" ref={detailPanel} aria-label={showEditor ? editing ? "Manage device" : "Add device" : "Selected recorder"}>
+          {!showEditor && !selected && <p className="recorder-directory-empty">{loading ? "Checking recorder status…" : "Recorder details will appear when the connection returns."}</p>}
+          {!showEditor && selected && selectedEntry && <>
+            <header className="recorder-device-header">
+              <div className="recorder-device-title">
+                <div className="recorder-device-kind">{native ? <Smartphone size={16} aria-hidden="true" /> : <Monitor size={16} aria-hidden="true" />}
+                  {native ? "Android recorder" : "Browser recorder"} <span>·</span> {selectedEntry.court}</div>
+                <h3>{selected.name}</h3>
+                <div className="recorder-device-statuses">
+                  <span className={`recorder-state ${selectedEntry.presence.connected ? "is-success" : selected.enabled ? "is-warning" : ""}`}>{selectedEntry.presence.label}</span>
+                  {selected.enabled && selected.kiosk_id && <span className={`recorder-state ${selected.tested_at ? "is-success" : "is-warning"}`}>{selected.tested_at ? "Camera tested" : "Camera check needed"}</span>}
+                  {capture && <span className={`recorder-state ${confirmedCapture ? "is-live" : "is-warning"}`}>{confirmedCapture ? "Recording now" : "Recording unconfirmed"}</span>}
+                </div>
+              </div>
+              <button className="secondary recorder-manage-button" type="button" disabled={busy} onClick={() => {
+                setPanel("manage"); setError("");
+              }}><Settings2 size={17} aria-hidden="true" /> Manage device</button>
+            </header>
+            <div className="recorder-detail-content">
+              <div className="recorder-facts-grid">
+                <section className="recorder-facts">
+                  <h4><Camera size={18} aria-hidden="true" /> Camera &amp; audio</h4>
+                  <dl>
+                    <dt>Camera setup</dt><dd>{selected.camera_name || "Not selected"}</dd>
+                    {native && <><dt>Attached USB camera</dt><dd>{hardware?.usb_cameras?.map(camera => camera.name).join(", ") || "None reported"}</dd></>}
+                    <dt>Last camera test</dt><dd>{formatDeviceTime(selected.tested_at, zone) || "No successful test reported"}</dd>
+                    {native && <>
+                      <dt>Microphone</dt><dd>{hardware?.microphone_input || "Not reported"}</dd>
+                      <dt>Recording mode</dt><dd>{hardware?.recording_profile || "Not reported"}</dd>
+                    </>}
+                  </dl>
+                  {selected.enabled && selected.kiosk_id && (!selected.tested_at || (native && !hardware?.recording_profile)) &&
+                    <p>Run the camera check in Device setup on this recorder to verify its picture and sound.</p>}
+                </section>
+                <section className="recorder-facts">
+                  <h4>{native ? <Smartphone size={18} aria-hidden="true" /> : <Monitor size={18} aria-hidden="true" />} Device details</h4>
+                  <dl>
+                    <dt>Last contact</dt><dd>{formatDeviceTime(selected.last_seen_at, zone) || "No contact reported"}</dd>
+                    {hardware && <>
+                      <dt>Model</dt><dd>{hardware.manufacturer} {hardware.model}</dd>
+                      <dt>Android</dt><dd>{hardware.android_version} · API {hardware.android_sdk}</dd>
+                      <dt>APK version</dt><dd>{hardware.app_version} · build {hardware.app_version_code}</dd>
+                      <dt>Hardware report</dt><dd>{formatDeviceTime(hardware.reported_at, zone) || "Time unavailable"}</dd>
+                    </>}
+                  </dl>
+                  {!selected.kiosk_id && selected.enabled && <p>Create or reopen the pairing invitation from Manage device.</p>}
+                  <div className="recorder-diagnostics"><RecorderTimeline key={selected.id} deviceId={selected.id} /></div>
+                </section>
+              </div>
+              <AdminDeviceQueue device={selected} recordings={selectedRows} zone={zone} now={now} busy={busy}
+                onRetry={id => void action({ action: "retry-upload", id: selected.id, session_id: id }).then(ok => {
+                  if (ok) setNotice("Retry requested. The recorder will continue when it connects.");
+                })}
+                onCancel={recording => setCancellingUpload({ device: selected, recording })}
+                onRetryEmail={id => void retryEmail(id)} />
+            </div>
+          </>}
+          {showEditor && <div className="recorder-detail-content recorder-editor-content">
+            {!!devices.length && <button className="recorder-text-action" type="button" disabled={busy} onClick={() => {
+              setPanel("overview"); setError("");
+            }}>← Back to recorder overview</button>}
         <form
           ref={tabletEditor}
-          key={`${selected?.id || "new"}-${newTabletVersion}`}
+          key={`${editing?.id || "new"}-${newTabletVersion}`}
           className="stack-form tablet-editor"
           onSubmit={(e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
             void action({
               action: "save",
-              id: selected?.id,
+              id: editing?.id,
               name: f.get("name"),
               court_id: f.get("court_id"),
             });
@@ -407,15 +320,15 @@ export default function BrowserTabletsAdmin() {
         >
           <div className="tablet-editor-heading">
             <div>
-              <h3>{selected ? "Edit device" : "Add device"}</h3>
+              <h3>{editing ? "Manage device" : "Add device"}</h3>
               <p>
-                {selected
+                {editing
                   ? "Update its name or court. Camera selection stays on the physical device."
                   : "Name the device, assign its court, then enroll and select its camera on the physical device."}
               </p>
             </div>
             <span className="status-tag">
-              {selected ? "Editing" : "New device"}
+              {editing ? "Editing" : "New device"}
             </span>
           </div>
           <fieldset className="tablet-fields" disabled={busy || loading}>
@@ -425,14 +338,14 @@ export default function BrowserTabletsAdmin() {
                 name="name"
                 required
                 maxLength={100}
-                defaultValue={selected?.name || ""}
+                defaultValue={editing?.name || ""}
                 placeholder="Example: Court 1 Tablet"
               />
               <small>A clear name helps staff identify the physical device.</small>
             </label>
             <label>
               <span>Assigned court</span>
-              <select name="court_id" defaultValue={selected?.court_id || ""}>
+              <select name="court_id" defaultValue={editing?.court_id || ""}>
                 <option value="">Unassigned</option>
                 {availableCourts.map((court: any) => (
                     <option key={court.id} value={court.id}>
@@ -455,26 +368,26 @@ export default function BrowserTabletsAdmin() {
               </span>
             </div>
           </fieldset>
-          {selected && (
+          {editing && (
             <div className="tablet-device-details">
               <span>Device ID</span>
-              <code>{selected.id}</code>
+              <code>{editing.id}</code>
               <p>
-                {selected.diagnostic ||
+                {editing.diagnostic ||
                   "Camera settings and permissions are configured on the physical tablet."}
               </p>
             </div>
           )}
           <div className="tablet-primary-action">
             <button className="primary" type="submit" disabled={busy || loading}>
-              {selected ? "Save changes" : "Create pairing invitation"}
+              {editing ? "Save changes" : "Create pairing invitation"}
             </button>
           </div>
-          {selected && selected.enabled && (
+          {editing && editing.enabled && (
             <div className="tablet-management-actions">
               <div>
                 <strong>Device actions</strong>
-                <p>Enrollment changes apply to this device only. Camera checks run automatically.</p>
+                <p>Enrollment changes apply to this device only. Run camera checks on the physical recorder.</p>
               </div>
               <div className="save-row">
                 <button
@@ -484,20 +397,20 @@ export default function BrowserTabletsAdmin() {
                   onClick={() =>
                     void action({
                       action: "enroll",
-                      id: selected.id,
-                      name: selected.name,
-                      court_id: selected.court_id,
+                      id: editing.id,
+                      name: editing.name,
+                      court_id: editing.court_id,
                     })
                   }
                 >
-                  Re-enroll device
+                  New pairing invitation
                 </button>
                 <button
                   type="button"
                   className="secondary"
                   disabled={busy}
                   onClick={() =>
-                    void action({ action: "disable", id: selected.id })
+                    void action({ action: "disable", id: editing.id })
                   }
                 >
                   Disable device
@@ -505,7 +418,7 @@ export default function BrowserTabletsAdmin() {
               </div>
             </div>
           )}
-          {selected && !selected.enabled && (
+          {editing && !editing.enabled && (
             <div className="tablet-management-actions tablet-reenable">
               <div>
                 <strong>Device disabled</strong>
@@ -517,69 +430,26 @@ export default function BrowserTabletsAdmin() {
               <button
                 type="button"
                 className="secondary"
-                disabled={busy || !selected.court_id}
+                disabled={busy || !editing.court_id}
                 onClick={() =>
                   void action({
                     action: "enroll",
-                    id: selected.id,
-                    name: selected.name,
-                    court_id: selected.court_id,
+                    id: editing.id,
+                    name: editing.name,
+                    court_id: editing.court_id,
                   })
                 }
               >
                 {busy ? "Re-enabling…" : "Re-enable device & get QR"}
               </button>
-              {!selected.court_id && (
+              {!editing.court_id && (
                 <p className="form-note">
                   Assign and save a court before re-enabling this device.
                 </p>
               )}
             </div>
           )}
-          {selected && canCancelSelectedUpload && (
-            <div className="tablet-management-actions upload-queue-actions">
-              <div>
-                <strong>Pending video upload</strong>
-                <p>
-                  Release the global upload queue without deleting the video
-                  saved on this device. It can be retried later from the
-                  original device.
-                </p>
-              </div>
-              <div className="save-row">
-                {selectedRetryLabel && (
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={busy}
-                    onClick={() =>
-                      void action({
-                        action: "retry-upload",
-                        id: selected.id,
-                        session_id: selectedRecording.session_id,
-                      })
-                    }
-                  >
-                    {busy ? "Requesting…" : selectedRetryLabel}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={busy}
-                  onClick={() =>
-                    setCancellingUpload({
-                      device: selected,
-                      recording: selectedRecording,
-                    })
-                  }
-                >
-                  Cancel upload
-                </button>
-              </div>
-            </div>
-          )}
-          {selected && (
+          {editing && (
             <div className="device-danger-zone">
               <div>
                 <strong>Delete device</strong>
@@ -589,7 +459,7 @@ export default function BrowserTabletsAdmin() {
                 type="button"
                 className="remove-device-button"
                 disabled={busy}
-                onClick={() => setRemoving(selected)}
+                onClick={() => setRemoving(editing)}
               >
                 <Trash2 size={16} />
                 Delete device
@@ -597,41 +467,17 @@ export default function BrowserTabletsAdmin() {
             </div>
           )}
         </form>
+          </div>}
         </section>
       </div>
-      <section className="tablet-manual" aria-labelledby="tablet-manual-title">
-        <div className="tablet-manual-heading">
-          <span>GENERAL GUIDE</span>
-          <h3 id="tablet-manual-title">Set up a court device</h3>
-          <p>Complete these steps once for each browser or Android recording device.</p>
-        </div>
+      <details className="recorder-disclosure recorder-setup-guide">
+        <summary>How to set up a recorder</summary>
         <ol>
-          <li>
-            <span>1</span>
-            <div>
-              <strong>Create and assign</strong>
-              <p>
-                Name the recording device and assign its court. Camera selection
-                happens after enrollment on the physical device.
-              </p>
-            </div>
-          </li>
-          <li>
-            <span>2</span>
-            <div>
-              <strong>Enroll the physical device</strong>
-              <p>Open <code>/tablet/setup</code> for a browser camera, or Device setup in the Android APK, then enter the one-time code.</p>
-            </div>
-          </li>
-          <li>
-            <span>3</span>
-            <div>
-              <strong>Confirm camera readiness</strong>
-              <p>The browser setup page or Android APK selects the camera, records a short test clip, and saves the tested configuration.</p>
-            </div>
-          </li>
+          <li>Add a recorder and assign its court.</li>
+          <li>Scan its pairing QR in DinkVision, or enter the pairing code at <a href="/tablet/setup">Tablet setup</a> for a browser recorder.</li>
+          <li>Run the camera check on that recorder to verify the picture and microphone.</li>
         </ol>
-      </section>
+      </details>
       {cancellingUpload && (
         <div
           className="modal-backdrop"
@@ -678,8 +524,7 @@ export default function BrowserTabletsAdmin() {
                   void action({
                     action: "cancel-upload",
                     id: cancellingUpload.device.id,
-                    session_id:
-                      cancellingUpload.recording.recording_sessions.id,
+                    session_id: cancellingUpload.recording.session_id,
                   }).then((cancelled) => {
                     if (cancelled) setCancellingUpload(null);
                   });
@@ -732,7 +577,8 @@ export default function BrowserTabletsAdmin() {
                     (removed) => {
                       if (!removed) return;
                       setRemoving(null);
-                      setSelected(null);
+                      setSelectedId(null);
+                      setPanel("overview");
                     },
                   );
                 }}
@@ -782,11 +628,6 @@ export default function BrowserTabletsAdmin() {
             </div>
           </section>
         </div>
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
       )}
     </section>
   );

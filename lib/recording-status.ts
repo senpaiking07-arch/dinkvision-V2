@@ -4,7 +4,7 @@ export type CaptureReport = { session_id: string; last_seen_at: string | null };
 
 // A stored capture status is not proof that the camera is still running.
 // Keep an uncertain capture distinct from idle; only its device can reconcile footage.
-export function recordingIsConfirmed(session: Session, report: CaptureReport | undefined, now: number) {
+export function recordingIsConfirmed(session: Pick<Session, "status" | "started_at" | "duration_seconds">, report: CaptureReport | undefined, now: number) {
   if (session.status !== "recording") return false;
   const seen = Date.parse(report?.last_seen_at || "");
   const started = Date.parse(session.started_at || "");
