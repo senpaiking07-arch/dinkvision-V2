@@ -180,7 +180,7 @@ final class Api {
         if (!Set.of("upload", "retry-upload", "restart-upload", "upload-status", "finish").contains(action))
           throw new Exception("Invalid upload action.");
         JSONObject result = tablet(action, new JSONObject().put("id", session).put("direct_upload", true)
-            .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId));
+            .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId).put("large_parts", true));
         if (Set.of("upload", "retry-upload", "restart-upload").contains(action)) {
           attemptId = "";
           attemptPartSize = 8 * 1024 * 1024;
@@ -189,10 +189,9 @@ final class Api {
             if (multipart == null)
               throw new Exception("Private storage upload is unavailable. Your video stays in Saved videos.");
             int ps = multipart.optInt("partSize", 8 * 1024 * 1024);
-            boolean validSize = ps == 8 * 1024 * 1024 || ps == 16 * 1024 * 1024 || ps == 32 * 1024 * 1024;
             if (!"r2-multipart-v1".equals(multipart.optString("protocol"))
                 || multipart.optLong("bytes") != file.length()
-                || !validSize
+                || !UploadTransfer.validPartSize(ps)
                 || !"video/mp4".equals(multipart.optString("mime")))
               throw new Exception("The upload does not match this saved video.");
             attemptId = UUID.fromString(multipart.getString("attemptId")).toString();
@@ -285,7 +284,7 @@ final class Api {
   }
 
   JSONObject uploadR2Part(String address, File file, long offset, int length) throws Exception {
-    if (offset < 0 || length < 1 || length > 32 * 1024 * 1024 || offset + length > file.length())
+    if (offset < 0 || length < 1 || length > UploadTransfer.MAX_PART_BYTES || offset + length > file.length())
       throw new Exception("Invalid upload part.");
     HttpURLConnection c = null;
     try {

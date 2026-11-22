@@ -16,6 +16,13 @@ final class UploadTransfer {
   static final int DEFAULT_PARALLELISM = 4;
   static final int MAX_PARALLELISM = 4;
   static final int BATCH_SIZE = 4;
+  static final int MAX_PART_BYTES = 524 * 1024 * 1024;
+
+  static boolean validPartSize(int bytes) {
+    int mib = 1024 * 1024;
+    return bytes == 8 * mib || bytes == 16 * mib || bytes == 32 * mib
+        || (bytes > 32 * mib && bytes <= MAX_PART_BYTES && bytes % mib == 0);
+  }
 
   static final class WaitingForTurn extends Exception {
     WaitingForTurn() { super("Waiting for the upload turn."); }
@@ -134,7 +141,7 @@ final class UploadTransfer {
         boolean r2 = "r2-multipart-v1".equals(protocol);
         if (!r2 || upload.optLong("bytes") != bytes)
           throw new Exception("Invalid storage upload contract. The local video is retained.");
-        if (r2 && (partSize < 8 * 1024 * 1024 || partSize > 32 * 1024 * 1024 || (partSize & (partSize - 1)) != 0))
+        if (!validPartSize(partSize))
           throw new Exception("Invalid storage upload contract. The local video is retained.");
         parallelism = r2 ? Math.min(MAX_PARALLELISM, Math.max(1, upload.optInt("parallelism", DEFAULT_PARALLELISM))) : 1;
       }

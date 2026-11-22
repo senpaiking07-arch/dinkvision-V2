@@ -93,6 +93,24 @@ test("530 MiB recording receives APK-compatible batch grants and a short final p
  assert.equal(tail.parts[0].attemptId,upload.attemptId);
 });
 
+test("negotiates larger parts only when needed and respects the R2 object ceiling", async () => {
+ const f = fixture(protocol.R2_MAX_BYTES);
+ await assert.rejects(() => f.call("upload"), /Update the recorder/);
+ assert.equal(f.state.creates, 0);
+ const { upload } = await f.call("upload", { large_parts: true });
+ assert.ok(upload.partSize > 32 * 1024 * 1024);
+ assert.ok(Math.ceil(f.b.bytes / upload.partSize) <= protocol.R2_MAX_PARTS);
+ assert.equal(upload.parallelism, 1);
+ const part = await f.call("upload-part", { attempt_id: upload.attemptId, part_number: 1 });
+ assert.equal(part.length, upload.partSize);
+ assert.equal((await f.call("upload", { large_parts: true })).upload.partSize, upload.partSize);
+ const tooLarge = fixture(protocol.R2_MAX_BYTES + 1);
+ await assert.rejects(() => tooLarge.call("upload", { large_parts: true }), /exceeds the Cloudflare R2 object limit/);
+ assert.equal(tooLarge.state.creates, 0);
+ const standard = fixture(200 * 1024 ** 3);
+ assert.equal((await standard.call("upload")).upload.partSize, 32 * 1024 * 1024);
+});
+
 test("finish verifies R2 metadata, recovers a lost completion response and commits only once",async()=>{
  const f=fixture();const prepared=await f.call("upload");const body={attempt_id:prepared.upload.attemptId};
  await assert.rejects(()=>f.call("finish",body),/not complete/);

@@ -706,7 +706,7 @@ export class BrowserCapture {
     await this.processQueue(deviceId);
   }
   private async waitForUploadTurn(id: string, firstAction = "upload") {
-    let prepared = await tabletRequest(firstAction, { id });
+    let prepared = await tabletRequest(firstAction, { id, large_parts: true });
     while (prepared.queued) {
       if (prepared.queue?.state === "cancelled")
         throw new UploadCancelledError(
@@ -719,7 +719,7 @@ export class BrowserCapture {
       this.message(queuedUploadMessage(prepared.queue));
       this.changed();
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      prepared = await tabletRequest("upload", { id });
+      prepared = await tabletRequest("upload", { id, large_parts: true });
     }
     return prepared;
   }
@@ -767,7 +767,7 @@ export class BrowserCapture {
     if (r2 && !prepared.ready) {
       await sendR2Video({id,bytes:total,grant:prepared.upload,request:tabletRequest,
         restart:()=>this.waitForUploadTurn(id,"restart-upload"),
-        range:(start,end)=>savedVideoRange(id,start,end),
+        range:async (start,end)=>blob.slice(start,end,meta.mime),
         progress:async confirmed=>{
           const progress=Math.round(confirmed/total*100);
           await patchMeta(id,{status:"uploading",progress,serverUploadReference:id});

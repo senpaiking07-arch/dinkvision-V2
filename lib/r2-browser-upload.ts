@@ -47,7 +47,9 @@ export async function sendR2Video(options: {
     try {
       response=await (options.transport || fetch)(address,{
         method:"PUT",body:chunk,credentials:"omit",redirect:"error",referrerPolicy:"no-referrer",
-        signal:AbortSignal.timeout(90000),
+        // Preserve the normal timeout for 32 MiB parts and give larger parts
+        // more time to finish on slower uplinks.
+        signal:AbortSignal.timeout(Math.max(90000, Math.ceil(length / (32 * 1024 * 1024)) * 30000)),
       });
     } catch { throw new Error("Upload connection interrupted. The local recording is retained."); }
     if(!response.ok) throw new Error("Storage did not accept this part. Retry the saved video.");

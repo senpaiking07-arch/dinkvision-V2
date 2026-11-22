@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { DEFAULT_TENANT_ID } from "../lib/tenant-scope";
 import { migrationSQL } from "../scripts/migration-role-compat.mjs";
+import { R2_MAX_BYTES, uploadPartSize } from "../lib/r2-protocol";
 
 test("R2 completion is atomic, tenant-bound, idempotent and cannot undo cancellation",async()=>{
  const db=new PGlite();
@@ -22,6 +23,24 @@ test("R2 completion is atomic, tenant-bound, idempotent and cannot undo cancella
   await db.query("insert into courts(id,name) values($1,'R2 test court')",[court]);
   await db.query("insert into kiosk_devices(id,token_hash,created_by) values($1,'r2-fixture',$2)",[kiosk,admin]);
   await db.query("insert into browser_devices(id,name,court_id,kiosk_id) values($1,'R2 test device',$2,$3)",[device,court,kiosk]);
+  const largeSession=randomUUID();
+  await db.query(`insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email)
+   values($1,$2,$3,gen_random_uuid(),'uploading','{}','fixture@example.invalid')`,[largeSession,kiosk,court]);
+  await db.query("insert into browser_recordings(session_id,device_id) values($1,$2)",[largeSession,device]);
+  const register=(bytes:number)=>db.query<{ok:boolean}>(
+   "select browser_event($1,$2,'saved',$3,'video/mp4') ok",[kiosk,largeSession,bytes]);
+  await assert.rejects(()=>register(R2_MAX_BYTES+1),/Invalid recording/);
+  assert.equal((await register(R2_MAX_BYTES)).rows[0].ok,true);
+  assert.equal((await register(R2_MAX_BYTES)).rows[0].ok,true);
+  await db.query(`insert into r2_upload_attempts(id,session_id,device_id,bucket,object_key,bytes,mime_type,state,part_size)
+   values(gen_random_uuid(),$1,$2,'test-bucket','tenants/large.mp4',$3,'video/mp4','creating',$4)`,
+   [largeSession,device,R2_MAX_BYTES,uploadPartSize(R2_MAX_BYTES,undefined)]);
+  await db.query("update browser_recordings set upload_state='uploading',upload_updated_at=now()-interval '4 minutes' where session_id=$1",[largeSession]);
+  await db.query("select expire_browser_uploads($1)",[device]);
+  assert.equal((await db.query<{upload_state:string}>("select upload_state from browser_recordings where session_id=$1",[largeSession])).rows[0].upload_state,"uploading");
+  await db.query("update browser_recordings set upload_updated_at=now()-interval '16 minutes' where session_id=$1",[largeSession]);
+  await db.query("select expire_browser_uploads($1)",[device]);
+  assert.equal((await db.query<{upload_state:string}>("select upload_state from browser_recordings where session_id=$1",[largeSession])).rows[0].upload_state,"failed");
   async function recording() {
    const session=randomUUID(),file=randomUUID(),attempt=randomUUID(),lease=randomUUID();
    await db.query(`insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email)

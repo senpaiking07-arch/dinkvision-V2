@@ -5,7 +5,7 @@ import { browserUploadQueue } from "./browser-upload";
 import { r2Store } from "./r2-server";
 import { missingUpload, type R2Object } from "./r2-store";
 import {
-  confirmedParts, R2_DEFAULT_PART_SIZE, R2_MAX_BYTES, R2_MAX_PARTS, R2_UPLOAD_PROTOCOL, normalizePartSize,
+  confirmedParts, R2_LEGACY_MAX_BYTES, R2_MAX_BYTES, R2_UPLOAD_PROTOCOL, normalizePartSize, uploadPartSize,
 } from "./r2-protocol";
 
 type Attempt = R2Object & { id: string; session_id: string; tenant_id: string; bytes: number; state: string; part_size?: number };
@@ -21,7 +21,11 @@ function assertHead(head: NonNullable<Awaited<ReturnType<ReturnType<typeof r2Sto
 
 function partSizeOf(attempt: Attempt) { return normalizePartSize(attempt.part_size); }
 function grantFor(attempt: Attempt, bytes: number) {
-  return { protocol: R2_UPLOAD_PROTOCOL, attemptId: attempt.id, partSize: partSizeOf(attempt), bytes, mime: "video/mp4" };
+  const partSize = partSizeOf(attempt);
+  return {
+    protocol: R2_UPLOAD_PROTOCOL, attemptId: attempt.id, partSize, bytes, mime: "video/mp4",
+    ...(bytes > R2_LEGACY_MAX_BYTES && { parallelism: 1 }),
+  };
 }
 function expectedNextPart(uploadedBytes: number, partSize: number, bytes: number) {
   if (uploadedBytes >= bytes) return null;
@@ -61,8 +65,11 @@ export async function r2Upload(session: string, device: string, tenant: string, 
     if (recording?.capture_inspection_required)
       throw new UploadRequestError("Inspect the interrupted recording before uploading. The local backup is retained.");
     const bytes = Number(b.bytes);
-    if (!b.file_id || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > R2_MAX_BYTES || b.mime_type !== "video/mp4")
+    if (!b.file_id || !Number.isSafeInteger(bytes) || bytes < 1 || b.mime_type !== "video/mp4")
       throw new UploadRequestError("Save a valid MP4 recording before uploading.");
+    if (bytes > R2_MAX_BYTES) throw new UploadRequestError("This video exceeds the Cloudflare R2 object limit. The local copy is retained.");
+    if (bytes > R2_LEGACY_MAX_BYTES && ["upload", "retry-upload", "restart-upload"].includes(action) && input.large_parts !== true)
+      throw new UploadRequestError("Update the recorder to upload this large video. The local copy is retained.");
     const store = r2Store();
     const found = await mark("find_attempt", async () => db.from("r2_upload_attempts").select("*").eq("session_id", session)
       .in("state", ["creating", "uploading", "completed"]).order("created_at", { ascending: false }).limit(1).maybeSingle());
@@ -82,8 +89,7 @@ export async function r2Upload(session: string, device: string, tenant: string, 
     if (!attempt) {
       if (["finish", "upload-status", "upload-part", "upload-parts"].includes(action)) return { expired: true, timings };
       const id = randomUUID();
-      const requestedPartSize = normalizePartSize(input.part_size ?? R2_DEFAULT_PART_SIZE);
-      const partSize = requestedPartSize * R2_MAX_PARTS >= bytes ? requestedPartSize : R2_DEFAULT_PART_SIZE;
+      const partSize = uploadPartSize(bytes, input.part_size);
       attempt = {
         id, session_id: session, tenant_id: tenant, bucket: store.bucket,
         object_key: `tenants/${tenant}/recordings/${session}/${id}.mp4`, upload_id: null, bytes, state: "creating", part_size: partSize,
