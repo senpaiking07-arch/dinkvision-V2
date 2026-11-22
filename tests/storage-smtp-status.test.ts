@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import * as jsx from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AdminSkeleton, SkeletonBlock } from "../components/admin-skeleton";
 
 function load(path: string, dependencies: Record<string, unknown>) {
   const exports: any = {};
@@ -22,10 +23,19 @@ function renderStatus(data: unknown) {
   let stateIndex = 0;
   const component = load("components/storage-smtp-controls.tsx", {
     "react/jsx-runtime": jsx,
-    react: { useEffect() {}, useState: (initial: unknown) => [stateIndex++ === 0 ? data : initial, () => {}] },
+    react: { useEffect() {}, useRef: () => ({ current: null }), useState: (initial: unknown) => [stateIndex++ === 0 ? data : initial, () => {}] },
+    "lucide-react": { CloudUpload: () => null, Mail: () => null, RefreshCw: () => null },
+    "@/components/admin-skeleton": { AdminSkeleton, SkeletonBlock },
   });
   return renderToStaticMarkup(component.default());
 }
+
+test("an initial status request shows a skeleton before there is a connection result", () => {
+  const html = renderStatus(undefined);
+  assert.match(html, /Checking storage and email/);
+  assert.match(html, /admin-skeleton-block/);
+  assert.doesNotMatch(html, /Needs attention|Not configured/);
+});
 
 function routes(configured: boolean, ready: boolean, account: unknown = { role: "admin", tenantId: "tenant" }) {
   const checkedAt = "2026-11-22T12:00:00.000Z";

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { codeLabel, stageLabel, type RecorderEvent } from "@/lib/recorder-events";
+import { AdminSkeleton, SkeletonRows } from "@/components/admin-skeleton";
 
 export function RecorderTimeline({sessionId,deviceId}:{sessionId?:string;deviceId?:string}) {
   const [events,setEvents]=useState<(RecorderEvent&{received_at:string})[]>([]);
@@ -26,7 +27,7 @@ export function RecorderTimeline({sessionId,deviceId}:{sessionId?:string;deviceI
   }}>
     <summary>Recording diagnostics</summary>
     <p>Measured device stages and reported failures. Request timings include the network and server; they do not establish Wi-Fi speed or a hardware fault.</p>
-    {state==="loading"&&<p role="status">Loading diagnostic history…</p>}
+    {state==="loading"&&<AdminSkeleton label="Loading diagnostic history"><SkeletonRows count={2} /></AdminSkeleton>}
     {state==="disabled"&&<p>Diagnostics are not enabled on this deployment yet.</p>}
     {state==="error"&&<p role="alert">Could not load diagnostics. Try again.</p>}
     {state==="loaded"&&!events.length&&<p>No diagnostic events reported. Older APKs cannot supply this history.</p>}

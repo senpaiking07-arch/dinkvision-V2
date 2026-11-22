@@ -6,6 +6,7 @@ import { Camera, ChevronRight, CloudUpload, Monitor, Plus, RefreshCw, Search, Se
 import { recordingIsConfirmed } from "@/lib/recording-status";
 import { devicePresence } from "@/lib/device-presence";
 import AdminDeviceQueue, { formatDeviceTime, uploadCounts } from "@/components/admin-device-queue";
+import { AdminSkeleton, SkeletonBlock, SkeletonRows } from "@/components/admin-skeleton";
 import type { AdminDevice, AdminDevicesData, DeviceRecording } from "./admin-device-types";
 
 type AdminTabletAction = {action: string; id?: string; [key: string]: unknown};
@@ -210,7 +211,7 @@ export default function BrowserTabletsAdmin() {
       <div className="recorder-workspace-grid">
         <section className="recorder-directory" aria-busy={loading} aria-label="Registered devices">
           <div className="recorder-directory-heading"><h3>Recorders</h3>{data && <span>{devices.length}</span>}</div>
-          {loading && <p role="status" className="recorder-directory-empty">Loading recorders…</p>}
+          {loading && <AdminSkeleton label="Loading recorders"><SkeletonRows /></AdminSkeleton>}
           {!loading && !data && <p className="recorder-directory-empty">Select Refresh to try again.</p>}
           {!!devices.length && <>
             <label className="recorder-search"><Search size={16} aria-hidden="true" />
@@ -243,7 +244,13 @@ export default function BrowserTabletsAdmin() {
           {!!data && !devices.length && <p className="recorder-directory-empty">No recorders registered. Add your first device to get a pairing QR.</p>}
         </section>
         <section className="recorder-device-panel" id="recorder-device-panel" ref={detailPanel} aria-label={showEditor ? editing ? "Manage device" : "Add device" : "Selected recorder"}>
-          {!showEditor && !selected && <p className="recorder-directory-empty">{loading ? "Checking recorder status…" : "Recorder details will appear when the connection returns."}</p>}
+          {!showEditor && !selected && (loading
+            ? <div className="recorder-detail-content"><AdminSkeleton label="Loading recorder details">
+                <SkeletonBlock className="is-heading" />
+                <div className="recorder-facts-grid"><SkeletonBlock className="is-card" /><SkeletonBlock className="is-card" /></div>
+                <SkeletonRows count={2} />
+              </AdminSkeleton></div>
+            : <p className="recorder-directory-empty">Recorder details will appear when the connection returns.</p>)}
           {!showEditor && selected && selectedEntry && <>
             <header className="recorder-device-header">
               <div className="recorder-device-title">

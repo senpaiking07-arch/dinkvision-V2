@@ -1576,7 +1576,7 @@ summary {
     animation: none;
   }
 }
-.browser-devices .secondary,
+.recorder-workspace .secondary,
 .tablet-enrollment .secondary {
   border: 1px solid var(--field-border);
   color: var(--color-accent-strong);
@@ -1586,7 +1586,7 @@ summary {
   background: 0 0;
   padding: 0.7rem 1rem;
 }
-.browser-devices .secondary:disabled {
+.recorder-workspace .secondary:disabled {
   opacity: 0.5;
   cursor: wait;
 }
@@ -1921,6 +1921,207 @@ summary {
 .recorder-empty-queue { margin: 10px 0; padding: 13px; border: 1px dashed var(--recorder-border); border-radius: 9px; color: var(--recorder-muted); font-size: 13px; }
 .recorder-disclosure { font-size: 13px; padding-block: 4px; }
 .recorder-setup-guide { border-top: 1px solid var(--recorder-border); color: var(--recorder-muted); }
+
+/* Shared admin surfaces */
+.admin-main .admin-title h1 { margin: 0; font-size: clamp(29px, 4.6vw, 43px); }
+.admin-main .admin-tabs { margin-block: 22px; }
+.admin-main .admin-tabs button:focus-visible,
+.admin-main .recorder-workspace :is(button, summary, a, input, select):focus-visible {
+  outline: 2px solid var(--recorder-accent, #105b61);
+  outline-offset: 3px;
+}
+.admin-main .recorder-search input:focus-visible { outline: none; }
+.admin-overview-grid, .admin-settings-grid, .admin-service-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px;
+}
+.admin-settings-grid { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+.admin-service-grid { align-items: stretch; }
+.admin-work-panel {
+  display: grid;
+  gap: 13px;
+  min-width: 0;
+  padding: clamp(13px, 2vw, 20px);
+  border: 1px solid var(--recorder-border);
+  border-radius: 14px;
+  background: #fffefa;
+}
+.admin-work-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 17px;
+}
+.admin-work-panel h3 svg, .admin-compact-link > svg { flex: none; color: var(--recorder-accent); }
+.admin-work-panel :is(dt, dd, p) { overflow-wrap: anywhere; }
+.admin-work-panel .stack-form { margin: 0; }
+.admin-recording-settings .admin-callout { padding: 12px; margin: 0; }
+.admin-work-panel .recorder-facts .recorder-state { margin-top: 9px; }
+.admin-services .recorder-detail-section-heading { align-items: flex-start; }
+.admin-services button, .admin-watch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 39px;
+}
+.admin-compact-list, .admin-log-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.admin-compact-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 46px;
+  padding: 8px 10px;
+  text-align: start;
+  font: inherit;
+  font-size: 13px;
+  color: var(--recorder-ink);
+  background: #f5f7f2;
+  border: 1px solid var(--recorder-border);
+  border-radius: 9px;
+}
+.admin-compact-link:hover { background: #e5f2eb; }
+.admin-compact-link strong { overflow-wrap: anywhere; }
+.admin-overview-notice { justify-content: space-between; flex-wrap: wrap; }
+.admin-overview-notice .recorder-text-action { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; }
+.recorder-overview-stats .recorder-text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 35px;
+  padding-inline: 0;
+}
+.admin-court-search { margin-bottom: 9px; }
+.admin-inline-note {
+  color: var(--recorder-muted);
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.admin-log-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr) minmax(140px, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--recorder-border);
+  border-radius: 12px;
+  background: #f2f7f2;
+}
+.admin-log-filters label { display: grid; min-width: 0; gap: 5px; font-size: 12px; font-weight: 650; }
+.admin-log-filters :is(select, input[type="date"]) {
+  width: 100%;
+  min-width: 0;
+  min-height: 41px;
+  border: 1px solid var(--recorder-border);
+  border-radius: 9px;
+  background: #fff;
+  padding: 0 8px;
+  color: var(--recorder-ink);
+  font: inherit;
+  font-size: 13px;
+}
+.admin-log-filters button { min-height: 41px; justify-self: start; }
+.admin-log-item {
+  min-width: 0;
+  border: 1px solid var(--recorder-border);
+  border-radius: 12px;
+  background: #fdfefa;
+}
+.admin-log-item > details > summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 14px;
+  border-radius: 11px;
+  cursor: pointer;
+}
+.admin-log-item > details > summary::-webkit-details-marker { display: none; }
+.admin-log-item > details[open] > summary { background: #edf5ef; border-radius: 11px 11px 0 0; }
+.admin-log-item > details > summary:hover { background: #eaf3ed; }
+.admin-log-item > details > summary > svg { color: var(--recorder-accent); }
+.admin-log-item > details[open] > summary > svg { transform: rotate(90deg); }
+.admin-log-identity { display: grid; gap: 4px; overflow-wrap: anywhere; font-size: 13px; }
+.admin-log-identity > span { font-size: 12px; color: var(--recorder-muted); }
+.admin-log-detail { display: grid; gap: 12px; border-top: 1px solid var(--recorder-border); padding: 13px; }
+.admin-log-detail .recorder-diagnostics { margin-top: 0; }
+.admin-log-detail .recorder-disclosure p { margin: 0; overflow-wrap: anywhere; }
+.admin-log-detail .admin-watch-link { justify-self: start; }
+.admin-log-empty {
+  text-align: center;
+  padding: 24px 12px;
+  border: 1px dashed var(--recorder-border);
+  border-radius: 12px;
+}
+.admin-log-empty h3 { margin: 8px 0; font-size: 17px; }
+.admin-log-empty p { margin: 0 0 10px; color: var(--recorder-muted); font-size: 13px; }
+.admin-main .recorder-workspace .log-pagination { margin-top: 0; }
+
+.admin-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.admin-skeleton-parts, .admin-skeleton-rows, .admin-skeleton-row > div { display: grid; gap: 8px; min-width: 0; }
+.admin-skeleton-block {
+  display: block;
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  background: #e3ebe5;
+  animation: admin-skeleton-pulse 1.5s ease-in-out infinite alternate;
+}
+.admin-skeleton-block.is-short { width: min(45%, 11rem); }
+.admin-skeleton-block.is-medium { width: min(70%, 15rem); }
+.admin-skeleton-block.is-number { width: 32px; height: 25px; margin-block: 2px; }
+.admin-skeleton-block.is-heading { width: min(52%, 16rem); height: 24px; }
+.admin-skeleton-block.is-field { height: 38px; }
+.admin-skeleton-block.is-card { height: 82px; border-radius: 12px; }
+.admin-skeleton-block.is-square { width: 33px; height: 33px; }
+.admin-skeleton-row {
+  display: grid;
+  grid-template-columns: 33px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid #e5ece6;
+  border-radius: 10px;
+}
+.admin-loading-nav, .admin-loading-metrics { display: grid; gap: 8px; }
+.admin-loading-nav { grid-template-columns: repeat(5, minmax(0, 125px)); margin: 12px 0 14px; }
+.admin-loading-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@keyframes admin-skeleton-pulse { from { opacity: .52; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .admin-skeleton-block { animation: none; }
+}
+@media (max-width: 940px) {
+  .admin-settings-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .admin-main .admin-tabs { flex-wrap: wrap; overflow: visible; }
+  .admin-main .admin-tabs button { flex: 1 1 auto; justify-content: center; }
+  .admin-overview-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-log-filters, .admin-loading-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-log-filters label:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 450px) {
+  .admin-log-item > details > summary { grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+  .admin-log-identity { grid-column: 1 / -1; }
+  .admin-log-item > details > summary > svg { justify-self: end; }
+  .admin-service-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .recorder-setup-guide ol { margin: 5px 0 8px; padding-inline-start: 20px; line-height: 1.65; }
 .recorder-alert { display: flex; gap: 7px; align-items: center; border-radius: 9px; margin: 0; padding: 9px 11px; background: #fcf0d7; color: #754411; font-size: 13px; }
 .recorder-alert svg { flex: none; }
