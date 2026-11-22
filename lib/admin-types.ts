@@ -76,6 +76,7 @@ export type Session = {
 export type BrowserRecordingReport={last_seen_at:string|null;last_error?:string|null;safe_error?:string|null;upload_state?:string|null;branding_state?:string|null;local_available?:boolean;duration_ms?:number|null};
 export type Audit = { id: number; action: string; created_at: string };
 export type AdminData = {
+  storageProvider?: "r2" | "drive";
   captureReports?: import("./recording-status").CaptureReport[];
   courts: Court[];
   cameras: Camera[];

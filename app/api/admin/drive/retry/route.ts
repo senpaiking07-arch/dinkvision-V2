@@ -2,13 +2,15 @@ import { getAccount } from "@/lib/auth";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { uuid } from "@/lib/validation";
+import { usesR2 } from "@/lib/r2-server";
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return json({error:"Invalid origin."},403);
   const {account}=await getAccount();
   if (account?.role!=="admin") return json({error:"Administrator access required."},403);
+  if (usesR2()) return json({error:"Use Devices & cameras to retry the saved recording on its original device."},409);
   try {
     const {session_id}=await readBody(request);
-    const db=recorderDatabase();
+    const db=recorderDatabase(account.tenantId);
     const file=await db.from("recording_files").select("id,session_id,status").eq("session_id",uuid(session_id)).in("status",["local_ready","sharing"]).single();
     const google=await db.from("google_integration").select("root_folder_id").eq("id",true).single();
     if (file.error || google.error) return json({error:"Connect Google first and select a completed local recording."},400);

@@ -19,6 +19,9 @@ import { venueStateError } from "@/lib/venue-errors";
 import { androidUpdateRequired } from "@/lib/android-release";
 import { isCaptureInterruption } from "@/lib/capture-interruption";
 import { captureColumns, readRecorderQueue, retryColumns, withOptionalColumns } from "@/lib/optional-schema";
+import { usesR2 } from "@/lib/r2-server";
+import { r2Upload } from "@/lib/r2-upload";
+import { R2_UPLOAD_PROTOCOL } from "@/lib/r2-protocol";
 export const maxDuration = 60;
 function uploadBackoffEnabled() {
   return process.env.RECORDER_UPLOAD_BACKOFF_ENABLED === "true";
@@ -36,7 +39,7 @@ export async function browserTabletState(
   t: EnrolledBrowserTablet,
   includeSetupAccess = false,
 ) {
-  const db = recorderDatabase();
+  const db = recorderDatabase(t.kiosk.tenant_id);
     const deviceQueue = (details: boolean, retrySchedule: boolean) => db.from("browser_recordings")
       .select(`session_id,job_id,upload_state,upload_updated_at,uploaded_bytes,bytes,retry_count,last_error,branding_state,client_created_at,duration_ms,local_available,${retrySchedule ? "upload_retry_at," : ""}recording_sessions(court_id,status,created_at,recipient_email,configuration_snapshot${details ? ",capture_interruption_code,capture_interrupted_at,capture_inspection_required" : ""})`)
       .eq("device_id", t.device.id).order("client_created_at", { ascending: false }).limit(100);
@@ -69,11 +72,12 @@ export async function browserTabletState(
     const mail = s?.recording_files?.[0]?.email_jobs;
     const uploadQueue =
       s && ["uploading", "sharing"].includes(s.status)
-        ? await browserUploadQueue(s.id, t.device.id)
+        ? await browserUploadQueue(s.id, t.device.id, false, t.kiosk.tenant_id)
         : null;
     return json({
       enabled: true,
       capabilities: {enrollmentRecovery:true,deviceCopyReporting: true,brandingProgressReporting:true,localFileSizeReporting:true,queuePresenceReporting:true,
+        uploadProtocol: usesR2() ? R2_UPLOAD_PROTOCOL : "drive-resumable",
         uploadBackoffScheduling:retrySchedule,
         recorderDiagnostics:process.env.RECORDER_DIAGNOSTICS_ENABLED==="true"},
       browser: true,
@@ -131,7 +135,7 @@ export async function POST(request: Request) {
     const t = await browserTablet();
     if (!t) return json({ error: "Enroll this browser first." }, 401);
     const b = await readBody(request),
-      db = recorderDatabase();
+      db = recorderDatabase(t.kiosk.tenant_id);
     if (b.action === "start") {
       const update = androidUpdateRequired(request, t.device.recorder_mode === "android_camera");
       if (update) return json(update, 426);
@@ -379,7 +383,7 @@ export async function POST(request: Request) {
       if (!["saved_locally", "pending", "uploading", "retrying", "uploaded", "failed", "local_only"].includes(status))
         throw new InputError("Invalid local queue status.");
       if (status === "uploaded")
-        return json({ error: "Drive completion has not been verified." }, 409);
+        return json({ error: "Cloud upload completion has not been verified." }, 409);
       if(status==="local_only"&&owned.data.upload_state!=="local_only")
         throw new InputError("The local-only policy must be confirmed by the server first.");
       const progress = Number(b.progress || 0), retries = Number(b.retry_count || 0);
@@ -422,6 +426,17 @@ export async function POST(request: Request) {
       const updated = await update;
       if (updated.error) throw updated.error;
       return json({ ok: true });
+    }
+    if (usesR2() && ["upload","retry-upload","restart-upload","upload-status","upload-part","finish"].includes(String(b.action))) {
+      if (b.upload_protocol !== R2_UPLOAD_PROTOCOL)
+        return json({error:"Update this recorder to the R2-compatible version. Saved videos are retained.",code:"upload_protocol_required"},426);
+      if (b.action === "retry-upload") {
+        const retry = await db.rpc("retry_browser_upload",{p_session:id,p_device:t.device.id});
+        if (retry.error || !retry.data) return json({error:"This saved upload could not be retried."},409);
+      }
+      const result = await r2Upload(id,t.device.id,t.kiosk.tenant_id,String(b.action),b);
+      if (result.ready) after(async () => { await deliverNextEmail(undefined,undefined,t.kiosk.tenant_id); });
+      return json(result);
     }
     if (b.action === "upload-status")
       return json(await browserUploadStatus(id, t.device.id));

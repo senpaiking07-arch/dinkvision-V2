@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 type GoogleStatus = {
+  provider?:string;
+  storage?:{ready:boolean};
   configured: boolean;
   integration: {owner_email:string;connected_at:string;safe_error:string|null} | null;
 };
@@ -18,15 +20,16 @@ export default function GoogleDriveControls() {
       } catch { if (alive) setMessage("Google status is temporarily unavailable."); }
     };
     const result=new URLSearchParams(window.location.search).get("google");
-    if (result) setMessage(result==="connected"?"Google Drive connected successfully.":`Google connection needs attention: ${result.replaceAll("_"," ")}.`);
+    if (result) setMessage(result==="connected"?"Google account connected successfully.":`Google connection needs attention: ${result.replaceAll("_"," ")}.`);
     void refresh(); const timer=setInterval(refresh,15000);
     return ()=>{alive=false;clearInterval(timer);};
   },[]);
   return <section className="admin-card google-drive-card">
     <div className="eyebrow">MATCH STORAGE & PLAYBACK</div>
-    <h2>Google Drive</h2>
+    <h2>{data?.provider==="r2" ? "R2 storage and Gmail delivery" : "Storage and email"}</h2>
+    {data?.provider==="r2" && <p>Private video storage: {data.storage?.ready ? "Connected" : "Needs attention"}. Gmail delivery: {data.integration ? `Connected as ${data.integration.owner_email}` : "Not connected"}.</p>}
     {data?.integration?.safe_error && <p role="alert" className="form-error">Google access needs attention. Reconnect the owner's account, then retry affected uploads.</p>}
-    {data?.configured && <form method="post" action="/api/integrations/google/start"><button className="primary" type="submit">{data.integration?"Connect / reconnect Drive & Gmail":"Connect Google Drive & Gmail"}</button></form>}
+    {data?.configured && <form method="post" action="/api/integrations/google/start"><button className="primary" type="submit">{data.provider==="r2" ? (data.integration ? "Reconnect Gmail" : "Connect Gmail") : (data.integration?"Connect / reconnect Drive & Gmail":"Connect Google Drive & Gmail")}</button></form>}
     {data && !data.configured && <p className="form-error">Google credentials are missing from the server configuration.</p>}
     {message && <p role="status" className="form-note">{message}</p>}
   </section>;

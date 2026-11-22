@@ -113,7 +113,7 @@ function showNativeModal(raw) {
     if (data.id) modalButton('Save another copy', () => { hideModal(); call('save-local-video', data.id); });
     modalButton('Close', hideModal, true);
   } else if (data.kind === 'remove-saved-video') {
-    title('SAVED VIDEO', 'Remove the app copy?', 'This removes only the copy inside DinkVision. Your exported Gallery / Files copy and any Google Drive copy stay in place. This app cannot retry an upload after its copy is removed.');
+    title('SAVED VIDEO', 'Remove the app copy?', 'This removes only the copy inside DinkVision. Your exported Gallery / Files copy and any uploaded cloud copy stay in place. This app cannot retry an upload after its copy is removed.');
     modalButton('Remove app copy', () => { hideModal(); $('saved-player').pause(); $('saved-player').removeAttribute('src'); lastSavedToken=''; call('remove-local-video', data.id); }, true);
     cancel('Keep app copy');
   } else if (data.kind === 'enrollment') {
@@ -394,7 +394,7 @@ function renderSavedVideos() {
   $('saved-empty').hidden = !!item;
   $('saved-empty').textContent = !state.localDeviceKnown && state.enrolled
     ? 'Connect once to verify this enrollment before viewing saved videos. The originals remain in the app.'
-    : 'No videos are saved inside this app. Completed uploads may already be on Google Drive.';
+    : 'No videos are saved inside this app. Completed uploads may already be in cloud storage.';
   $('saved-panel').hidden = !item;
   if (!item) {
     savedSelection = ''; lastSavedToken = '';

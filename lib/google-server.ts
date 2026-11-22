@@ -20,8 +20,7 @@ export function googleConfig() {
   }
   return { clientId, clientSecret, redirect, root, owner };
 }
-export async function googleToken(fields: Record<string,string>) {
-  const config = googleConfig();
+export async function googleToken(fields: Record<string,string>, config: {clientId:string;clientSecret:string} = googleConfig()) {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method:"POST",redirect:"error",signal:AbortSignal.timeout(10000),
     headers:{"Content-Type":"application/x-www-form-urlencoded"},

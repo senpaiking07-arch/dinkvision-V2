@@ -20,6 +20,7 @@ async function report(body: Record<string, unknown>, backoff = false, owned = tr
   }).outputText, {
     exports, console, process: { env: { RECORDER_UPLOAD_BACKOFF_ENABLED: backoff ? "true" : "false" } },
     require(name: string) {
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
       if (name === "@/lib/browser-tablets") return {
         browserTablet: async () => ({ device: { id: "device" }, kiosk: { id: "kiosk" } }),
       };

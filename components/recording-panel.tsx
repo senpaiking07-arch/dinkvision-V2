@@ -245,7 +245,7 @@ export default function RecordingPanel({ email }: { email: string }) {
             </p>
           )}
           <p className="form-note">
-            {(active ? active.audio_enabled : selected?.audio_enabled) ? "Microphone on — video and audio will be recorded." : "Video only — microphone off."} Clips are saved on the venue computer, then uploaded when Google Drive is connected. Private viewing links appear below and are emailed when the venue has enabled Gmail delivery.
+            {(active ? active.audio_enabled : selected?.audio_enabled) ? "Microphone on — video and audio will be recorded." : "Video only — microphone off."} Clips are saved on the venue computer, then uploaded when cloud storage is connected. Private viewing links appear below and are emailed when the venue has enabled Gmail delivery.
           </p>
         </aside>
       </div>
@@ -256,14 +256,14 @@ export default function RecordingPanel({ email }: { email: string }) {
             {data.sessions.map((session) => (
               <li key={session.id}>
                 <div>
-                  <strong>{session.failure_stage === "short_recording" ? "Saved locally · under one minute" : session.failure_stage === "unsupported_format" ? "Saved locally · older WebM clip" : session.status === "failed" && ["upload","sharing"].includes(session.failure_stage || "") ? "Drive needs attention" : labels[session.status] || session.status}</strong>
-                  {session.playback_available && <p><a className="sign-in" href={`/api/recordings/${session.id}/playback`} target="_blank" rel="noopener noreferrer">View on Google Drive</a></p>}
+                  <strong>{session.failure_stage === "short_recording" ? "Saved locally · under one minute" : session.failure_stage === "unsupported_format" ? "Saved locally · older WebM clip" : session.status === "failed" && ["upload","sharing"].includes(session.failure_stage || "") ? "Cloud storage needs attention" : labels[session.status] || session.status}</strong>
+                  {session.playback_available && <p><a className="sign-in" href={`/api/recordings/${session.id}/playback`} target="_blank" rel="noopener noreferrer">Watch recording</a></p>}
                   {session.status === "ready" && <p className="form-note">{session.playback_available ? "Sign into Google using your recipient email. Google may still be processing the video." : "This recording has expired and is awaiting cleanup."} Viewing deadline: {session.expires_at ? new Date(session.expires_at).toLocaleString() : "Not set"}. Videos are permanently deleted after expiry.</p>}
                   <p className="form-note">
                     {session.status === "local_ready"
-                      ? "Saved safely at the venue. Waiting for Google Drive upload; staff can queue older recordings."
+                      ? "Saved safely at the venue. Waiting for cloud storage upload; staff can queue older recordings."
                       : session.status === "failed"
-                        ? (session.failure_stage === "short_recording" ? "This clip was shorter than one minute, so it was kept only on the recording device and was not sent to Google Drive." : session.failure_stage === "unsupported_format" ? "This older WebM clip was kept on its recording device instead of being sent to Google Drive. New browser recordings use MP4." : ["upload","sharing"].includes(session.failure_stage || "") ? "Your video is saved locally, but Drive upload or sharing needs attention. Ask staff to retry." : "The capture did not finish normally. Any partial video is retained for admin review.")
+                        ? (session.failure_stage === "short_recording" ? "This clip was shorter than one minute, so it was kept only on the recording device and was not sent to cloud storage." : session.failure_stage === "unsupported_format" ? "This older WebM clip was kept on its recording device instead of being sent to cloud storage. New browser recordings use MP4." : ["upload","sharing"].includes(session.failure_stage || "") ? "Your video is saved locally, but Cloud upload or playback needs attention. Ask staff to retry." : "The capture did not finish normally. Any partial video is retained for admin review.")
                         : session.stop_requested_at &&
                             activeStates.includes(session.status)
                           ? "Stop requested; waiting for recorder."

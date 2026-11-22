@@ -36,8 +36,9 @@ async function dashboard(error: {code: string; message: string}) {
     return query;
   } };
   runInNewContext(source, { exports, require(name: string) {
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
     if (name === "react/jsx-runtime") return jsxRuntime;
-    if (name === "@/lib/auth") return { getAccount: async () => ({account:{role:"admin"}}) };
+    if (name === "@/lib/auth") return { getAccount: async () => ({account:{role: 'admin', tenantId: '00000000-0000-4000-8000-000000000001'}}) };
     if (name === "@/lib/supabase-server") return { serverSupabase: async () => db };
     if (name === "@/lib/recorder-server") return { recorderDatabase: () => db };
     if (name === "@/lib/validation") return { uuid };
@@ -94,7 +95,8 @@ async function readQueue(route: "admin/tablets" | "tablet", missing: string[]) {
   runInNewContext(compiled, {
     exports, URL, process: {env: {RECORDER_UPLOAD_BACKOFF_ENABLED: "true"}},
     require(name: string) {
-      if (name === "@/lib/auth") return {getAccount: async () => ({account: {role: "admin"}})};
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
+      if (name === "@/lib/auth") return {getAccount: async () => ({account: {role: 'admin', tenantId: '00000000-0000-4000-8000-000000000001'}})};
       if (name === "@/lib/browser-tablets") return {browserTablet: async () => ({device: {id: "tablet"}, kiosk: {}}),
         publicTablet: (device: unknown) => device};
       if (name === "@/lib/recorder-server") return {recorderDatabase: () => db};

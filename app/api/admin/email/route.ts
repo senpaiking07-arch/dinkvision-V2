@@ -4,14 +4,15 @@ import { json, sameOrigin, readBody } from "@/lib/http";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { deliverNextEmail } from "@/lib/email-server";
 import { uuid } from "@/lib/validation";
+import { usesR2 } from "@/lib/r2-server";
 export const maxDuration = 60;
 export async function GET() {
   const {account}=await getAccount();
   if (account?.role!=="admin") return json({error:"Administrator access required."},403);
-  const db=recorderDatabase();
+  const db=recorderDatabase(account.tenantId);
   const [jobs,integration,files]=await Promise.all([
     db.from("email_jobs").select("file_id,status,attempts,safe_error,sent_at,next_attempt_at,recording_files(session_id,recording_sessions(recipient_email,configuration_snapshot))").order("created_at",{ascending:false}).limit(50),
-    db.from("google_integration").select("gmail_authorized_at,owner_email").eq("id",true).maybeSingle(),
+    usesR2() ? db.from("gmail_integrations").select("gmail_authorized_at:connected_at,owner_email").maybeSingle() : db.from("google_integration").select("gmail_authorized_at,owner_email").eq("id",true).maybeSingle(),
     db.from("recording_files").select("id,session_id,recording_sessions(recipient_email,configuration_snapshot)").eq("status","ready").is("deleted_at",null).gt("expires_at",new Date().toISOString()).order("uploaded_at",{ascending:false}).limit(50),
   ]);
   if (jobs.error || integration.error || files.error) return json({error:"Email status unavailable."},503);
@@ -22,8 +23,8 @@ export async function POST(request:Request) {
   const {account}=await getAccount();
   if (account?.role!=="admin") return json({error:"Administrator access required."},403);
   try {
-    const body=await readBody(request),id=uuid(body.file_id),db=recorderDatabase();
-    const integration=await db.from("google_integration").select("gmail_authorized_at").eq("id",true).maybeSingle();
+    const body=await readBody(request),id=uuid(body.file_id),db=recorderDatabase(account.tenantId);
+    const integration=usesR2() ? await db.from("gmail_integrations").select("gmail_authorized_at:connected_at").maybeSingle() : await db.from("google_integration").select("gmail_authorized_at").eq("id",true).maybeSingle();
     if (!integration.data?.gmail_authorized_at) return json({error:"Connect Gmail sending permission first."},409);
     const file=await db.from("recording_files").select("session_id").eq("id",id).eq("status","ready").is("deleted_at",null).gt("expires_at",new Date().toISOString()).maybeSingle();
     if (!file.data) return json({error:"Recording unavailable or expired."},409);
@@ -38,7 +39,7 @@ export async function POST(request:Request) {
     if (state.error) throw state.error;
     if (state.data.status === "pending") {
       after(async () => {
-        await deliverNextEmail(capture.data?.recorder_id || undefined,id);
+        await deliverNextEmail(capture.data?.recorder_id || undefined,id,account.tenantId);
       });
       return json({ok:true});
     }

@@ -1,0 +1,64 @@
+package com.casabatik.recorder;
+
+import static org.junit.Assert.*;
+import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.SharedPreferences;
+import androidx.test.platform.app.InstrumentationRegistry;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.util.*;
+import org.json.JSONObject;
+import org.junit.Test;
+
+public class R2UploadTest {
+  @Test public void multipartUsesEightMiBPartsAndWaitsForServerConfirmation() throws Exception {
+    long size = 8L * 1024 * 1024 + 19;
+    List<Integer> chunks = new ArrayList<>();
+    long[] offset = {0};
+    boolean[] confirmed = {false};
+    UploadTransfer.send(size, new UploadTransfer.Transport() {
+      public JSONObject action(String action) throws Exception {
+        if (action.equals("upload")) return new JSONObject().put("upload",new JSONObject()
+            .put("protocol","r2-multipart-v1").put("partSize",8*1024*1024).put("bytes",size));
+        if (action.equals("upload-status")) return offset[0] == size ? new JSONObject().put("uploaded",true)
+            : new JSONObject().put("offset",offset[0]);
+        assertEquals("finish",action);confirmed[0]=true;return new JSONObject().put("ready",true);
+      }
+      public JSONObject chunk(long start,int length) throws Exception {
+        assertEquals(offset[0],start);chunks.add(length);offset[0]+=length;
+        return new JSONObject().put("accepted",true);
+      }
+    },percent->{if(percent==100)assertTrue(confirmed[0]);});
+    assertEquals(List.of(8*1024*1024,19),chunks);
+  }
+
+  @Test public void directR2PartsStreamOnlyRequestedBytesWithoutApplicationCredentials() throws Exception {
+    Context base=InstrumentationRegistry.getInstrumentation().getTargetContext();
+    String name="r2-upload-test-"+UUID.randomUUID();
+    Context context=new ContextWrapper(base) {
+      public Context getApplicationContext(){return this;}
+      public SharedPreferences getSharedPreferences(String ignored,int mode){return base.getSharedPreferences(name,mode);}
+    };
+    File file=new File(base.getCacheDir(),name+".mp4");
+    try {
+      try(FileOutputStream out=new FileOutputStream(file)){out.write(new byte[]{1,2,3,4,5});}
+      Vault vault=new Vault(context);vault.put("cookies","{\"cb-kiosk\":\"fixture\"}");
+      ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+      HttpURLConnection[] connection=new HttpURLConnection[1];
+      Api api=new Api(vault,url->connection[0]=new HttpURLConnection(url){
+        public void connect(){}public void disconnect(){}public boolean usingProxy(){return false;}
+        public OutputStream getOutputStream(){return bytes;}public int getResponseCode(){return 200;}
+      });
+      String address="https://42c7c9ce788292c080caf0ad3e8daded.r2.cloudflarestorage.com/bucket/key?uploadId=id&partNumber=1&X-Amz-Signature=fixture";
+      assertTrue(api.uploadR2Part(address,file,2,3).getBoolean("accepted"));
+      assertArrayEquals(new byte[]{3,4,5},bytes.toByteArray());
+      assertNull(connection[0].getRequestProperty("Cookie"));
+      assertNull(connection[0].getRequestProperty("Authorization"));
+      assertNull(connection[0].getRequestProperty("Origin"));
+      assertNull(connection[0].getRequestProperty("Content-Range"));
+      assertFalse(connection[0].getInstanceFollowRedirects());
+      assertThrows(Exception.class,()->api.uploadR2Part(address.replace("cloudflarestorage.com","evil.invalid"),file,0,5));
+    } finally {file.delete();base.getSharedPreferences(name,0).edit().clear().commit();}
+  }
+}

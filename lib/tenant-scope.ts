@@ -8,6 +8,7 @@ export const tenantTables = new Set([
   "google_oauth_states", "drive_folders", "drive_upload_jobs", "email_jobs",
   "cleanup_jobs", "kiosk_devices", "browser_devices", "browser_recordings",
   "locations", "tenant_google_settings", "tenant_memberships",
+  "r2_upload_attempts", "gmail_integrations",
 ]);
 
 export function tenantId(value: unknown): string {

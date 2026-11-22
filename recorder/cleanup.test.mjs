@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,stat} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,stat,rm} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {removeExpiredLocal} from './cleanup.mjs';
-test('Local cleanup unlinks only a finalized recording and tolerates repeated acknowledgement',async()=>{
+test('Local cleanup unlinks only a finalized recording and tolerates repeated acknowledgement',async(t)=>{
+ await mkdir(resolve('.local'),{recursive:true});
  const home=await mkdtemp(resolve('.local/cleanup-test-')),id=randomUUID();
+ t.after(()=>rm(home,{recursive:true,force:true}));
  const dir=join(home,'captures',id);await mkdir(dir,{recursive:true});
  await writeFile(join(dir,'video.mp4'),'fixture');await writeFile(join(dir,'keep.txt'),'metadata');
  const job={session_id:id,local_filename:`${id}/video.mp4`};

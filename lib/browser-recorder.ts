@@ -18,6 +18,8 @@ import {
   type LocalRecording,
 } from "./browser-storage";
 import { inspectRecording, RecordingIntegrityError } from "./recording-integrity";
+import { R2_UPLOAD_PROTOCOL } from "./r2-protocol";
+import { sendR2Video } from "./r2-browser-upload";
 export async function tabletRequest(
   action: string,
   fields: Record<string, unknown> = {},
@@ -25,7 +27,7 @@ export async function tabletRequest(
   const r = await fetch("/api/tablet", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, ...fields }),
+    body: JSON.stringify({ action, upload_protocol: R2_UPLOAD_PROTOCOL, ...fields }),
     signal: AbortSignal.timeout(60000),
   });
   let d: any;
@@ -761,7 +763,19 @@ export class BrowserCapture {
       id,
       retryCancelled ? "retry-upload" : "upload",
     );
-    if (!prepared.ready) {
+    const r2 = prepared.upload?.protocol === R2_UPLOAD_PROTOCOL;
+    if (r2 && !prepared.ready) {
+      await sendR2Video({id,bytes:total,grant:prepared.upload,request:tabletRequest,
+        restart:()=>this.waitForUploadTurn(id,"restart-upload"),
+        range:(start,end)=>savedVideoRange(id,start,end),
+        progress:async confirmed=>{
+          const progress=Math.round(confirmed/total*100);
+          await patchMeta(id,{status:"uploading",progress,serverUploadReference:id});
+          this.changed("progress");
+          this.message(`Uploading video… ${progress}%`);
+        },
+      });
+    } else if (!prepared.ready) {
       let offset = 0,
         restarts = 0;
       while (offset < total) {
@@ -819,7 +833,7 @@ export class BrowserCapture {
         );
       }
     }
-    const finished = await tabletRequest("finish", { id });
+    const finished = r2 ? {ready:true} : await tabletRequest("finish", { id });
     if (!finished.ready)
       throw Error("Upload is still being confirmed. The local backup is kept and will retry.");
     await removeVideoData(id);

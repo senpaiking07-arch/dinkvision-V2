@@ -7,7 +7,7 @@ import { checkDriveHealth } from "@/lib/google-server";
 export async function GET() {
   const { account } = await getAccount();
   if (!account) return json({ error: "Please sign in." }, 401);
-  const db = await serverSupabase();
+  const db = await serverSupabase(account.tenantId);
   const [courts, sessions, settings] = await Promise.all([
     db.rpc("player_court_status"),
     db
@@ -32,7 +32,7 @@ export async function GET() {
     )
     .map((s) => s.id);
   const recorderStates = ids.length
-    ? await recorderDatabase()
+    ? await recorderDatabase(account.tenantId)
         .from("capture_jobs")
         .select("session_id,recorders(last_seen_at)")
         .in("session_id", ids)
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     const { account } = await getAccount();
     if (!account) return json({ error: "Please sign in." }, 401);
     const body = await readBody(request);
-    const db = recorderDatabase();
+    const db = recorderDatabase(account.tenantId);
     if (body.action === "start") {
       const key = uuid(body.key);
       const court = uuid(body.court_id);

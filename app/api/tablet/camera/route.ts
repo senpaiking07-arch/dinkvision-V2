@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     if (b.action === "configure") {
       const expectedRevision = uuid(b.expected_revision);
       if (t.kiosk.current_session_id) {
-        const current = await recorderDatabase()
+        const current = await recorderDatabase(t.kiosk.tenant_id)
           .from("recording_sessions")
           .select("status")
           .eq("id", t.kiosk.current_session_id)
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
           );
       }
       const fields = nativeTabletCameraFields(b, t.device);
-      const updated = await recorderDatabase()
+      const updated = await recorderDatabase(t.kiosk.tenant_id)
         .from("browser_devices")
         .update(fields)
         .eq("id", t.device.id)
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
           409,
         );
       if (t.kiosk.current_session_id) {
-        const current = await recorderDatabase()
+        const current = await recorderDatabase(t.kiosk.tenant_id)
           .from("recording_sessions")
           .select("status")
           .eq("id", t.kiosk.current_session_id)
@@ -94,7 +94,7 @@ export async function POST(request: Request) {
             409,
           );
       }
-      const r = await recorderDatabase().rpc("native_camera_test", {
+      const r = await recorderDatabase(t.kiosk.tenant_id).rpc("native_camera_test", {
         p_kiosk: t.kiosk.id,
         p_revision: revision,
         p_passed: b.passed,

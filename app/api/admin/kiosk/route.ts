@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     const body = await readBody(request);
     if (!["enable", "disable"].includes(String(body.action)))
       return json({ error: "Unknown action." }, 400);
-    const db = recorderDatabase(),
+    const db = recorderDatabase(account.tenantId),
       existing = await kioskDevice();
     if (existing && body.action === "enable") return json({ enabled: true });
     if (existing) {

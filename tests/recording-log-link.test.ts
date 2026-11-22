@@ -22,6 +22,7 @@ async function openLog(recording: string, role = "admin", exists = true) {
   runInNewContext(compiled, {
     exports,
     require(name: string) {
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
       if(name === "react/jsx-runtime") return jsx;
       if(name === "next/navigation") return {redirect: () => {throw Error("redirected");}};
       if(name === "@/lib/validation") return {uuid};

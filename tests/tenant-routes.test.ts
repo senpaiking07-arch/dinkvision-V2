@@ -14,6 +14,7 @@ test("tenant routes reject forged switches, player administration and cross-orig
   runInNewContext(ts.transpileModule(readFileSync("app/api/tenants/route.ts","utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports,process:{env:{NODE_ENV:"production"}},
     require(name:string){
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
       if(name==="@/lib/auth")return{getAccount:async()=>({account})};
       if(name==="next/headers")return{cookies:async()=>({set:(...args:any[])=>cookies.push(args)})};
       if(name==="@/lib/tenant-scope")return{TENANT_COOKIE:"dinkvision-tenant"};

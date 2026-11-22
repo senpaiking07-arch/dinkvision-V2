@@ -174,14 +174,27 @@ final class Api {
     UUID.fromString(session);
     return new UploadTransfer.Transport() {
       private String address = "";
+      private String attemptId = "";
 
       public JSONObject action(String action) throws Exception {
         if (!Set.of("upload", "retry-upload", "restart-upload", "upload-status", "finish").contains(action))
           throw new Exception("Invalid upload action.");
-        JSONObject result = tablet(action, new JSONObject().put("id", session).put("direct_upload", true));
+        JSONObject result = tablet(action, new JSONObject().put("id", session).put("direct_upload", true)
+            .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId));
         if (Set.of("upload", "retry-upload", "restart-upload").contains(action)) {
           address = "";
+          attemptId = "";
           if (!result.optBoolean("ready") && !result.optBoolean("queued")) {
+            JSONObject multipart = result.optJSONObject("upload");
+            if (multipart != null) {
+              if (!"r2-multipart-v1".equals(multipart.optString("protocol"))
+                  || multipart.optLong("bytes") != file.length()
+                  || multipart.optInt("partSize") != 8 * 1024 * 1024
+                  || !"video/mp4".equals(multipart.optString("mime")))
+                throw new Exception("The upload does not match this saved video.");
+              attemptId = UUID.fromString(multipart.getString("attemptId")).toString();
+              return result;
+            }
             JSONObject grant = result.optJSONObject("directUpload");
             if (grant == null)
               throw new Exception("Direct upload is unavailable. Ask Admin to update the hosted app. Your video stays in Saved videos.");
@@ -196,9 +209,69 @@ final class Api {
       }
 
       public JSONObject chunk(long offset, int length) throws Exception {
+        if (!attemptId.isEmpty()) {
+          if (offset % (8 * 1024 * 1024) != 0) throw new Exception("Invalid confirmed upload offset.");
+          JSONObject grant = tablet("upload-part", new JSONObject().put("id", session)
+              .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId)
+              .put("part_number", offset / (8 * 1024 * 1024) + 1));
+          if (grant.optBoolean("uploaded")) return new JSONObject().put("accepted", true);
+          if (grant.optBoolean("expired")) return grant;
+          if (grant.optLong("offset", -1) != offset || grant.optInt("length", -1) != length
+              || !attemptId.equals(grant.optString("attemptId")))
+            throw new Exception("Upload progress changed. Retry the saved video.");
+          return uploadR2Part(grant.getString("url"), file, offset, length);
+        }
         return uploadDriveChunk(address, file, offset, length);
       }
     };
+  }
+
+  private static URL r2Address(String address) throws Exception {
+    try {
+      URI uri = new URI(address);
+      if (address.length() > 8192 || !"https".equals(uri.getScheme()) || uri.getHost() == null
+          || !uri.getHost().matches("[a-f0-9]{32}\\.r2\\.cloudflarestorage\\.com")
+          || uri.getRawUserInfo() != null || uri.getPort() != -1 || uri.getRawFragment() != null
+          || uri.getRawQuery() == null || !uri.getRawQuery().contains("X-Amz-Signature=")
+          || !uri.getRawQuery().contains("uploadId=") || !uri.getRawQuery().contains("partNumber="))
+        throw new IllegalArgumentException();
+      return uri.toURL();
+    } catch (Exception invalid) { throw new Exception("Invalid private storage address. The local video is retained."); }
+  }
+
+  JSONObject uploadR2Part(String address, File file, long offset, int length) throws Exception {
+    if (offset < 0 || length < 1 || length > 8 * 1024 * 1024 || offset + length > file.length())
+      throw new Exception("Invalid upload part.");
+    HttpURLConnection c = null;
+    try {
+      c = connections.open(r2Address(address));
+      c.setInstanceFollowRedirects(false);
+      c.setUseCaches(false);
+      c.setConnectTimeout(15000);
+      c.setReadTimeout(90000);
+      c.setRequestMethod("PUT");
+      c.setDoOutput(true);
+      c.setFixedLengthStreamingMode(length);
+      c.setRequestProperty("Content-Type", "video/mp4");
+      try (RandomAccessFile f = new RandomAccessFile(file, "r"); OutputStream out = c.getOutputStream()) {
+        f.seek(offset);
+        byte[] buffer = new byte[65536];
+        int remaining = length;
+        while (remaining > 0) {
+          if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Upload paused.");
+          int count = f.read(buffer, 0, Math.min(buffer.length, remaining));
+          if (count < 0) throw new IOException("Video incomplete.");
+          out.write(buffer, 0, count);
+          remaining -= count;
+        }
+      }
+      int status = c.getResponseCode();
+      if (status == 404 || status == 410) return new JSONObject().put("expired", true);
+      if (status >= 200 && status < 300) return new JSONObject().put("accepted", true);
+      throw new RequestFailure("Private storage upload paused (HTTP " + status + "). The video remains saved locally.",
+          status >= 500 ? "http_server" : "http_client", status);
+    } catch (IOException interrupted) { throw networkFailure(interrupted); }
+    finally { if (c != null) c.disconnect(); }
   }
 
   private static URL driveAddress(String address) throws Exception {

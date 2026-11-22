@@ -1,8 +1,12 @@
 plugins { id 'com.android.application' }
 def environment = new Properties()
+def requestedTasks = gradle.startParameter.taskNames.collect { it.toLowerCase() }
+def localBuildRequested = requestedTasks.any { it.contains('debuglocal') } || project.hasProperty('localRecorderTests')
+if (localBuildRequested && requestedTasks.any { it.contains('release') || (it.contains('debug') && !it.contains('debuglocal')) })
+    throw new GradleException('Build debugLocal separately from hosted debug/release variants.')
 def environmentFile = rootProject.file('../.env')
-if (environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
-def appOrigin = System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN')
+if (!localBuildRequested && environmentFile.exists()) environmentFile.withInputStream { environment.load(it) }
+def appOrigin = localBuildRequested ? 'http://127.0.0.1:3000' : (System.getenv('APP_ORIGIN') ?: environment.getProperty('APP_ORIGIN'))
 def recorderRelease = new groovy.json.JsonSlurper().parse(rootProject.file('recorder-release.json'))
 def appVersionName = recorderRelease.versionName
 def bytedecoVersion = '1.5.13'
@@ -18,7 +22,7 @@ def releaseStorePassword = System.getenv('ANDROID_RELEASE_STORE_PASSWORD')
 def releaseKeyAlias = System.getenv('ANDROID_RELEASE_KEY_ALIAS')
 def releaseKeyPassword = System.getenv('ANDROID_RELEASE_KEY_PASSWORD')
 def releaseSigningReady = [releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it }
-if (!appOrigin || !(appOrigin ==~ /^https:\/\/[^\/?#]+$/))
+if (!appOrigin || (!localBuildRequested && !(appOrigin ==~ /^https:\/\/[^\/?#]+$/)))
     throw new GradleException('Set APP_ORIGIN to the hosted HTTPS origin in the repository .env or build environment.')
 android {
     namespace 'com.casabatik.recorder'
@@ -34,9 +38,9 @@ android {
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
     }
     buildFeatures { buildConfig true }
-    testBuildType project.hasProperty('localRecorderTests') ? 'debugLocal' : 'debug'
+    testBuildType localBuildRequested ? 'debugLocal' : 'debug'
     signingConfigs {
-        if (debugKeystore) {
+        if (debugKeystore && !localBuildRequested) {
             debug {
                 storeFile file(debugKeystore)
                 storePassword 'android'
@@ -57,6 +61,7 @@ android {
         debugLocal {
             initWith debug
             applicationIdSuffix '.dev'
+            versionNameSuffix '-r2-local'
             matchingFallbacks = ['debug']
             buildConfigField 'String', 'APP_ORIGIN', '"http://127.0.0.1:3000"'
         }
@@ -239,4 +244,23 @@ def exportDebugApk = tasks.register('exportDebugApk') {
 }
 tasks.configureEach {
     if (name == 'assembleDebug') finalizedBy(exportDebugApk)
+}
+
+def localApk = layout.buildDirectory.file('outputs/apk/debugLocal/app-debugLocal.apk')
+def exportLocalApk = tasks.register('exportLocalApk') {
+    doNotTrackState('Copies the separate local-test APK and checksum.')
+    inputs.file(localApk)
+    doLast {
+        def filename = "Dink-Vision-Recorder-${appVersionName}-r2-local.apk"
+        def destination = new File(exportedApkDirectory, filename)
+        exportedApkDirectory.mkdirs()
+        java.nio.file.Files.copy(localApk.get().asFile.toPath(), destination.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        destination.eachByte(8192) { buffer, count -> digest.update(buffer, 0, count) }
+        new File(exportedApkDirectory, "${filename}.sha256").text = "${digest.digest().encodeHex()}  ${filename}\n"
+        println "Local R2 test APK: ${destination}"
+    }
+}
+tasks.configureEach {
+    if (name == 'assembleDebugLocal') finalizedBy(exportLocalApk)
 }

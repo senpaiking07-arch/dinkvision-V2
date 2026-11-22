@@ -23,15 +23,16 @@ export async function GET(request: Request) {
   }
 }
 export async function POST(request: Request) {
-  if (!sameOrigin(request) || (await getAccount()).account?.role !== "admin")
+  const {account}=await getAccount();
+  if (!sameOrigin(request) || account?.role !== "admin" || !account.tenantId)
     return json({ error: "Admin access required." }, 403);
   try {
-    return json(await runBrowserJobs());
+    return json(await runBrowserJobs(account.tenantId));
   } catch {
     return json(
       {
         error:
-          "Background processing failed. Check Google connection and retry.",
+          "Background processing failed. Check storage and email connections, then retry.",
       },
       503,
     );

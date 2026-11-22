@@ -2,7 +2,7 @@ package com.casabatik.recorder;
 
 import org.json.JSONObject;
 
-/** Sends bytes through its transport and resumes only from Drive-confirmed offsets. */
+/** Sends bytes through its transport and resumes only from storage-confirmed offsets. */
 final class UploadTransfer {
   static final class WaitingForTurn extends Exception {
     WaitingForTurn() { super("Waiting for the upload turn."); }
@@ -96,7 +96,12 @@ final class UploadTransfer {
       } else stalled = 0;
       previous = offset;
       progress.acknowledged(offset, bytes);
-      JSONObject result = transport.chunk(offset, (int) Math.min(4 * 1024 * 1024, bytes - offset));
+      JSONObject upload = prepared.optJSONObject("upload");
+      int partSize = upload == null ? 4 * 1024 * 1024 : upload.optInt("partSize");
+      if (upload != null && (!"r2-multipart-v1".equals(upload.optString("protocol"))
+          || partSize != 8 * 1024 * 1024 || upload.optLong("bytes") != bytes))
+        throw new Exception("Invalid storage upload contract. The local video is retained.");
+      JSONObject result = transport.chunk(offset, (int) Math.min(partSize, bytes - offset));
       if (result.optBoolean("expired")) {
         if (++restarts > 2) throw new Exception("Upload expired. Retry the saved video.");
         prepared =

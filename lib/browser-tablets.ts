@@ -17,6 +17,7 @@ export async function browserTablet() {
   return data ? { device: data, kiosk } : null;
 }
 export async function canSetup(device: {
+  tenant_id?: string;
   setup_hash: string | null;
   setup_expires_at: string | null;
 }) {
@@ -27,7 +28,8 @@ export async function canSetup(device: {
     Date.parse(device.setup_expires_at || "") > Date.now()
   )
     return true;
-  return (await getAccount()).account?.role === "admin";
+  const account = (await getAccount()).account;
+  return account?.role === "admin" && !!device.tenant_id && account.tenantId === device.tenant_id;
 }
 export function publicTablet(d: Record<string, any>) {
   const {

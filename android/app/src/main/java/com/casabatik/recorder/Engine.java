@@ -1472,17 +1472,19 @@ final class Engine {
                 }
                 cameraMeasuredFps = RecordedVideo.measuredFrameRate(test);
                 Log.i("DinkVisionCamera", "Measured camera fps=" + cameraMeasuredFps + " target=" + recordingFps);
-                RecordedVideo.validate(test,capturedMillis,expectsAudio(camera));
+                long playableMillis=RecordedVideo.validate(test,capturedMillis,expectsAudio(camera));
+                boolean completeTest=playableMillis>=3000
+                    && (!expectsAudio(camera)||RecordedVideo.audioDurationMillis(test)>=3000);
                 RecordingProfile candidate=new RecordingProfile(recordingWidth,recordingHeight,recordingFps,0);
-                boolean eligible=!"auto".equals(selectedModeKey)||RecordingProfile.sustains60(cameraMeasuredFps)
-                    || (Math.max(candidate.width,candidate.height)<=1920 && Math.min(candidate.width,candidate.height)<=1080);
+                boolean eligible=completeTest && (!"auto".equals(selectedModeKey)||RecordingProfile.sustains60(cameraMeasuredFps)
+                    || (Math.max(candidate.width,candidate.height)<=1920 && Math.min(candidate.width,candidate.height)<=1080));
                 if(eligible && (bestMode==null || RecordingProfile.deliveredTier(cameraMeasuredFps)>RecordingProfile.deliveredTier(bestRate)
                     || (RecordingProfile.deliveredTier(cameraMeasuredFps)==RecordingProfile.deliveredTier(bestRate)
                         && (long)candidate.width*candidate.height>(long)bestMode.width*bestMode.height))) {
                   bestMode=candidate;bestDuration=capturedMillis;bestRate=cameraMeasuredFps;
                   java.nio.file.Files.copy(test.toPath(),bestClip.toPath(),java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 }
-                if(!"auto".equals(selectedModeKey)||RecordingProfile.sustains60(cameraMeasuredFps))break;
+                if(!"auto".equals(selectedModeKey)||(completeTest&&RecordingProfile.sustains60(cameraMeasuredFps)))break;
                 if(recordingFps==60)max60Pixels=0;
                 else maxFallbackPixels=(long)recordingWidth*recordingHeight-1;
                 message = "Comparing a supported fallback camera mode…";

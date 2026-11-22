@@ -674,7 +674,7 @@ export default function TabletKiosk({
               </ul>
             </div>
             <p className="tablet-confirm-delivery">
-              One Google Drive replay will be emailed to every address above.
+              One private replay will be emailed to every address above.
               Please check each address before recording.
             </p>
           </div>
@@ -749,7 +749,7 @@ export default function TabletKiosk({
                       : "Preparing your email…"
                   : session.status === "failed"
                     ? shortLocal
-                      ? "Clips under one minute are not uploaded to Google Drive."
+                      ? "Clips under one minute are not uploaded to cloud storage."
                       : formatLocal
                         ? "This older WebM clip stays on this device. New recordings use MP4."
                         : "Please ask the venue administrator to check this session."
@@ -767,7 +767,7 @@ export default function TabletKiosk({
               </div>
               <small>
                 {formatLocal
-                  ? "This older WebM clip was not sent to Google Drive. It is stored in this browser’s protected IndexedDB site storage named casa-browser-recordings."
+                  ? "This older WebM clip was not sent to cloud storage. It is stored in this browser’s protected IndexedDB site storage named casa-browser-recordings."
                   : "Stored in this browser’s protected IndexedDB site storage named casa-browser-recordings."}{" "}
                 It is not a normal folder; use Download local backup to save a
                 regular video file in the browser’s Downloads folder or your

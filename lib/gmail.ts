@@ -10,7 +10,7 @@ function email(value:string) {
   return value;
 }
 export function recordingMessage(sender:string,recipient:string|string[],file:string,drive:string,expires:string,zone:string,linkAccess=false,
-  interruption?: { code: unknown; durationMs: unknown }) {
+  interruption?: { code: unknown; durationMs: unknown }, privateReplayUrl?: string) {
   email(sender);
   const recipients=(Array.isArray(recipient)?recipient:[recipient]).map(value=>email(value.trim().toLowerCase()));
   if (!recipients.length || new Set(recipients).size!==recipients.length || recipients.length>4)
@@ -22,9 +22,15 @@ export function recordingMessage(sender:string,recipient:string|string[],file:st
     : recipients.length===1
       ? `Sign in to Google as ${recipients[0]} to view this private recording.`
       : "Sign in using one of the recipient Google accounts to view this private recording.";
-  const replayId=driveId(drive);
-  const replayUrl=`https://drive.google.com/file/d/${replayId}/view`;
-  const replayOpenUrl=`https://drive.google.com/open?id=${encodeURIComponent(replayId)}`;
+  if(privateReplayUrl) {
+    const url=new URL(privateReplayUrl);
+    if(!["https:","http:"].includes(url.protocol) || url.username || url.password || !url.pathname.startsWith("/replay/"))
+      throw new MailError("invalid_replay_link","failed");
+  }
+  const replayId=privateReplayUrl ? "" : driveId(drive);
+  const replayUrl=privateReplayUrl || `https://drive.google.com/file/d/${replayId}/view`;
+  const replayOpenUrl=privateReplayUrl || `https://drive.google.com/open?id=${encodeURIComponent(replayId)}`;
+  const playbackNote=privateReplayUrl ? "Watch or download your video from the replay page." : "Google may need a little time to prepare video playback.";
   // Drive serves a lightweight thumbnail without downloading the video. It can
   // be unavailable briefly while Drive prepares the file, so the email also has
   // a branded fallback and keeps the normal replay link prominent.
@@ -33,16 +39,16 @@ export function recordingMessage(sender:string,recipient:string|string[],file:st
   const subject = notice
     ? "Your DinkVision replay is ready =?UTF-8?B?4oCU?= recording interrupted"
     : "Your Dink Vision match recording is ready";
-  const body = `Your Dink Vision match recording is ready.\n\n${notice ? `${notice}\n\n` : ""}Watch your recording:\n${replayUrl}\n\n${accessNote}\nGoogle may need a little time to prepare video playback.\n\nPlease save a copy before ${deadline} (${zone}), the scheduled retention deadline.\n\nEnjoy your replay!\nDink Vision`;
+  const body = `Your Dink Vision match recording is ready.\n\n${notice ? `${notice}\n\n` : ""}Watch your recording:\n${replayUrl}\n\n${accessNote}\n${playbackNote}\n\nPlease save a copy before ${deadline} (${zone}), the scheduled retention deadline.\n\nEnjoy your replay!\nDink Vision`;
   const escapeHtml=(value:string)=>value.replace(/[&<>"']/g,(character)=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[character]!));
   const html=`<!doctype html><html><body style="margin:0;background:#f4f2ea;color:#173f43;font-family:Arial,Helvetica,sans-serif;">
 <div style="padding:30px 14px;background:#f4f2ea;"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px;margin:0 auto;background:#fffef9;border:1px solid #dbe3d6;border-radius:18px;overflow:hidden;">
 <tr><td style="padding:26px 30px 20px;background:#0b6467;color:#fffef9;"><div style="font-family:Georgia,serif;font-size:15px;letter-spacing:3px;font-weight:bold;">Dink Vision</div><div style="margin-top:6px;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#cfe5d9;">Dink Vision</div></td></tr>
 <tr><td style="padding:30px;"><div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#6d8275;font-weight:bold;">Match replay ready</div><h1 style="margin:10px 0 12px;font-family:Georgia,serif;font-size:31px;line-height:1.15;font-weight:normal;color:#123f43;">Your recording is ready.</h1><p style="margin:0 0 20px;color:#526b69;font-size:15px;line-height:1.55;">Your Dink Vision replay has finished processing.</p>
 ${notice ? `<p style="margin:0 0 20px;padding:15px 16px;border-radius:10px;background:#f4f2ea;color:#173f43;font-size:15px;line-height:1.55;">${escapeHtml(notice)}</p>` : ""}
-<a href="${escapeHtml(replayOpenUrl)}" style="display:block;text-decoration:none;"><img src="${escapeHtml(thumbnailUrl)}" alt="Match replay thumbnail" width="560" style="display:block;width:100%;max-width:560px;height:auto;min-height:190px;object-fit:cover;border-radius:12px;background:#e8efe5;border:1px solid #dbe3d6;"></a>
+${privateReplayUrl ? "" : `<a href="${escapeHtml(replayOpenUrl)}" style="display:block;text-decoration:none;"><img src="${escapeHtml(thumbnailUrl)}" alt="Match replay thumbnail" width="560" style="display:block;width:100%;max-width:560px;height:auto;min-height:190px;object-fit:cover;border-radius:12px;background:#e8efe5;border:1px solid #dbe3d6;"></a>`}
 <p style="margin:20px 0 0;text-align:center;"><a href="${escapeHtml(replayOpenUrl)}" style="display:inline-block;padding:13px 23px;border-radius:8px;background:#0b6467;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;">Watch your recording&nbsp; →</a></p>
-<div style="margin-top:24px;padding:15px 16px;border-radius:10px;background:#eef4ea;color:#526b69;font-size:13px;line-height:1.55;">${escapeHtml(accessNote)}<br>Google may need a little time to prepare video playback.</div>
+<div style="margin-top:24px;padding:15px 16px;border-radius:10px;background:#eef4ea;color:#526b69;font-size:13px;line-height:1.55;">${escapeHtml(accessNote)}<br>${escapeHtml(playbackNote)}</div>
 <p style="margin:20px 0 0;color:#526b69;font-size:13px;line-height:1.55;">Please save a copy before <strong style="color:#173f43;">${escapeHtml(deadline)} (${escapeHtml(zone)})</strong>, the scheduled retention deadline.</p></td></tr>
 <tr><td style="padding:18px 30px;border-top:1px solid #e3e8df;color:#82918a;font-size:12px;line-height:1.5;">Enjoy your replay!<br><strong style="color:#52706c;">Dink Vision</strong><br><span>Powered by Dink Vision PH</span></td></tr>
 </table></div></body></html>`;

@@ -417,7 +417,7 @@ export default function PlayerPreview({
                         <p className="action-hint">
                           {sent
                             ? "Simulation only. No email was sent."
-                            : "A private Drive link will appear here when connected."}
+                            : "A private replay link will appear here when connected."}
                         </p>
                         <button className="text-button" onClick={reset}>
                           <RotateCcw size={13} /> Start another preview
@@ -465,8 +465,8 @@ export default function PlayerPreview({
                 icon: Download,
                 title: "Keep the good stuff",
                 copy: livePanel
-                  ? "Your video is saved at the venue and uploaded when Drive is connected. Open your private link from recent recordings."
-                  : "Get a private Google Drive link. Watch, download, and relive your game.",
+                  ? "Your video is saved at the venue and uploaded when storage is connected. Open your private link from recent recordings."
+                  : "Get a private private replay link. Watch, download, and relive your game.",
               },
             ].map((step, i) => (
               <div className="how-step" key={step.title}>
@@ -551,7 +551,7 @@ export default function PlayerPreview({
                   : "Choose an available sample court and try the recording preview. Stop it to see processing and the sample delivery screen."}
               </p>
               <p>
-                Camera capture, Drive links, and match email delivery are not
+                Camera capture, Replay links, and match email delivery are not
                 connected yet. No video is being captured.
               </p>
               <button

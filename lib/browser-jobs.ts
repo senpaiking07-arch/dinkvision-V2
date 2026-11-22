@@ -5,7 +5,10 @@ import { connectedDrive } from "./google-server";
 import { deleteExpiredVideo } from "./retention";
 import { deliverNextEmail } from "./email-server";
 import { browserUpload } from "./browser-upload";
-export async function runBrowserJobs() {
+import { usesR2 } from "./r2-server";
+import { runR2Jobs } from "./r2-jobs";
+export async function runBrowserJobs(tenant?:string) {
+  if (usesR2()) return runR2Jobs(tenant);
   const db = recorderDatabase();
   const began = Date.now();
   // Bound each run. Further items remain queued for the next scheduled invocation.

@@ -464,7 +464,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                   </b>
                 </li>
                 <li>
-                  <span>Google Drive</span>
+                  <span>{data.storageProvider === "r2" ? "Private R2 storage" : "Google Drive"}</span>
                   <button
                     className="sign-in"
                     onClick={() => setTab("settings")}
@@ -474,7 +474,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                 </li>
               </ul>
               <p className="form-note">
-                Completed matches upload to Google Drive with emailed link
+                Completed matches upload to private cloud storage with emailed link
                 access. Enable Gmail delivery in Settings to email playback
                 links automatically.
               </p>
@@ -732,7 +732,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                           {recordingDiagnostics(session).detail && <p>Device report: {recordingDiagnostics(session).detail}</p>}
                           {recordingDiagnostics(session).help && <p>What to do: {recordingDiagnostics(session).help}</p>}
                           <p className="muted">Recorded codes: reason {session.stop_reason || "not reported"}; stage {session.failure_stage || "not reported"}.</p>
-                          {(session.status === "local_ready" ||
+                          {data.storageProvider !== "r2" && (session.status === "local_ready" ||
                             ["upload", "sharing"].includes(
                               session.failure_stage || "",
                             )) && <DriveRetry sessionId={session.id} />}
@@ -743,7 +743,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                               rel="noopener noreferrer"
                               href={`/api/recordings/${session.id}/playback`}
                             >
-                              View on Google Drive
+                              Watch recording
                             </a>
                           )}
                           {session.status === "local_ready" && (

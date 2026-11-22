@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import pg from "pg";
 import { migrationChecksumMatches } from "./migration-checksums.mjs";
+import { migrationSQL } from "./migration-role-compat.mjs";
 
 const connectionString = process.env.MIGRATION_DATABASE_URL;
 if (!connectionString)
@@ -49,7 +50,7 @@ try {
     }
     await client.query("begin");
     try {
-      await client.query(sql);
+      await client.query(migrationSQL(sql));
       await client.query(
         "insert into casa_migrations.applied(name,checksum) values($1,$2)",
         [name, checksum],

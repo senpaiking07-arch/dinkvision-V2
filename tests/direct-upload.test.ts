@@ -47,6 +47,7 @@ function fixture() {
       state.probes++; return new Response(null, { status: 308, headers: { Range: "bytes=0-1048575" } });
     },
     require(name: string) {
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
       if (name === "server-only") return {};
       if (name === "node:crypto") return { randomUUID: () => "lease" };
       if (name === "./recorder-server") return { recorderDatabase: () => db };
@@ -126,6 +127,7 @@ test("tablet route requires device ownership before forwarding an explicit direc
   ]) {
     const exports: any = {}, calls: any[] = [];
     runInNewContext(routeSource, { exports, URL, console: { error() {} }, require(name: string) {
+      if (name === "@/lib/r2-server") return {usesR2: () => false};
       if (name === "@/lib/optional-schema") return optionalSchema;
       if (name === "@/lib/browser-tablets") return { browserTablet: async () => scenario.unenrolled ? null :
         ({ device: { id: "device" }, kiosk: { id: "kiosk", tenant_id: "tenant" } }) };

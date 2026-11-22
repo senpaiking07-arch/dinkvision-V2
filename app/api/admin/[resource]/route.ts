@@ -26,7 +26,7 @@ export async function POST(
     if (!["courts", "cameras", "recorders", "settings"].includes(resource))
       return json({ error: "Not found." }, 404);
     const body = await readBody(request);
-    const db = await serverSupabase();
+    const db = await serverSupabase(account.tenantId);
     let result;
     if (resource === "settings") {
       result = await db
@@ -131,7 +131,7 @@ export async function DELETE(
     if (resource !== "courts") return json({ error: "Not found." }, 404);
     const body = await readBody(request);
     const id = uuid(body.id);
-    const db = await serverSupabase();
+    const db = await serverSupabase(account.tenantId);
     const court = await db
       .from("courts")
       .select("id,name")
@@ -153,7 +153,7 @@ export async function DELETE(
         409,
       );
     }
-    await recorderDatabase().from("audit_events").insert({
+    await recorderDatabase(account.tenantId).from("audit_events").insert({
       actor_id: account.id,
       action: "court.removed",
       safe_detail: { court_id: id, court_name: court.data.name },

@@ -9,6 +9,7 @@ import { uuid } from "@/lib/validation";
 import { sessionCaptureReport } from "@/lib/recording-status";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { captureColumns, withOptionalColumns } from "@/lib/optional-schema";
+import { usesR2 } from "@/lib/r2-server";
 
 const baseSessionFields = "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available,duration_ms),capture_jobs(last_seen_at)";
 const sessionFields = `${baseSessionFields},capture_interruption_code,capture_interrupted_at` as const;
@@ -35,7 +36,7 @@ export default async function AdminPage({ searchParams }: {
         </section>
       </main>
     );
-  const db = await serverSupabase();
+  const db = await serverSupabase(account.tenantId);
   let focusedId = "";
   try { focusedId = uuid((await searchParams).recording); } catch { }
   const [
@@ -104,7 +105,7 @@ export default async function AdminPage({ searchParams }: {
   // Read only reports for sessions this admin has already been allowed to see
   // through RLS; never accept session IDs from the URL as authorization.
   const browserReports = browserSessionIds.length
-    ? await recorderDatabase().from("browser_recordings")
+    ? await recorderDatabase(account.tenantId).from("browser_recordings")
         .select("session_id,last_seen_at,last_error,safe_error,upload_state,branding_state,local_available,duration_ms")
         .in("session_id", browserSessionIds)
     : { data: [], error: null };
@@ -153,6 +154,7 @@ export default async function AdminPage({ searchParams }: {
           data={
             {
               courts: courts.data,
+              storageProvider: usesR2() ? "r2" : "drive",
               cameras: cameras.data,
               recorders: recorders.data,
               settings: settings.data,

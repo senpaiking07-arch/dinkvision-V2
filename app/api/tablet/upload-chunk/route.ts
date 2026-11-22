@@ -3,6 +3,7 @@ import { browserUploadChunk } from "@/lib/browser-upload";
 import { json, sameOrigin } from "@/lib/http";
 import { InputError, uuid } from "@/lib/validation";
 import { recorderDatabase } from "@/lib/recorder-server";
+import { usesR2 } from "@/lib/r2-server";
 
 export const maxDuration = 60;
 const maxChunkBytes = 4 * 1024 * 1024;
@@ -38,8 +39,9 @@ export async function PUT(request: Request) {
   try {
     const tablet = await browserTablet();
     if (!tablet) return json({ error: "Enroll this browser first." }, 401);
+    if (usesR2()) return json({error:"Update this recorder to use private multipart uploads. The saved video is retained."},426);
     const id = uuid(new URL(request.url).searchParams.get("id"));
-    const owned = await recorderDatabase()
+    const owned = await recorderDatabase(tablet.kiosk.tenant_id)
       .from("browser_recordings")
       .select("session_id")
       .eq("session_id", id)
@@ -53,7 +55,7 @@ export async function PUT(request: Request) {
     const contentRange = request.headers.get("content-range") || "";
     const mimeType = (request.headers.get("content-type") || "").split(";")[0];
     const chunk = await readChunk(request);
-    const contact=await recorderDatabase().from("browser_devices").update({last_seen_at:new Date().toISOString()})
+    const contact=await recorderDatabase(tablet.kiosk.tenant_id).from("browser_devices").update({last_seen_at:new Date().toISOString()})
       .eq("id",tablet.device.id).eq("tenant_id",tablet.kiosk.tenant_id);
     if(contact.error) throw contact.error;
     return json(

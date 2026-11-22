@@ -12,7 +12,7 @@ const source=ts.transpileModule(readFileSync(new URL('../app/api/admin/tablets/r
 test('creating a code for a registered device requires explicit replacement and leaves its credential untouched',async()=>{
   const writes:any[]=[],exports:any={};
   runInNewContext(source,{exports,Date,require(name:string){
-    if(name==='@/lib/auth')return{getAccount:async()=>({account:{id:'admin',role:'admin'}})};
+    if(name==='@/lib/auth')return{getAccount:async()=>({account:{id:'admin',role: 'admin', tenantId: '00000000-0000-4000-8000-000000000001'}})};
     if(name==='@/lib/validation')return{InputError,uuid:(id:string)=>id};
     if(name==='@/lib/http')return{sameOrigin:()=>true,readBody:async()=>({action:'enroll',id:'device',name:'Existing device'}),json:(body:unknown,status=200)=>Response.json(body,{status})};
     if(name==='@/lib/recorder-server')return{recorderDatabase:()=>({from:(table:string)=>{
@@ -31,7 +31,7 @@ test('a replacement issues the same 12-character code in the QR and the manual f
   const hashKiosk = (code: string) => crypto.createHash('sha256').update(code).digest('hex');
   runInNewContext(source, {exports, Date, URL, require(name: string) {
     if (name === 'node:crypto') return crypto;
-    if (name === '@/lib/auth') return {getAccount: async () => ({account: {id: 'admin', role: 'admin'}})};
+    if (name === '@/lib/auth') return {getAccount: async () => ({account: {id: 'admin', role: 'admin', tenantId: '00000000-0000-4000-8000-000000000001'}})};
     if (name === '@/lib/validation') return {InputError, uuid: (id: string) => id};
     if (name === '@/lib/http') return {sameOrigin: () => true, readBody: (request: Request) => request.json(),
       json: (body: unknown, status = 200) => Response.json(body, {status})};

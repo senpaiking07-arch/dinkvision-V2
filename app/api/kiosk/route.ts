@@ -13,7 +13,7 @@ export async function GET() {
     if (tablet) return await browserTabletState(tablet);
     const kiosk = await kioskDevice();
     if (!kiosk) return json({ enabled: false });
-    const db = recorderDatabase();
+    const db = recorderDatabase(kiosk.tenant_id);
     const [courts, settings, session] = await Promise.all([
       db.rpc("kiosk_court_status"),
       db
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
         401,
       );
     const body = await readBody(request),
-      db = recorderDatabase();
+      db = recorderDatabase(kiosk.tenant_id);
     if (body.action === "start") {
       const key = uuid(body.key),
         court = uuid(body.court_id);
