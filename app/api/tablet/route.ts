@@ -427,7 +427,7 @@ export async function POST(request: Request) {
       if (updated.error) throw updated.error;
       return json({ ok: true });
     }
-    if (usesR2() && ["upload","retry-upload","restart-upload","upload-status","upload-part","finish"].includes(String(b.action))) {
+    if (usesR2() && ["upload","retry-upload","restart-upload","upload-status","upload-part","upload-parts","finish"].includes(String(b.action))) {
       if (b.upload_protocol !== R2_UPLOAD_PROTOCOL)
         return json({error:"Update this recorder to the R2-compatible version. Saved videos are retained.",code:"upload_protocol_required"},426);
       if (b.action === "retry-upload") {

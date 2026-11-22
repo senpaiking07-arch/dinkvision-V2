@@ -66,6 +66,14 @@ final class BackgroundTransfers {
           check();
           return transport.chunk(offset, length);
         }
+        public java.util.List<UploadTransfer.PartGrant> grants(long offset, int count, int partSize, long totalBytes) throws Exception {
+          check();
+          return transport.grants(offset, count, partSize, totalBytes);
+        }
+        public boolean putPart(UploadTransfer.PartGrant grant) throws Exception {
+          check();
+          return transport.putPart(grant);
+        }
       };
     }
 

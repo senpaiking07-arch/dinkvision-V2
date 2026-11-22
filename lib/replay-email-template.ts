@@ -1,9 +1,12 @@
-type ReplayEmailContent = { replayUrl: string; deadline: string; zone: string; accessNote: string; notice?: string | null };
+type ReplayEmailContent = { replayUrl: string; deadline: string; zone: string; accessNote: string; notice?: string | null; logoCid?: string };
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));
 
 export function replayEmailHtml(content: ReplayEmailContent) {
   const url = escapeHtml(content.replayUrl);
+  const logo = content.logoCid
+    ? `<img src="cid:${escapeHtml(content.logoCid)}" alt="DinkVision" width="144" style="display:block;width:144px;height:auto;border:0;color:#041d38;font-size:22px;font-weight:bold;">`
+    : `<span style="color:#041d38;font-size:22px;font-weight:bold;letter-spacing:-0.5px;">DinkVision</span>`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your DinkVision replay</title>
 <style>@media only screen and (max-width:480px){.email-pad{padding-left:24px!important;padding-right:24px!important}.replay-heading{font-size:40px!important}.email-outer{padding:16px 8px!important}}</style></head>
@@ -13,7 +16,7 @@ export function replayEmailHtml(content: ReplayEmailContent) {
 <!--[if mso]><table role="presentation" width="600" cellspacing="0" cellpadding="0"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" bgcolor="#041d38" style="max-width:600px;border:1px solid #34526c;border-top:4px solid #0bd6c1;border-radius:16px;overflow:hidden;">
 <tr><td class="email-pad" style="padding:24px 40px;border-bottom:1px solid #34526c;">
-<table role="presentation" cellspacing="0" cellpadding="0"><tr><td bgcolor="#f5f9ff" style="padding:6px 14px;border-radius:10px;"><img src="cid:dinkvision-logo" alt="DinkVision" width="144" style="display:block;width:144px;height:auto;border:0;color:#041d38;font-size:22px;font-weight:bold;"></td></tr></table>
+<table role="presentation" cellspacing="0" cellpadding="0"><tr><td bgcolor="#f5f9ff" style="padding:6px 14px;border-radius:10px;">${logo}</td></tr></table>
 </td></tr>
 <tr><td class="email-pad" style="padding:36px 40px 32px;">
 <p style="margin:0 0 16px;color:#d7ff42;font-size:11px;line-height:1.5;font-weight:bold;letter-spacing:2px;text-transform:uppercase;">MATCH REPLAY READY</p>

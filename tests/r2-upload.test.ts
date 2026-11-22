@@ -35,6 +35,7 @@ function fixture() {
   create:async()=>{state.creates++;return "remote-upload";},abort:async()=>{},
   parts:async()=>{if(state.storageError)throw Error("https://secret-url.invalid/?token=secret");return state.parts;},
   partUrl:async()=>{state.signatures++;return "private-part-url";},
+  partUrls:async(_obj:any,entries:any[])=>{state.signatures+=entries.length;return entries.map((e:any)=>({partNumber:e.number,length:e.length,url:`private-part-url-${e.number}`}));},
   complete:async()=>{
    state.completions++;
    state.head={ContentLength:b.bytes,ContentType:"video/mp4",ETag:'"complete"',Metadata:{attempt:state.attempt.id,session:"session",tenant:"tenant"}};
@@ -55,22 +56,23 @@ function fixture() {
  return {state,b,call:(action:string,body:any={})=>exports.r2Upload("session","device","tenant",action,body)};
 }
 
-test("prepare is idempotent and only the active attempt can receive sequential part URLs",async()=>{
+test("prepare is idempotent and grants sequential/batched part URLs while preserving attempt identity",async()=>{
  const f=fixture();const prepared=await f.call("upload");
  assert.equal(prepared.upload.protocol,protocol.R2_UPLOAD_PROTOCOL);assert.equal(prepared.upload.url,undefined);
+ assert.equal(prepared.upload.partSize,protocol.R2_DEFAULT_PART_SIZE);
  assert.equal((await f.call("upload")).upload.attemptId,prepared.upload.attemptId);assert.equal(f.state.creates,1);
  await assert.rejects(()=>f.call("upload-part",{attempt_id:"old",part_number:1}),/attempt changed/);
- await assert.rejects(()=>f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:2}),/progress changed/);
- const part=await f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:1});
- assert.equal(part.length,protocol.R2_PART_SIZE);assert.equal(f.state.signatures,1);
- f.state.allowed=false;assert.equal((await f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:1})).queued,true);
+ await assert.rejects(()=>f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:2,reconcile:true}),/Invalid upload part|progress changed/);
+ const part=await f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:1,reconcile:true});
+ assert.equal(part.length,f.b.bytes);assert.equal(f.state.signatures,1);
+ f.state.allowed=false;assert.equal((await f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:1,reconcile:true})).queued,true);
  assert.equal(f.state.signatures,1);
 });
 
 test("finish verifies R2 metadata, recovers a lost completion response and commits only once",async()=>{
  const f=fixture();const prepared=await f.call("upload");const body={attempt_id:prepared.upload.attemptId};
  await assert.rejects(()=>f.call("finish",body),/not complete/);
- f.state.parts=[{PartNumber:1,Size:protocol.R2_PART_SIZE,ETag:'"1"'},{PartNumber:2,Size:5,ETag:'"2"'}];
+ f.state.parts=[{PartNumber:1,Size:f.b.bytes,ETag:'"1"'}];
  f.state.lostCompletion=true;
  assert.equal((await f.call("finish",body)).ready,true);
  assert.equal((await f.call("finish",body)).ready,true);

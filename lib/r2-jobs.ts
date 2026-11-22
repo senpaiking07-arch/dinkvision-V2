@@ -17,7 +17,7 @@ async function runTenant(tenant:string,deadline:number) {
       // Observing a partial upload must not refresh its client heartbeat or
       // attempt timestamp; otherwise abandoned uploads would never expire.
       const head=await store.head(row);
-      if(!head && !confirmedParts(await store.parts(row),Number(row.bytes)).uploaded) continue;
+      if(!head && !confirmedParts(await store.parts(row),Number(row.bytes),Number(row.part_size||8388608)).uploaded) continue;
       if(Date.now()>deadline) return;
       await r2Upload(row.session_id,row.device_id,tenant,"finish",{attempt_id:row.id});
     }

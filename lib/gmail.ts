@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import addressparser from "nodemailer/lib/addressparser";
 import type { SendMailOptions } from "nodemailer";
@@ -23,7 +23,21 @@ export function recordingSender(value: string) {
 }
 
 export type RecordingEmail = SendMailOptions & { envelope: { from: string; to: string[] }; text: string; html: string };
-let logo: Buffer | undefined;
+let logo: { content: Buffer; contentType: string } | undefined;
+
+function logoAttachment() {
+  if (logo) return logo;
+  const candidates = [
+    path.join(process.cwd(), "public", "dink-vision-logo.png"),
+    path.join(process.cwd(), "public", "brand", "dink-vision-logo.png"),
+  ];
+  for (const file of candidates) {
+    if (!existsSync(file)) continue;
+    logo = { content: readFileSync(file), contentType: "image/png" };
+    return logo;
+  }
+  return undefined;
+}
 
 // The worker now hands structured fields to SMTP instead of a Gmail API payload.
 export function recordingMessage(sender: string, recipient: string | string[], file: string, _drive: string,
@@ -47,16 +61,16 @@ export function recordingMessage(sender: string, recipient: string | string[], f
   const notice = captureInterruptionNotice(interruption?.code, interruption?.durationMs);
   const replayUrl = replay.href;
   const text = `Your game. On replay.\n\nYour DinkVision recording is ready.\n\n${notice ? `${notice}\n\n` : ""}Watch your recording:\n${replayUrl}\n\nWatch or download your video from the replay page.\n${accessNote}\n\nAvailable until ${deadline} (${zone}). Save a copy before this deadline; the replay link expires then.\n\nYour court. Your moment.\nDinkVision\nPowered by WrenLabs`;
-  logo ??= readFileSync(path.join(process.cwd(), "public/dink-vision-logo.png"));
+  const attachment = logoAttachment();
   return {
     from,
     ...(recipients.length === 1 ? { to: recipients[0] } : { bcc: recipients }),
     envelope: { from: from.address, to: recipients },
-    subject: notice ? "Your DinkVision replay is ready — recording interrupted" : "Your DinkVision match recording is ready",
+    subject: notice ? "Your DinkVision replay is ready - recording interrupted" : "Your DinkVision match recording is ready",
     messageId: `<dinkvision-${file}@${from.address.split("@")[1]}>`,
     text,
-    html: replayEmailHtml({ replayUrl, deadline, zone, accessNote, notice }),
-    attachments: [{ filename: "dinkvision-logo.png", content: logo, contentType: "image/png", cid: "dinkvision-logo", contentDisposition: "inline" }],
+    html: replayEmailHtml({ replayUrl, deadline, zone, accessNote, notice, logoCid: attachment ? "dinkvision-logo" : undefined }),
+    attachments: attachment ? [{ filename: "dink-vision-logo.png", content: attachment.content, contentType: attachment.contentType, cid: "dinkvision-logo", contentDisposition: "inline" }] : [],
     disableFileAccess: true,
     disableUrlAccess: true,
   };

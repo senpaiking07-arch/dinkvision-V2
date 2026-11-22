@@ -175,6 +175,7 @@ final class Api {
     return new UploadTransfer.Transport() {
       private String address = "";
       private String attemptId = "";
+      private int attemptPartSize = 8 * 1024 * 1024;
 
       public JSONObject action(String action) throws Exception {
         if (!Set.of("upload", "retry-upload", "restart-upload", "upload-status", "finish").contains(action))
@@ -184,15 +185,19 @@ final class Api {
         if (Set.of("upload", "retry-upload", "restart-upload").contains(action)) {
           address = "";
           attemptId = "";
+          attemptPartSize = 8 * 1024 * 1024;
           if (!result.optBoolean("ready") && !result.optBoolean("queued")) {
             JSONObject multipart = result.optJSONObject("upload");
             if (multipart != null) {
+              int ps = multipart.optInt("partSize", 8 * 1024 * 1024);
+              boolean validSize = (ps == 8 * 1024 * 1024 || ps == 16 * 1024 * 1024 || ps == 32 * 1024 * 1024);
               if (!"r2-multipart-v1".equals(multipart.optString("protocol"))
                   || multipart.optLong("bytes") != file.length()
-                  || multipart.optInt("partSize") != 8 * 1024 * 1024
+                  || !validSize
                   || !"video/mp4".equals(multipart.optString("mime")))
                 throw new Exception("The upload does not match this saved video.");
               attemptId = UUID.fromString(multipart.getString("attemptId")).toString();
+              attemptPartSize = ps;
               return result;
             }
             JSONObject grant = result.optJSONObject("directUpload");
@@ -208,20 +213,76 @@ final class Api {
         return result;
       }
 
-      public JSONObject chunk(long offset, int length) throws Exception {
+      private UploadTransfer.PartGrant parseGrant(JSONObject grant, long expectedOffset, int expectedLength) throws Exception {
+        if (grant.optBoolean("expired")) return new UploadTransfer.PartGrant(-1, expectedOffset, expectedLength, "");
+        int pn = grant.optInt("partNumber", (int) (expectedOffset / attemptPartSize) + 1);
+        long off = grant.optLong("offset", -1);
+        int len = grant.optInt("length", -1);
+        if (off != expectedOffset || len != expectedLength || !attemptId.equals(grant.optString("attemptId")))
+          throw new Exception("Upload progress changed. Retry the saved video.");
+        String url = grant.optString("url", "");
+        if (url.isEmpty()) throw new Exception("Upload not accepted. Retry the saved video.");
+        return new UploadTransfer.PartGrant(pn, off, len, url);
+      }
+
+      public java.util.List<UploadTransfer.PartGrant> grants(long offset, int count, int partSize, long totalBytes) throws Exception {
         if (!attemptId.isEmpty()) {
-          if (offset % (8 * 1024 * 1024) != 0) throw new Exception("Invalid confirmed upload offset.");
-          JSONObject grant = tablet("upload-part", new JSONObject().put("id", session)
-              .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId)
-              .put("part_number", offset / (8 * 1024 * 1024) + 1));
-          if (grant.optBoolean("uploaded")) return new JSONObject().put("accepted", true);
-          if (grant.optBoolean("expired")) return grant;
-          if (grant.optLong("offset", -1) != offset || grant.optInt("length", -1) != length
-              || !attemptId.equals(grant.optString("attemptId")))
-            throw new Exception("Upload progress changed. Retry the saved video.");
-          return uploadR2Part(grant.getString("url"), file, offset, length);
+          if (partSize != attemptPartSize || offset % partSize != 0)
+            throw new Exception("Invalid confirmed upload offset.");
+          java.util.List<Integer> numbers = new java.util.ArrayList<>();
+          for (int i = 0; i < count; i++) {
+            long off = offset + (long) i * partSize;
+            if (off >= totalBytes) break;
+            numbers.add((int) (off / partSize) + 1);
+          }
+          if (numbers.isEmpty()) return java.util.Collections.emptyList();
+          JSONObject body = new JSONObject().put("id", session)
+              .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId);
+          if (numbers.size() == 1) body.put("part_number", numbers.get(0));
+          else body.put("part_numbers", new org.json.JSONArray(numbers));
+          JSONObject grant = tablet(numbers.size() == 1 ? "upload-part" : "upload-parts", body);
+          if (grant.optBoolean("queued")) throw new UploadTransfer.WaitingForTurn();
+          if (grant.optBoolean("uploaded")) return java.util.Collections.emptyList();
+          java.util.List<UploadTransfer.PartGrant> out = new java.util.ArrayList<>();
+          if (grant.has("parts")) {
+            org.json.JSONArray parts = grant.optJSONArray("parts");
+            if (parts == null) throw new Exception("Upload not accepted. Retry the saved video.");
+            for (int i = 0; i < parts.length(); i++) {
+              JSONObject p = parts.getJSONObject(i);
+              int pn = p.getInt("partNumber");
+              long expectedOff = (long) (pn - 1) * partSize;
+              int expectedLen = (int) Math.min(partSize, totalBytes - expectedOff);
+              out.add(parseGrant(p, expectedOff, expectedLen));
+              if (out.get(out.size() - 1).partNumber == -1) return java.util.Collections.singletonList(out.get(out.size() - 1));
+            }
+          } else {
+            out.add(parseGrant(grant, offset, (int) Math.min(partSize, totalBytes - offset)));
+          }
+          return out;
         }
-        return uploadDriveChunk(address, file, offset, length);
+        return UploadTransfer.Transport.super.grants(offset, count, partSize, totalBytes);
+      }
+
+      public boolean putPart(UploadTransfer.PartGrant grant) throws Exception {
+        if (!attemptId.isEmpty()) {
+          JSONObject r = uploadR2Part(grant.url, file, grant.offset, grant.length);
+          if (r.optBoolean("expired")) throw new UploadTransfer.ExpiredPartException();
+          return r.optBoolean("accepted");
+        }
+        JSONObject r = uploadDriveChunk(address, file, grant.offset, grant.length);
+        if (r.optBoolean("expired")) throw new UploadTransfer.ExpiredPartException();
+        return r.optBoolean("accepted") || r.optBoolean("complete");
+      }
+
+      public JSONObject chunk(long offset, int length) throws Exception {
+        java.util.List<UploadTransfer.PartGrant> g = grants(offset, 1, attemptId.isEmpty() ? 4 * 1024 * 1024 : attemptPartSize, file.length());
+        if (g.isEmpty()) return new JSONObject().put("accepted", true).put("complete", true);
+        UploadTransfer.PartGrant grant = g.get(0);
+        if (grant.partNumber == -1) return new JSONObject().put("expired", true);
+        if (attemptId.isEmpty()) return uploadDriveChunk(address, file, grant.offset, grant.length);
+        JSONObject r = uploadR2Part(grant.url, file, grant.offset, grant.length);
+        if (r.optBoolean("expired")) return r;
+        return new JSONObject().put("accepted", r.optBoolean("accepted")).put("url", grant.url).put("partNumber", grant.partNumber).put("offset", grant.offset).put("length", grant.length).put("attemptId", attemptId);
       }
     };
   }
@@ -240,7 +301,7 @@ final class Api {
   }
 
   JSONObject uploadR2Part(String address, File file, long offset, int length) throws Exception {
-    if (offset < 0 || length < 1 || length > 8 * 1024 * 1024 || offset + length > file.length())
+    if (offset < 0 || length < 1 || length > 32 * 1024 * 1024 || offset + length > file.length())
       throw new Exception("Invalid upload part.");
     HttpURLConnection c = null;
     try {

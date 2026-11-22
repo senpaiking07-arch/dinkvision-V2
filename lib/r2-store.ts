@@ -25,10 +25,10 @@ export class R2Store {
     const parts: RemotePart[] = [];
     let marker: string | undefined;
     const signal = AbortSignal.timeout(20000);
-    for (let page=0; page<11; page++) {
+    for (let page = 0; page < 11; page++) {
       const result = await this.client.send(new ListPartsCommand({
-        ...this.target(object),UploadId:object.upload_id!,PartNumberMarker:marker,MaxParts:1000,
-      }), {abortSignal:signal});
+        ...this.target(object), UploadId: object.upload_id!, PartNumberMarker: marker, MaxParts: 1000,
+      }), { abortSignal: signal });
       parts.push(...(result.Parts || []));
       if (!result.IsTruncated) return parts;
       if (!result.NextPartNumberMarker || result.NextPartNumberMarker === marker) throw new Error("Invalid storage pagination.");
@@ -36,10 +36,17 @@ export class R2Store {
     }
     throw new Error("Too many upload parts.");
   }
-  async partUrl(object: R2Object, number: number, length: number) {
+  async partUrl(object: R2Object, number: number, length: number, expiresIn = 300) {
     return getSignedUrl(this.client, new UploadPartCommand({
-      ...this.target(object),UploadId:object.upload_id!,PartNumber:number,ContentLength:length,
-    }), {expiresIn:300});
+      ...this.target(object), UploadId: object.upload_id!, PartNumber: number, ContentLength: length,
+    }), { expiresIn });
+  }
+  async partUrls(object: R2Object, entries: { number: number; length: number }[], expiresIn = 600) {
+    const urls: { partNumber: number; length: number; url: string }[] = [];
+    for (const entry of entries) {
+      urls.push({ partNumber: entry.number, length: entry.length, url: await this.partUrl(object, entry.number, entry.length, expiresIn) });
+    }
+    return urls;
   }
   async head(object: R2Object) {
     try { return await this.client.send(new HeadObjectCommand(this.target(object)), {abortSignal:AbortSignal.timeout(15000)}); }
