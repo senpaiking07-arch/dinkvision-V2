@@ -9,6 +9,6 @@ export default async function TenantsPage() {
   return <>
     <header className="site-header shell"><a className="brand" href="/"><img src="/dink-vision-logo.png" alt="DinkVision"/><span>Tenant management</span></a><AccountControls account={account}/></header>
     <main className="shell admin-main"><div className="eyebrow">DINKVISION</div><h1>{account.tenantName || "Set up your tenant"}</h1>
-      <p>Manage your locations, team access and Google connection.</p><TenantSettings account={account}/></main>
+      <p>Manage your locations, team access, storage, and email settings.</p><TenantSettings account={account}/></main>
   </>;
 }

@@ -1,4 +1,4 @@
-# DinkVision 0.5.38 — direct Android uploads to Google Drive
+# DinkVision 0.5.38 — direct Android uploads to R2 storage
 
 2026-11-03. Android **0.5.38 / build 44**, debug-signed test candidate. This supplements [0.5.37](Android_Recorder_Workflow_0.5.37.md). No GitHub push or Vercel deployment was performed. No database migration, new dependency or polling-rate change is included.
 
@@ -6,7 +6,7 @@ Superseded by [0.5.39](Android_Recorder_Workflow_0.5.39.md), which records the s
 
 ## Data path and workflow
 
-The Android APK now sends video chunks directly to the Google Drive resumable-upload session. Vercel continues to handle small authenticated JSON requests for authorization, queue position, confirmed byte offsets, recovery, completion verification and email scheduling. The large video body no longer goes through `/api/tablet/upload-chunk` from this APK.
+The Android APK now sends video chunks directly to the R2 storage resumable-upload session. Vercel continues to handle small authenticated JSON requests for authorization, queue position, confirmed byte offsets, recovery, completion verification and email scheduling. The large video body no longer goes through `/api/tablet/upload-chunk` from this APK.
 
 1. The normal camera confirmation, recipient entry, confirmation/countdown, capture, local save and logo-validation workflow runs as before.
 2. The original device reports the branded recording's size and obtains its existing FIFO queue turn. The backend checks device ownership and the configured private Drive destination, then creates or reuses that recording's resumable session.
@@ -26,7 +26,7 @@ The existing manual retry after eight failures, exported-copy removal safeguards
 | TypeScript and production `next build` | Passed. Next 16 uses separate development/build output directories; the local development server was retained. |
 | Normal/local/test Android assembly and `lintDebug` | Passed; lint has 0 errors and 44 warnings. |
 | Physical Samsung instrumentation | **27 targeted tests passed**: direct upload, URL/credential isolation, lost response and resume, expired sessions, old backend/mismatched grants, missing final confirmation, existing retry/cleanup and enrollment recovery. These use isolated preferences and disposable files. |
-| Live phone to Google Drive | **One opt-in physical-device test passed**. A disposable private 5,242,880-byte fixture went directly from the Samsung to Google. A local control harness using the actual Drive client verified file size, MIME type, parent and MD5 checksum. Three empty-body status probes and 441 bytes of JSON control request bodies were observed; that figure excludes headers and responses. The fixture was deleted after success. No real recording, recipient, enrollment or database session was changed and no email was sent. |
+| Live phone to R2 storage | **One opt-in physical-device test passed**. A disposable private 5,242,880-byte fixture went directly from the Samsung to Google. A local control harness using the actual Drive client verified file size, MIME type, parent and MD5 checksum. Three empty-body status probes and 441 bytes of JSON control request bodies were observed; that figure excludes headers and responses. The fixture was deleted after success. No real recording, recipient, enrollment or database session was changed and no email was sent. |
 
 The red regression initially demonstrated that the old backend did not return a direct destination; it passed after the change. Evidence is in `.local/fresh-run-20261102/direct-upload-red.log` and `candidate38-{npm-test,typecheck,web-build,build,native-tests,live-phone,live-drive}.log`. The evidence directory retains its earlier date; this candidate was checked on November 3.
 

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
-import { GoogleDrive } from "../lib/google-drive";
 import { recordingMessage } from "../lib/gmail";
 import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 test("guest capture has no account, scopes session control, and preserves court locks", async () => {
@@ -116,58 +115,4 @@ test("guest capture has no account, scopes session control, and preserves court 
   } finally {
     await db.close();
   }
-});
-test("link sharing is read-only, not discoverable, idempotent, and leaves private sharing strict", async () => {
-  const permissions: any[] = [
-    {
-      id: "owner",
-      type: "user",
-      role: "owner",
-      emailAddress: "owner@gmail.com",
-    },
-  ];
-  let writes = 0;
-  const drive = new GoogleDrive("token", (async (_url, options) => {
-    if (options?.method === "POST") {
-      writes++;
-      const p = JSON.parse(String(options.body));
-      assert.deepEqual(p, {
-        type: "anyone",
-        role: "reader",
-        allowFileDiscovery: false,
-      });
-      permissions.push({ id: "link", ...p });
-      return Response.json({ id: "link" });
-    }
-    return Response.json({ permissions });
-  }) as typeof fetch);
-  assert.equal(await drive.shareLink("file12345", "owner@gmail.com"), "link");
-  assert.equal(await drive.shareLink("file12345", "owner@gmail.com"), "link");
-  assert.equal(writes, 1);
-  await assert.rejects(
-    () => drive.share("file12345", "owner@gmail.com", "guest@outlook.com"),
-    /drive_file_not_private/,
-  );
-  permissions[1].role = "writer";
-  await assert.rejects(
-    () => drive.shareLink("file12345", "owner@gmail.com"),
-    /unexpected_file_permissions/,
-  );
-  const mime = Buffer.from(
-    recordingMessage(
-      "owner@gmail.com",
-      "guest@outlook.com",
-      randomUUID(),
-      "file12345",
-      "2026-12-01",
-      "Asia/Manila",
-      true,
-    ),
-    "base64url",
-  ).toString();
-  const plainPart = mime.split(/\r\n--[^\r\n]+\r\n/).find((value) => /Content-Type: text\/plain/i.test(value));
-  assert.ok(plainPart);
-  const body = Buffer.from(plainPart!.split("\r\n\r\n")[1].split(/\r\n--/)[0].replace(/\r\n/g, ""), "base64").toString();
-  assert.match(body, /Anyone with this link/);
-  assert.doesNotMatch(body, /Sign in to Google/);
 });

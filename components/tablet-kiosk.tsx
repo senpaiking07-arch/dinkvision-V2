@@ -149,7 +149,7 @@ export default function TabletKiosk({
         setCompletionNotice(
           event === "short"
             ? "Recording saved locally. Clips under 1 minute are not uploaded or emailed."
-            : "Video complete. Check your Gmail later for the replay link.",
+            : "Video complete. Check your email later for the replay link.",
         );
       }
       void refresh();
@@ -370,16 +370,16 @@ export default function TabletKiosk({
   }
   function addEmail() {
     if (emails.length >= 4) {
-      setError("You can add a maximum of 4 Gmail accounts.");
+      setError("You can add a maximum of 4 email accounts.");
       return false;
     }
     const normalized = normalizeRecipients([emailDraft]);
     if (!normalized) {
-      setError("Enter a valid Gmail address.");
+      setError("Enter a valid email address.");
       return false;
     }
     if (emails.includes(normalized[0])) {
-      setError("That Gmail address is already added.");
+      setError("That email address is already added.");
       return false;
     }
     setEmails((current) => [...current, normalized[0]].slice(0, 4));
@@ -535,7 +535,7 @@ export default function TabletKiosk({
         <section className="tablet-form-screen">
           <h1>Record your match</h1>
           <p className="tablet-subtitle">
-            Add one Gmail account at a time. You can register up to 4 recipients.
+            Add one email address at a time. You can register up to 4 recipients.
           </p>
           {!state ? (
             <p role="status">Connecting to the venue…</p>
@@ -571,7 +571,7 @@ export default function TabletKiosk({
                 </div>
               </div>
               <div className="tablet-email-entry">
-                <label htmlFor="player-email">Player Gmail</label>
+                <label htmlFor="player-email">Player email</label>
                 <div className="tablet-email-add-row">
                   <input
                     id="player-email"
@@ -581,7 +581,7 @@ export default function TabletKiosk({
                     autoCapitalize="none"
                     spellCheck={false}
                     maxLength={254}
-                    placeholder="player@gmail.com"
+                    placeholder="player@example.com"
                     value={emailDraft}
                     onChange={(e) => {
                       setEmailDraft(e.target.value);
@@ -599,12 +599,12 @@ export default function TabletKiosk({
                     disabled={emails.length >= 4 || !emailDraft.trim()}
                     onClick={addEmail}
                   >
-                    <Plus size={17} /> Add Gmail
+                    <Plus size={17} /> Add email
                   </button>
                 </div>
                 <p className="tablet-email-hint">Registered emails ({emails.length}/4) · At least 1 is required.</p>
                 {emails.length > 0 && (
-                  <div className="tablet-email-list" aria-label="Added Gmail accounts">
+                  <div className="tablet-email-list" aria-label="Added email accounts">
                     {emails.map((address) => (
                       <div className="tablet-email-chip" key={address}>
                         <span>{address}</span>
@@ -639,7 +639,7 @@ export default function TabletKiosk({
                 </span>
               </button>
               <p className="tablet-helper">
-                At least one valid Gmail address is required. Added players receive the same replay.
+                At least one valid email address is required. Added players receive the same replay.
                 <br />
                 Recording limit: {minutes} minutes
               </p>

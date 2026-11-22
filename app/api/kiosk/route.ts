@@ -2,7 +2,6 @@ import { kioskDevice } from "@/lib/kiosk";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { uuid, InputError } from "@/lib/validation";
-import { checkDriveHealth } from "@/lib/google-server";
 import { browserTablet } from "@/lib/browser-tablets";
 import { browserTabletState, POST as browserAction } from "../tablet/route";
 import { normalizeRecipients } from "@/lib/team-recipients";
@@ -87,26 +86,7 @@ export async function POST(request: Request) {
         .maybeSingle();
       if (existing.error) throw existing.error;
       if (existing.data) return json({ id: existing.data.id });
-      const health = await checkDriveHealth();
-      if (!health.ready)
-        return json(
-          {
-            error:
-              "Google Drive needs attention. Please ask the administrator before recording.",
-          },
-          503,
-        );
-      const google = await db
-        .from("google_integration")
-        .select("gmail_authorized_at")
-        .maybeSingle();
-      if (google.error || !google.data?.gmail_authorized_at)
-        return json(
-          {
-            error: "Email delivery needs to be connected by the administrator.",
-          },
-          503,
-        );
+      // R2 storage is used for recordings; no Drive readiness gate.
       const result = await db.rpc("start_guest_capture", {
         p_kiosk: kiosk.id,
         p_email: emails[0],

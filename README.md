@@ -6,11 +6,11 @@ After reviewing and merging contributor changes, the Vercel project owner publis
 
 Latest Android candidate is **0.5.48** (build 54). New USB and Camera2 recordings include the logo during capture: **record with logo → finalize and validate → upload to Drive**. Older unbranded saved videos retain their processing/recovery path. See the [0.5.43 HONOR verification report and remaining checks](docs/testing/Android_Recorder_Workflow_0.5.43.md), including the measured frame rates, background capture, upload recovery and physical-test limitations.
 
-Gradle exports shareable APKs to the sibling `DinkVision-APKs` directory, outside this checkout, with SHA-256 checksums. Android Studio retains its managed build output. Android video chunks go directly to Google Drive; authorization, queue order, confirmed progress, completion verification and email stay on the backend. Deploy the matching backend before distributing the APK. When moving to another site, configure its canonical `APP_ORIGIN`, register its Google OAuth callback, and rebuild the standard APK for that origin. Required-update enforcement stays off until the approved signed APK is available at a working HTTPS download URL. The separate local-test package uses ADB reverse to port 3000. See the [direct-upload rollout instructions](docs/testing/Android_Recorder_Workflow_0.5.38.md). Media validation remains enabled.
+Gradle exports shareable APKs to the sibling `DinkVision-APKs` directory, outside this checkout, with SHA-256 checksums. Android Studio retains its managed build output. Android video chunks go directly to R2 storage; authorization, queue order, confirmed progress, completion verification and email stay on the backend. Deploy the matching backend before distributing the APK. When moving to another site, configure its canonical `APP_ORIGIN`, register its Google OAuth callback, and rebuild the standard APK for that origin. Required-update enforcement stays off until the approved signed APK is available at a working HTTPS download URL. The separate local-test package uses ADB reverse to port 3000. See the [direct-upload rollout instructions](docs/testing/Android_Recorder_Workflow_0.5.38.md). Media validation remains enabled.
 
 The HONOR 0.5.40 processing-timeout fix, project-local signing, approved waiting-queue expiry migration and physical verification are documented in [the 0.5.40 test report](docs/testing/Android_Recorder_Workflow_0.5.40.md). The local-test APK uses `com.casabatik.recorder.dev` and ADB reverse to port 3000; its export ends in `-local.apk`.
 
-Tablet guest recording with Google Drive upload, emailed playback links, and automatic retention cleanup. The tablet design preview is at `/preview` and cannot record.
+Tablet guest recording with R2 storage upload, emailed playback links, and automatic retention cleanup. The tablet design preview is at `/preview` and cannot record.
 
 ## Run
 
@@ -52,7 +52,7 @@ Organization defaults to Dink Vision. Enrollment creates a revocable browser ide
 
 ### Browser background processing
 
-`/api/jobs/browser` requires `Authorization: Bearer <CRON_SECRET>` and handles email retries, completed-upload reconciliation, stale capture status, and expired Drive deletion. Upload completion also attempts email immediately. Ambiguous Gmail sends are never automatically repeated. Drive links stop working after actual deletion, which scheduling delays or outages can postpone.
+`/api/jobs/browser` requires `Authorization: Bearer <CRON_SECRET>` and handles email retries, completed-upload reconciliation, stale capture status, and expired Drive deletion. Upload completion also attempts email immediately. Ambiguous SMTP email sends are never automatically repeated. Drive links stop working after actual deletion, which scheduling delays or outages can postpone.
 
 Set a random server-only `CRON_SECRET` in `.env`. For local development, run alongside the web app:
 
@@ -77,7 +77,7 @@ Automated tests cover browser registration, fixed assignment, scoped transitions
 - Guests use an admin-enabled tablet, choose an available court, enter an email, confirm details, and record without an account. No email verification is claimed.
 - One-time recorder pairing, scoped revocable machine tokens, heartbeats, ONVIF network discovery, Windows USB discovery, and single-frame connection tests. Hardware health is not editable by an admin browser.
 - Players select an available court and start/stop its primary camera. Session settings are snapshotted at Start; the local worker enforces the duration even without a browser or cloud connection. Only the owner or an administrator can request Stop.
-- Successful clips upload to Drive, receive a read-only playback link, and queue Gmail delivery. Expired cloud and local videos are permanently deleted by the recorder worker.
+- Successful clips upload to Drive, receive a read-only playback link, and queue SMTP email delivery. Expired cloud and local videos are permanently deleted by the recorder worker.
 - `/preview` uses the same tablet UI with a labeled read-only fixture and never starts a capture.
 
 The approved logo is `public/dink-vision-logo.png`. Website and Android copies are checked against that file during tests and Android builds. Court artwork is an original SVG illustration. Fonts use Google Fonts with local system fallbacks.
@@ -124,7 +124,7 @@ Discovery/test commands use 90-second leases, at most three attempts, and a ten-
 2. Ensure the court has an enabled primary camera. Run **Test connection** if the camera has not passed a check or its last capture failed.
 3. Enable the tablet as described below, sign out of admin, tap the welcome screen, select **Court 1**, enter your email, and confirm **Start recording**. Wait for the live countdown before playing.
 4. Click **Stop recording**. The UI will show **Saved locally** when finalization is confirmed. Closing/reloading the browser does not stop capture; reopening the page restores the active session.
-5. On the recorder PC, open `.local/recorder/captures/<session-id>/video.mp4` to play the clip. The admin Recording logs show the session ID. Local files are private and are not served by the web app. Google Drive viewing is available after owner authorization; email delivery is available after Gmail authorization.
+5. On the recorder PC, open `.local/recorder/captures/<session-id>/video.mp4` to play the clip. The admin Recording logs show the session ID. Local files are private and are not served by the web app. R2 storage viewing is available after owner authorization; email delivery is available after SMTP email authorization.
 
 The capture profile is H.264 MP4 at up to 1280 pixels wide and 30 fps, with optional 48 kHz AAC audio. In Camera setup, discover devices, edit a camera, and choose Recording audio: Off, a discovered USB microphone, or Camera stream microphone for RTSP cameras. Save and run Test connection: audio-enabled tests decode two seconds without saving a clip. Audio defaults off; enabling it requires recorder 0.4.0 and invalidates the prior connection test. Players see a microphone notice before recording. The audio choice is snapshotted for each session and cannot be changed during capture. If a selected microphone or stream audio is unavailable, the test/capture fails instead of claiming an audio recording succeeded; choose Off to record silently. Windows video and microphone devices are opened together ([FFmpeg DirectShow documentation](https://www.ffmpeg.org/ffmpeg-devices.html#dshow)). Fragmented MP4 preserves recoverable fragments during interruptions ([FFmpeg documentation](https://www.ffmpeg.org/ffmpeg-formats.html)). Default duration stays 15 minutes. The hardware check and recording cannot run on the same recorder concurrently; other apps holding the webcam may prevent capture.
 
@@ -150,18 +150,18 @@ It creates three temporary test identities and its own court/recorder/camera/ses
 
 ## Agreed next stages
 
-1. Drive upload, playback, Gmail delivery, and expiry cleanup have been implemented and live-tested.
+1. Drive upload, playback, SMTP email delivery, and expiry cleanup have been implemented and live-tested.
 2. Verify the complete workflow with actual venue hardware and guest email delivery, then deploy the web app to Vercel.
 
 Default duration is 900 seconds and retention is 86400 seconds after successful upload. Venue time zone is Asia/Manila; final camera hardware remains unconfirmed. Windows is the first supported recorder OS. The local recorder runs independently of the player's browser.
 
-## Google Drive upload and playback
+## R2 storage upload and playback
 
 Browser and USB-camera recordings are captured directly as MP4 (H.264/AAC where the browser exposes it) for dependable Drive and browser playback. The tablet setup blocks recording when the browser cannot produce MP4 and asks staff to update Chrome/Edge or use the Android recorder. Legacy WebM clips are never added to the Drive queue; they remain in that browser's protected local storage and can be downloaded from the tablet recovery screen. Already-uploaded historical WebM files are not rewritten.
 
-1. Configure APP_ORIGIN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DRIVE_ROOT_FOLDER_ID, GOOGLE_SENDER_EMAIL and a stable base64 TOKEN_ENCRYPTION_KEY containing 32 random bytes. Deployed builds derive the OAuth callback from `APP_ORIGIN`; `GOOGLE_REDIRECT_URI` is only a local-development override. These are server secrets except for the public application origin; never prefix secrets with NEXT_PUBLIC or put them in recorder configuration. Keep the encryption key across deployments and backups.
-2. Enable Drive API and register `<APP_ORIGIN>/api/integrations/google/callback` as the exact Authorized redirect URI in Google Cloud. Generated Vercel deployment domains and the site root are rejected. Local development may use `http://127.0.0.1:3000/api/integrations/google/callback`; use the same host for the app and callback because 127.0.0.1 and localhost have different cookies. Set the venue time zone; Dink Vision uses Asia/Manila.
-3. Sign in as the venue admin, open Settings, and Connect Google Drive. Authorize the configured owner. This POC uses the Drive scope because the destination is an existing owner-supplied folder; it also requests the send-only gmail.send scope for email notifications. The destination must be an owner-only My Drive folder; shared/public folders fail closed rather than exposing player recordings through inherited permissions.
+1. Configure APP_ORIGIN, SMTP_*, SMTP_*, SMTP_*, SMTP_* and a stable base64 TOKEN_ENCRYPTION_KEY containing 32 random bytes. Deployed builds derive the OAuth callback from `APP_ORIGIN`; `SMTP_*` is only a local-development override. These are server secrets except for the public application origin; never prefix secrets with NEXT_PUBLIC or put them in recorder configuration. Keep the encryption key across deployments and backups.
+2. Enable Drive API and register `<APP_ORIGIN>/api/integrations/storage/status` as the exact Authorized redirect URI in Google Cloud. Generated Vercel deployment domains and the site root are rejected. Local development may use `http://127.0.0.1:3000/api/integrations/storage/status`; use the same host for the app and callback because 127.0.0.1 and localhost have different cookies. Set the venue time zone; Dink Vision uses Asia/Manila.
+3. Sign in as the venue admin, open Settings, and Connect R2 storage. Authorize the configured owner. This POC uses the Drive scope because the destination is an existing owner-supplied folder; it also requests the send-only gmail.send scope for email notifications. The destination must be an owner-only My Drive folder; shared/public folders fail closed rather than exposing player recordings through inherited permissions.
 4. Restart the recorder to load its background upload loop. New completed recordings created after the first connection queue automatically. Existing local recordings require Upload / retry Drive in Recording logs. Use a real recipient email. New guest recordings use link access; older private recordings still require the matching Google account.
 5. Uploads run directly from the venue PC to Google's resumable endpoint in 4 MiB chunks, independently of camera control. The web app only handles metadata and sharing. The worker queries acknowledged offsets after interruptions; persisted pre-generated file IDs prevent duplicate Drive files. A verified byte count and MD5 are required before sharing.
 6. Guest sessions snapshot `sharing_mode: link`; only those files receive `anyone/reader` with file discovery disabled. Anyone holding the emailed link can watch without a Google account. Parent folders remain private. Legacy sessions keep owner/recipient-only sharing and their authenticated playback route. The app becomes Ready only after sharing is confirmed. Google may need time to process MP4 playback.
@@ -172,15 +172,15 @@ The planned viewing deadline is stored after upload using the current retention 
 References: [Google resumable uploads and pre-generated IDs](https://developers.google.com/workspace/drive/api/guides/manage-uploads), [private sharing](https://developers.google.com/workspace/drive/api/guides/manage-sharing), [server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server).
 
 
-## Automatic Gmail delivery
+## Automatic SMTP email delivery
 
-Migration 009 adds a service-only email outbox. Enable Gmail API, then use Admin > Settings > Connect / reconnect Drive & Gmail and approve sending as the configured owner. No mailbox reading or deletion permission is requested. The existing callback and encrypted refresh-token storage are reused. New ready uploads after the first Gmail authorization automatically queue; older unexpired recordings have an explicit Send email action. Reauthorization preserves the original email cutoff for the same owner.
+Migration 009 adds a service-only email outbox. Enable SMTP email, then use Admin > Settings > Connect / reconnect Drive & SMTP email and approve sending as the configured owner. No mailbox reading or deletion permission is requested. The existing callback and encrypted refresh-token storage are reused. New ready uploads after the first SMTP email authorization automatically queue; older unexpired recordings have an explicit Send email action. Reauthorization preserves the original email cutoff for the same owner.
 
-The recorder runs a separate ten-second email poll, so sending is independent of capture and video upload. Restart it after updating. Each API request claims at most one job with a three-minute lease. Only confirmed ready, unexpired files are emailed, to the session's original recipient, from GOOGLE_SENDER_EMAIL. Messages include a Drive URL, the correct access instructions for that session, and the venue-local retention deadline. No localhost links or video attachments are emailed.
+The recorder runs a separate ten-second email poll, so sending is independent of capture and video upload. Restart it after updating. Each API request claims at most one job with a three-minute lease. Only confirmed ready, unexpired files are emailed, to the session's original recipient, from SMTP_*. Messages include a Drive URL, the correct access instructions for that session, and the venue-local retention deadline. No localhost links or video attachments are emailed.
 
-Known rejected rate-limited requests retry with exponential backoff and Retry-After, up to eight attempts. Failed jobs can be retried by admins. Gmail does not support send idempotency: timeouts, server errors, or a crashed worker after claiming a send become Unknown and are not resent automatically. Check the owner's Sent folder before manual recovery. A stable Message-ID aids investigation but is not treated as deduplication. Sent means Gmail accepted the message, not that it reached the recipient inbox. Email failure does not revoke playback or erase recordings.
+Known rejected rate-limited requests retry with exponential backoff and Retry-After, up to eight attempts. Failed jobs can be retried by admins. SMTP email does not support send idempotency: timeouts, server errors, or a crashed worker after claiming a send become Unknown and are not resent automatically. Check the owner's Sent folder before manual recovery. A stable Message-ID aids investigation but is not treated as deduplication. Sent means SMTP email accepted the message, not that it reached the recipient inbox. Email failure does not revoke playback or erase recordings.
 
-Testing uses fake Gmail responses and a temporary database; automated tests never send real mail. Live delivery requires owner Gmail consent and verification with the intended recipient. Retention deletion is handled by the cleanup worker.
+Testing uses fake SMTP email responses and a temporary database; automated tests never send real mail. Live delivery requires owner SMTP email consent and verification with the intended recipient. Retention deletion is handled by the cleanup worker.
 
 
 ## Retention and permanent deletion
@@ -204,9 +204,9 @@ Validation includes isolated database expiry/lease/RLS tests, mocked Drive error
 
 The 180-day HttpOnly, SameSite=Strict cookie is independent of Supabase login. Only its SHA-256 hash is stored in a service-only table. Guest APIs require this device credential, validate mutation origins, and expose only its current session without recipient email or historical recordings. Guest RPCs are service-role only and keep the existing court/device locks, rate limit, camera readiness checks, and idempotency. No fake Supabase accounts are created for email addresses. Existing account-owned recordings are retained.
 
-The admin Google OAuth callback, owner credentials, Drive root, Gmail sender and retention process are unchanged. The link-access choice applies only to new guest files, not historical private videos. A forwarded link grants playback until the video is deleted. The local venue recorder still needs to stay running for capture, delivery and cleanup.
+The admin Google OAuth callback, owner credentials, Drive root, SMTP email sender and retention process are unchanged. The link-access choice applies only to new guest files, not historical private videos. A forwarded link grants playback until the video is deleted. The local venue recorder still needs to stay running for capture, delivery and cleanup.
 
-Validation: 32 automated tests, production build, API authorization/origin/session checks, landscape and portrait tablet layout review, and a generated one-second green-video guest fixture uploaded through the real worker with verified read-only link permission and Gmail acceptance. This fixture did not open the camera and expires under the regular retention policy.
+Validation: 32 automated tests, production build, API authorization/origin/session checks, landscape and portrait tablet layout review, and a generated one-second green-video guest fixture uploaded through the real worker with verified read-only link permission and SMTP email acceptance. This fixture did not open the camera and expires under the regular retention policy.
 
 
 ## Unified camera setup

@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | Saved locally / adding logo | The original remains on the tablet. Media validation and logo processing happen before upload. | Keep the app installed and the device powered. |
 | Pending | The validated, branded file is waiting for its turn in the tenant upload queue. | No player action is required. |
-| Uploading | The tablet transfers its file to Google Drive. Interrupted transfers resume from the server's acknowledged offset. | Monitor progress in Admin. |
+| Uploading | The tablet transfers its file to R2 storage. Interrupted transfers resume from the server's acknowledged offset. | Monitor progress in Admin. |
 | Retrying | A temporary failure has scheduled another attempt. Network retries use backoff and stop after eight failed attempts. | Restore connectivity; if attempts are exhausted, use the failed video's action. |
 | Failed, logo/validation error | Media processing could not complete. Better internet does not repair invalid media timing. | Read the exact per-video error. **Retry processing** asks the original tablet to revalidate and process its local file; it does not bypass validation or guarantee repair. |
 | Failed, upload error | Processing completed but cloud transfer or confirmation failed. | **Retry upload** asks the original tablet to resume. |

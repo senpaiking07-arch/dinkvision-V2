@@ -33,7 +33,7 @@ export function validateTestEnvironment(env, command) {
           (url.hostname.endsWith(".pooler.supabase.com") && decodeURIComponent(url.username) === `postgres.${TEST_PROJECT}`)))
       throw new Error(`${key} must target the isolated test project.`);
   }
-  if (env.GOOGLE_REDIRECT_URI && env.GOOGLE_REDIRECT_URI !== `${env.APP_ORIGIN}/api/integrations/google/callback`)
+  if (env.GOOGLE_REDIRECT_URI && env.GOOGLE_REDIRECT_URI !== `${env.APP_ORIGIN}/api/integrations/storage/status`)
     throw new Error("Google callback must use this local APP_ORIGIN.");
 }
 

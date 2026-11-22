@@ -4,12 +4,10 @@ export const TENANT_HEADER = "x-dinkvision-tenant-id";
 export const tenantTables = new Set([
   "venue_settings", "courts", "recorders", "cameras", "recording_sessions",
   "recording_files", "delivery_attempts", "audit_events", "recorder_credentials", "recorder_diagnostics",
-  "recorder_devices", "recorder_commands", "capture_jobs", "google_integration",
-  "google_oauth_states", "drive_folders", "drive_upload_jobs", "email_jobs",
+  "recorder_devices", "recorder_commands", "capture_jobs",   "email_jobs",
   "cleanup_jobs", "kiosk_devices", "browser_devices", "browser_recordings",
-  "locations", "tenant_google_settings", "tenant_memberships",
-  "r2_upload_attempts", "gmail_integrations",
-]);
+  "locations", "tenant_memberships",
+  "r2_upload_attempts", ]);
 
 export function tenantId(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))

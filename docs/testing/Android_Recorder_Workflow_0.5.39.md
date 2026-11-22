@@ -1,6 +1,6 @@
 # DinkVision 0.5.39 — physical Device Test acceptance
 
-2026-11-03, Asia/Shanghai. Latest Android **0.5.39 / build 45**, debug-signed. Physical target: Samsung SM-A226B, Android 13/API 33, connected EMEET SmartCam C60E 4K and its USB microphone. Tests used only **Device Test**, the localhost test package and local Next.js backend against the configured Supabase database and real Google Drive/Gmail integration. The hosted Vercel deployment was not updated or certified. No GitHub push, deployment, database migration, polling optimization or dependency change was made.
+2026-11-03, Asia/Shanghai. Latest Android **0.5.39 / build 45**, debug-signed. Physical target: Samsung SM-A226B, Android 13/API 33, connected EMEET SmartCam C60E 4K and its USB microphone. Tests used only **Device Test**, the localhost test package and local Next.js backend against the configured Supabase database and real R2 storage/Gmail integration. The hosted Vercel deployment was not updated or certified. No GitHub push, deployment, database migration, polling optimization or dependency change was made.
 
 ## Passed on the phone
 

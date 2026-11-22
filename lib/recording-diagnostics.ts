@@ -1,7 +1,7 @@
 import type{Session}from'./admin-types';
 import { captureDurationLabel, captureInterruptionLabel } from "./capture-interruption";
 const reasons:Record<string,string>={player_stop:'Stopped manually.',time_limit:'Reached the maximum recording duration.',interrupted:'Recording was interrupted.',capture_error:'The camera could not complete the recording.',storage_full:'The device ran out of recording space.',device_missing:'The camera became unavailable.',cancelled_before_start:'Cancelled before recording started.',short_recording:'Kept on the device because the clip is under one minute; it is not uploaded or emailed.',unsupported_format:'Kept on the device because its video format is not supported for upload.'};
-const stages:Record<string,string>={capture:'Camera recording',browser_capture:'Camera recording / saved-video validation',upload:'Google Drive upload',sharing:'Google Drive sharing',upload_cancelled:'Upload cancelled',device_removed:'Device registration removed',short_recording:'No failure · local-only policy',unsupported_format:'Video format validation'};
+const stages:Record<string,string>={capture:'Camera recording',browser_capture:'Camera recording / saved-video validation',upload:'Cloud storage upload',sharing:'Cloud storage sharing',upload_cancelled:'Upload cancelled',device_removed:'Device registration removed',short_recording:'No failure · local-only policy',unsupported_format:'Video format validation'};
 const title=(value:string)=>value.replaceAll('_',' ').replace(/^./,s=>s.toUpperCase());
 export function recordingDiagnostics(session:Pick<Session,'status'|'stop_reason'|'failure_stage'|'browser_recordings'|'capture_interruption_code'>){
  const report=Array.isArray(session.browser_recordings)?session.browser_recordings[0]:session.browser_recordings;
@@ -13,7 +13,7 @@ export function recordingDiagnostics(session:Pick<Session,'status'|'stop_reason'
  const localOnly=['short_recording','unsupported_format'].includes(session.failure_stage||'');
  const stage=stages[session.failure_stage||'']||(session.failure_stage?title(session.failure_stage)
    : report?.branding_state==='failed'?'Logo processing / video validation'
-   : report?.branding_state==='complete'&&['failed','retrying'].includes(report?.upload_state||'')?'Google Drive upload (device report)'
+   : report?.branding_state==='complete'&&['failed','retrying'].includes(report?.upload_state||'')?'Cloud storage upload (device report)'
    : session.status==='ready'?'None reported · completed successfully':active?'Not applicable while recording':'Not reported');
  const reason=session.stop_reason ? reasons[session.stop_reason]||title(session.stop_reason)
    : removed?'The device registration associated with this recording was removed from Admin.'

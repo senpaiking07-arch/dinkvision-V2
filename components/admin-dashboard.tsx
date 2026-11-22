@@ -1,7 +1,6 @@
 "use client";
 import BrowserTabletsAdmin from "./browser-tablets-admin";
-import GoogleDriveControls, { DriveRetry } from "./google-drive-controls";
-import DriveHealthBanner from "./drive-health-banner";
+import StorageSmtpControls from "./storage-smtp-controls";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -409,7 +408,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
 
       {tab === "overview" && (
         <>
-          <DriveHealthBanner />
+          <StorageSmtpControls />
           <div className="admin-stats">
             <article>
               <LayoutGrid size={22} />
@@ -464,7 +463,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                   </b>
                 </li>
                 <li>
-                  <span>{data.storageProvider === "r2" ? "Private R2 storage" : "Google Drive"}</span>
+                  <span>Private R2 storage</span>
                   <button
                     className="sign-in"
                     onClick={() => setTab("settings")}
@@ -475,7 +474,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
               </ul>
               <p className="form-note">
                 Completed matches upload to private cloud storage with emailed link
-                access. Enable Gmail delivery in Settings to email playback
+                access. Configure SMTP on the server to email playback
                 links automatically.
               </p>
             </section>
@@ -538,7 +537,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
 
       {tab === "cameras" && <BrowserTabletsAdmin />}
 
-      {tab === "settings" && <GoogleDriveControls />}
+      {tab === "settings" && <StorageSmtpControls />}
       {tab === "settings" && (
         <section className="admin-card settings-card">
           <div className="eyebrow">YOUR VENUE, YOUR DEFAULTS</div>
@@ -732,10 +731,6 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                           {recordingDiagnostics(session).detail && <p>Device report: {recordingDiagnostics(session).detail}</p>}
                           {recordingDiagnostics(session).help && <p>What to do: {recordingDiagnostics(session).help}</p>}
                           <p className="muted">Recorded codes: reason {session.stop_reason || "not reported"}; stage {session.failure_stage || "not reported"}.</p>
-                          {data.storageProvider !== "r2" && (session.status === "local_ready" ||
-                            ["upload", "sharing"].includes(
-                              session.failure_stage || "",
-                            )) && <DriveRetry sessionId={session.id} />}
                           {session.status === "ready" && (
                             <a
                               className="sign-in"
@@ -750,7 +745,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
                             <p>
                               Video saved on the venue recorder in its protected
                               captures folder, under this session ID. Connect
-                              Google Drive in Settings to upload it.
+                              storage in Settings.
                             </p>
                           )}
                         </details>

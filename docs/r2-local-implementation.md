@@ -75,8 +75,8 @@ Edit `.local/r2-test.env` in the checkout. It is ignored by Git. Do not put secr
 | --- | --- |
 | `SUPABASE_SECRET_KEY` | The **test** project's [API keys settings](https://supabase.com/dashboard/project/gwermdkkrotvvpoxkqdx/settings/api-keys): server secret key, not the publishable key |
 | `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` | Cloudflare R2 → Manage R2 API Tokens → create an **Object Read & Write** token restricted to `dinkvision-videos-dev`; use its S3 access-key pair |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth web client with Gmail API enabled; needed for mail only |
-| `GOOGLE_SENDER_EMAIL` | The test sender whose Google account will grant consent; may also be set per tenant in settings |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | SMTP server/app password for recording email delivery |
+| `SMTP_FROM` | Sender address shown in replay emails |
 | `MIGRATION_DATABASE_URL` | Optional for subsequent local migration commands; test-project Postgres connection string. Already-applied MCP migrations do not require it to start the app. |
 
 The project URL, publishable key, account ID, bucket, local origins, and random encryption/replay/cron secrets have already been written locally. Preserve the generated keys: changing encryption keys invalidates stored Google credentials; changing the replay key invalidates existing links.
@@ -87,7 +87,7 @@ Current origins:
 
 - `APP_ORIGIN=http://127.0.0.1:3000` for sign-in, admin, capture and Android through ADB reverse.
 - `REPLAY_ORIGIN=http://192.168.1.9:3000` for players on the same private network. Update this if the PC address changes.
-- `GOOGLE_REDIRECT_URI=http://127.0.0.1:3000/api/integrations/google/callback`; register this exact callback in Google Cloud and use the matching admin origin.
+- `GOOGLE_REDIRECT_URI=http://127.0.0.1:3000/api/integrations/storage/status`; register this exact callback in Google Cloud and use the matching admin origin.
 - Bucket CORS permits `http://localhost:3000`, `http://127.0.0.1:3000`, and `http://192.168.1.9:3000`. Add only the required test origin if the LAN address changes.
 
 Local commands deliberately reject another Supabase project, another bucket, public application origins and mismatched callback URLs. They clear inherited application environment variables before Next.js loads its `.env` files. A build can run without privileged secrets; starting the app or jobs fails early if required runtime credentials are missing.

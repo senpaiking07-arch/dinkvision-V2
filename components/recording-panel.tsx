@@ -245,7 +245,7 @@ export default function RecordingPanel({ email }: { email: string }) {
             </p>
           )}
           <p className="form-note">
-            {(active ? active.audio_enabled : selected?.audio_enabled) ? "Microphone on — video and audio will be recorded." : "Video only — microphone off."} Clips are saved on the venue computer, then uploaded when cloud storage is connected. Private viewing links appear below and are emailed when the venue has enabled Gmail delivery.
+            {(active ? active.audio_enabled : selected?.audio_enabled) ? "Microphone on — video and audio will be recorded." : "Video only — microphone off."} Clips are saved on the venue computer, then uploaded to private R2 storage. Private viewing links appear below and are emailed when SMTP delivery is configured.
           </p>
         </aside>
       </div>
@@ -258,7 +258,7 @@ export default function RecordingPanel({ email }: { email: string }) {
                 <div>
                   <strong>{session.failure_stage === "short_recording" ? "Saved locally · under one minute" : session.failure_stage === "unsupported_format" ? "Saved locally · older WebM clip" : session.status === "failed" && ["upload","sharing"].includes(session.failure_stage || "") ? "Cloud storage needs attention" : labels[session.status] || session.status}</strong>
                   {session.playback_available && <p><a className="sign-in" href={`/api/recordings/${session.id}/playback`} target="_blank" rel="noopener noreferrer">Watch recording</a></p>}
-                  {session.status === "ready" && <p className="form-note">{session.playback_available ? "Sign into Google using your recipient email. Google may still be processing the video." : "This recording has expired and is awaiting cleanup."} Viewing deadline: {session.expires_at ? new Date(session.expires_at).toLocaleString() : "Not set"}. Videos are permanently deleted after expiry.</p>}
+                  {session.status === "ready" && <p className="form-note">{session.playback_available ? "Use the private replay link sent to your email. The video may take a moment to be ready." : "This recording has expired and is awaiting cleanup."} Viewing deadline: {session.expires_at ? new Date(session.expires_at).toLocaleString() : "Not set"}. Videos are permanently deleted after expiry.</p>}
                   <p className="form-note">
                     {session.status === "local_ready"
                       ? "Saved safely at the venue. Waiting for cloud storage upload; staff can queue older recordings."

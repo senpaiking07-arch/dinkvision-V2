@@ -718,10 +718,10 @@ summary {
   margin-top: 20px;
   font-size: 12px;
 }
-.google-drive-card {
+.storage-integration-card {
   margin-bottom: 24px;
 }
-.google-drive-card code {
+.storage-integration-card code {
   overflow-wrap: anywhere;
 }
 .camera-setup {

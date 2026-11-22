@@ -23,7 +23,7 @@ async function main() {
       {auth:{persistSession:false,autoRefreshToken:false}});
     // Read only identifiers, never credentials, tokens or recording contents.
     for (const [table, columns] of [["tenants", "id"], ["r2_upload_attempts", "id"],
-      ["recording_files", "id,storage_provider,storage_bucket,storage_key"], ["gmail_integrations", "tenant_id"]]) {
+      ["recording_files", "id,storage_provider,storage_bucket,storage_key"]]) {
       try {
         const result = await db.from(table).select(columns).limit(1).abortSignal(AbortSignal.timeout(10000));
         if (result.error) throw new Error("read_failed");
@@ -45,7 +45,7 @@ async function main() {
     finally { client.destroy(); }
   } else console.log("SKIP R2 runtime access: access-key pair missing");
 
-  const mail = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_SENDER_EMAIL"].filter(key=>!env[key]);
+  const mail = ["SMTP_HOST", "SMTP_USER", "SMTP_FROM"].filter(key=>!env[key]);
   console.log(mail.length ? `PENDING Gmail configuration: ${mail.join(", ")}; sender may instead be configured per tenant`
     : "PENDING Gmail: configuration present; tenant OAuth consent and delivery still require validation");
   console.log(failures ? "NOT READY: resolve the missing/failed checks before starting live storage tests."

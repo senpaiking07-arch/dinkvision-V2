@@ -56,9 +56,9 @@ The `id=true` singleton convention remains within each tenant for venue and Goog
 
 The application uses Google OAuth, Drive for videos, and Gmail send for replay notifications. It does not require Firebase or a new Google service account.
 
-- Keep `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`, and `CRON_SECRET` server-only. Keep the existing encryption key when deploying; replacing it makes stored credentials unreadable.
-- Set `APP_ORIGIN` to the canonical HTTPS origin. Register exactly `/api/integrations/google/callback` under that origin in the OAuth client. Hosting changes also require the Google callback allowlist and an Android rebuild. Browser queues remain in their original origin; drain/export them before changing a domain.
-- Configure a separate private Drive root and owner per tenant in `/tenants`, then authorize that owner using Admin Settings. The original tenant can fall back to the existing `GOOGLE_DRIVE_ROOT_FOLDER_ID` and `GOOGLE_SENDER_EMAIL` environment values. Other tenants cannot inherit them.
+- Keep `SMTP_PASS`, `TOKEN_ENCRYPTION_KEY`, and `CRON_SECRET` server-only. Keep the existing encryption key when deploying; replacing it makes stored credentials unreadable.
+- Set `APP_ORIGIN` to the canonical HTTPS origin. Register exactly `/api/integrations/storage/status` under that origin in the OAuth client. Hosting changes also require the Google callback allowlist and an Android rebuild. Browser queues remain in their original origin; drain/export them before changing a domain.
+- Configure SMTP env vars on the deployment. Recording storage uses private R2; no per-tenant Google OAuth connection is required.
 - Each root must be owned by its connected account, private, and distinct from other tenants' roots. The application prevents switching an established owner/root because existing uploads, playback, and retention require the old configuration. Plan a separate migration if this must change.
 - Confirm Drive API and Gmail API access, the required consent scopes, OAuth audience/test users or publication status, and token refresh in staging. The earlier Google testing-mode 403 is an external consent configuration issue; an application build cannot authorize a tester.
 - New files share only with the recorded recipients and owner. Use real recipient Google accounts. Historical `sharing_mode=link` sessions still have bearer-link access. Inventory their ACLs and obtain owner approval before changing permissions; do not silently break existing replay links.

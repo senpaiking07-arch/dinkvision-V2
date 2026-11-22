@@ -208,7 +208,7 @@ export default function BrowserTabletsAdmin() {
             const captureUnconfirmed = recording?.recording_sessions?.status === "recording" &&
               !recordingIsConfirmed(recording.recording_sessions, recording, now);
             const readyFile = recording?.recording_sessions?.recording_files?.find(
-              (file: any) => file.status === "ready" && (file.drive_file_id || (file.storage_provider === "r2" && file.storage_key)),
+              (file: any) => file.status === "ready" && file.storage_provider === "r2" && file.storage_key,
             );
             const emailStatus = readyFile?.email_jobs?.status;
             const selectDevice = () => {

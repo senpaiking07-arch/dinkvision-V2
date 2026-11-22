@@ -1,34 +1,32 @@
 "use client";
-import { useEffect,useState } from "react";
-type MailStatus={integration:{owner_email:string;gmail_authorized_at:string|null}|null;files:{id:string;session_id:string;recording_sessions:{recipient_email:string;configuration_snapshot?:{recipient_emails?:string[]}}}[];jobs:{file_id:string;status:string;attempts:number;safe_error:string|null;sent_at:string|null;next_attempt_at:string}[]};
+import {useEffect,useState} from "react";
+type MailStatus={smtp?:{ready:boolean;configured:boolean;from?:string};files:{id:string;session_id:string;recording_sessions:{recipient_email:string;configuration_snapshot?:{recipient_emails?:string[]}}}[];jobs:{file_id:string;status:string;attempts:number;safe_error:string|null;sent_at:string|null;next_attempt_at:string}[]};
 export default function EmailControls() {
-  const [data,setData]=useState<MailStatus>();
-  const [message,setMessage]=useState("");
-  const [busy,setBusy]=useState(false);
-  async function refresh() {
-    try { const r=await fetch("/api/admin/email",{cache:"no-store"}); if (!r.ok) throw new Error(); setData(await r.json()); }
-    catch { setMessage("Email status is unavailable. Retry shortly."); }
+  const [data,setData]=useState<MailStatus>(),[busy,setBusy]=useState("");
+  async function load(){const r=await fetch("/api/admin/email",{cache:"no-store"});const v=await r.json();if(r.ok)setData(v);}
+  useEffect(()=>{load();},[]);
+  async function queue(fileId:string) {
+    setBusy(fileId);
+    const r=await fetch("/api/admin/email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({file_id:fileId})});
+    setBusy(""); if(r.ok) await load(); else alert((await r.json()).error||"Could not send email.");
   }
-  useEffect(()=>{void refresh();const timer=setInterval(refresh,15000);return()=>clearInterval(timer);},[]);
-  async function queue(id:string) {
-    setBusy(true);
-    try {const r=await fetch("/api/admin/email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({file_id:id})});const body=await r.json();setMessage(r.ok?"Email queued for background processing.":body.error);await refresh();}
-    catch {setMessage("Email request failed. Refresh its status before retrying.");} finally {setBusy(false);}
-  }
-  return <section className="admin-card google-drive-card">
-    <div className="eyebrow">MATCH DELIVERY</div><h2>Email notifications</h2>
-    <p>{data?.integration?.gmail_authorized_at?`Gmail sending authorized for ${data.integration.owner_email}. New browser uploads are emailed by the cloud worker.`:"Enable Gmail sending through the Google connection button above. Existing Drive authorization alone cannot send email."}</p>
-    <p className="form-note">Emails contain a playback link, not a video attachment. Anyone holding a guest replay link can watch. Sent means Gmail accepted the message; it does not confirm inbox delivery. Check Spam if needed. Previous uploads need an explicit Send email action.</p>
-    {message && <p role="status">{message}</p>}
-    <ul className="activity-list">{data?.files.map(file=>{
-      const job=data.jobs.find(j=>j.file_id===file.id);
-      const recipients=file.recording_sessions.configuration_snapshot?.recipient_emails;
-      const recipientLabel=Array.isArray(recipients)&&recipients.length?recipients.join(", "):file.recording_sessions.recipient_email;
-      return <li key={file.id}><div><strong>{recipientLabel} · {job?.status || "Not queued"}</strong><p className="form-note">{file.session_id}</p>
-        {job && <p className="form-note">{job.attempts} attempts{job.sent_at?` · Sent ${new Date(job.sent_at).toLocaleString()}`:""}{job.status==="pending"?` · Next attempt ${new Date(job.next_attempt_at).toLocaleString()}`:""}</p>}
-        {job?.safe_error && <p className="form-error">{job.status==="unknown"?"Send outcome is uncertain. Check the owner's Sent folder before contacting support; automatic resend is disabled to avoid duplicates.":job.safe_error.replaceAll("_"," ")}</p>}
-        {(!job || job.status==="failed") && <button className="sign-in" disabled={busy || !data.integration?.gmail_authorized_at} onClick={()=>queue(file.id)}>{job?"Retry email":"Send email"}</button>}
-      </div></li>;
-    })}</ul>
+  const jobs=Object.fromEntries((data?.jobs||[]).map(j=>[j.file_id,j]));
+  return <section className="admin-card storage-integration-card">
+    <div className="eyebrow">EMAIL DELIVERY</div><h2>Recording replay emails</h2>
+    <p>{data?.smtp?.ready?`SMTP email is ready${data.smtp.from?` as ${data.smtp.from}`:""}. New browser uploads are emailed by the cloud worker.`:data?.smtp?.configured?"SMTP is configured but currently unavailable. Check server SMTP settings.":"SMTP email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS, and SMTP_FROM on the server."}</p>
+    <p className="form-note">Emails contain a playback link, not a video attachment. Anyone holding a guest replay link can watch. Sent means SMTP accepted the message; it does not confirm inbox delivery. Check spam if needed. Previous uploads need an explicit Send email action.</p>
+    <ul className="activity-list">
+      {(data?.files||[]).map(file=>{
+        const job=jobs[file.id],recipients=(file.recording_sessions.configuration_snapshot?.recipient_emails as string[]|undefined)||[file.recording_sessions.recipient_email];
+        return <li key={file.id}><div>
+          <strong>{file.session_id.slice(0,8)}</strong>
+          <p className="form-note">{recipients.join(", ")} ? {job?`${job.status}${job.safe_error?` (${job.safe_error})`:""}`:"not queued"}</p>
+        </div><div>
+          {(!job || job.status==="failed") && <button className="sign-in" disabled={busy===file.id || !data?.smtp?.ready} onClick={()=>queue(file.id)}>{job?"Retry email":"Send email"}</button>}
+          {job?.status==="sent" && <span className="status-tag connected">Sent {job.sent_at?new Date(job.sent_at).toLocaleString():""}</span>}
+          {job && ["pending","sending","unknown"].includes(job.status) && <span className="status-tag">{job.status}</span>}
+        </div></li>;
+      })}
+    </ul>
   </section>;
 }

@@ -11,7 +11,7 @@ import { recorderDatabase } from "@/lib/recorder-server";
 import { captureColumns, withOptionalColumns } from "@/lib/optional-schema";
 import { usesR2 } from "@/lib/r2-server";
 
-const baseSessionFields = "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,browser_recordings(last_seen_at,last_error,safe_error,upload_state,branding_state,local_available,duration_ms),capture_jobs(last_seen_at)";
+const baseSessionFields = "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,capture_jobs(last_seen_at)";
 const sessionFields = `${baseSessionFields},capture_interruption_code,capture_interrupted_at` as const;
 
 // The dashboard is a live operational view. Do not let the route cache an
@@ -113,16 +113,19 @@ export default async function AdminPage({ searchParams }: {
   const dashboardSessions = visibleSessions.map(session => session.configuration_snapshot?.capture_mode === "browser"
     ? { ...session, browser_recordings: reportBySession.get(session.id) || null }
     : session);
-  const failed = !!selected.error || !!browserReports.error || [
-    courts,
-    cameras,
-    recorders,
-    settings,
-    sessions,
-    events,
-    devices,
-    commands,
-  ].some((result) => result.error);
+  const queryErrors = [
+    ["courts", courts.error],
+    ["cameras", cameras.error],
+    ["recorders", recorders.error],
+    ["settings", settings.error],
+    ["sessions", sessions.error],
+    ["events", events.error],
+    ["devices", devices.error],
+    ["commands", commands.error],
+    ["selectedSession", selected.error],
+    ["browserReports", browserReports.error],
+  ].flatMap(([name, error]) => error ? [`${name}:${(error as any).code || "error"} ${(error as any).message || "unknown"}`] : []);
+  const failed = queryErrors.length > 0;
   return (
     <>
       <header className="site-header shell">
@@ -142,6 +145,7 @@ export default async function AdminPage({ searchParams }: {
               The admin tables could not be loaded. Apply the project
               migrations, then reload this page.
             </p>
+            <p className="form-note" role="status">{queryErrors.join(" | ")}</p>
             <a className="primary" href="/admin">
               Reload dashboard
             </a>
@@ -154,7 +158,7 @@ export default async function AdminPage({ searchParams }: {
           data={
             {
               courts: courts.data,
-              storageProvider: usesR2() ? "r2" : "drive",
+              storageProvider: "r2",
               cameras: cameras.data,
               recorders: recorders.data,
               settings: settings.data,

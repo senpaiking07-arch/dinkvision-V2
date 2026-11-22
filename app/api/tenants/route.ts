@@ -4,7 +4,6 @@ import { recorderDatabase, systemDatabase } from "@/lib/recorder-server";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { InputError, text, uuid } from "@/lib/validation";
 import { TENANT_COOKIE } from "@/lib/tenant-scope";
-import { usesR2 } from "@/lib/r2-server";
 
 async function selectTenant(id: string) {
   (await cookies()).set(TENANT_COOKIE,id,{httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:"/",maxAge:180*86400});
@@ -18,16 +17,15 @@ export async function GET() {
     return json({tenants,current});
   }
   const db=recorderDatabase(account.tenantId);
-  const [locations,members,google,usage,limits] = await Promise.all([
+  const [locations,members,usage,limits] = await Promise.all([
     db.from("locations").select("id,name,active").order("name"),
     db.from("tenant_memberships").select("user_id,role,active,profiles(display_name)").order("created_at"),
-    db.from("tenant_google_settings").select("owner_email,root_folder_id").maybeSingle(),
     db.rpc("tenant_storage_usage"),
     db.from("tenants").select("max_devices,max_courts,storage_limit_bytes").eq("id",account.tenantId).single(),
   ]);
-  if (locations.error || members.error || google.error || usage.error || limits.error) return json({error:"Tenant settings unavailable."},503);
-  return json({storageProvider:usesR2()?"r2":"drive",tenants:account.tenants,current:account.tenantId,locations:locations.data,members:members.data,
-    google:google.data,storageBytes:Number(usage.data || 0),limits:limits.data});
+  if (locations.error || members.error || usage.error || limits.error) return json({error:"Tenant settings unavailable."},503);
+  return json({storageProvider:"r2",tenants:account.tenants,current:account.tenantId,locations:locations.data,members:members.data,
+storageBytes:Number(usage.data || 0),limits:limits.data});
 }
 export async function POST(request:Request) {
   if (!sameOrigin(request)) return json({error:"Invalid origin."},403);
@@ -61,20 +59,6 @@ const db=recorderDatabase(account.tenantId);
       const values={name:text(body.name,"Location",150),active:body.active!==false};
       const result=body.id?await db.from("locations").update(values).eq("id",uuid(body.id)).select("id").single():await db.from("locations").insert(values).select("id").single();
       if (result.error) return json({error:"Location unavailable or that name is already in use."},409);
-    } else if (body.action==="gmail" && usesR2()) {
-      const owner=String(body.owner_email||"").trim().toLowerCase();
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner)||owner.length>254) throw new InputError("Enter a valid Gmail sender address.");
-      const saved=await db.from("tenant_google_settings").upsert({owner_email:owner},{onConflict:"tenant_id"});
-      if(saved.error) throw saved.error;
-    } else if (body.action==="google" && !usesR2()) {
-      const owner=String(body.owner_email||"").trim().toLowerCase(), root=String(body.root_folder_id||"").trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner) || owner.length>254 || !/^[A-Za-z0-9_-]{8,200}$/.test(root)) throw new InputError("Enter the Google owner's email and a valid private Drive folder ID.");
-      const old=await db.from("google_integration").select("owner_email,root_folder_id").maybeSingle();
-      if (old.error) throw old.error;
-      if (old.data && (old.data.owner_email!==owner || old.data.root_folder_id!==root))
-        return json({error:"Changing an established Drive owner or root needs a coordinated recording and retention migration. Existing credentials were kept."},409);
-      const saved=await db.from("tenant_google_settings").upsert({owner_email:owner,root_folder_id:root},{onConflict:"tenant_id"});
-      if (saved.error) return json({error:"Folder is already assigned or settings could not be saved."},409);
     } else if (body.action==="limits" && account.isSuperAdmin) {
       const limit=(value:unknown) => value===null?null:typeof value==="number"&&Number.isSafeInteger(value)&&value>0?value:undefined;
       const values={max_devices:limit(body.max_devices),max_courts:limit(body.max_courts),storage_limit_bytes:limit(body.storage_limit_bytes)};

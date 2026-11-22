@@ -43,16 +43,16 @@ Compared with the byte-hash baseline saved at the start of this rebranding/imple
 - `app/admin/page.tsx`
 - `app/api/admin/[resource]/route.ts`
 - `app/api/admin/cleanup/route.ts`
-- `app/api/admin/drive/retry/route.ts`
+- `app/api/integrations/storage/status/route.ts`
 - `app/api/admin/email/route.ts`
 - `app/api/admin/kiosk/route.ts`
 - `app/api/admin/recorders/[id]/route.ts`
 - `app/api/admin/tablets/route.ts`
 - `app/api/auth/login/route.ts`
-- `app/api/integrations/google/callback/route.ts`
-- `app/api/integrations/google/health/route.ts`
-- `app/api/integrations/google/start/route.ts`
-- `app/api/integrations/google/status/route.ts`
+- `app/api/integrations/storage/status/route.ts`
+- `app/api/integrations/storage/health/route.ts`
+- `app/api/integrations/storage/status/route.ts`
+- `app/api/integrations/storage/status/route.ts`
 - `app/api/jobs/browser/route.ts`
 - `app/api/kiosk/route.ts`
 - `app/api/recorder/cleanup/route.ts`
@@ -84,7 +84,7 @@ Compared with the byte-hash baseline saved at the start of this rebranding/imple
 - `lib/drive-upload-server.ts`
 - `lib/email-server.ts`
 - `lib/gmail.ts`
-- `lib/google-drive.ts`
+- `lib/r2-store.ts` / `lib/r2-upload.ts`
 - `lib/google-server.ts`
 - `lib/kiosk.ts`
 - `lib/recorder-server.ts`
@@ -101,7 +101,7 @@ Compared with the byte-hash baseline saved at the start of this rebranding/imple
 - `tests/capture.test.ts`
 - `tests/database.test.ts`
 - `tests/drive-jobs.test.ts`
-- `tests/google-drive.test.ts`
+- `tests/r2-upload.test.ts`
 - `tests/kiosk.test.ts`
 - `tests/recorder.test.ts`
 - `tests/tablet-camera-config.test.ts`

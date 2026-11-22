@@ -84,7 +84,7 @@ The measures below are suggested acceptance metrics. Targets need a defined devi
 
 **Key metric:** **Supported-environment pass rate** = passing required environment/device combinations / required combinations × 100%. Target 100% for the declared support matrix; emulator results do not count as physical USB-camera validation.
 
-## R2 and Google Drive fit different needs
+## R2 and R2 storage fit different needs
 
 R2 fits an application's private video-byte storage: the application controls object keys, multipart transfer, access URLs and retention through APIs. Drive fits human-managed documents, folders, collaboration and its own preview/sharing experience. R2 does not automatically replace Drive's viewer, sharing UI, video processing or Gmail.
 
