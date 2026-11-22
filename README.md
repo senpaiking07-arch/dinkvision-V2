@@ -28,7 +28,6 @@ npm run typecheck
 npm run build
 npm test
 ```
-
 ## Browser recording update (October 10, 2026)
 
 The current Windows PC test target is Google Chrome. Switching tabs no longer requests a recording stop. Camera flips and rotation use a worker-based frame pipeline with source timestamps; these transforms require supported browser APIs and otherwise report a setup error. Keep the recording tab open and the device awake; closing or reloading it, device sleep, and OS suspension can still interrupt capture. The configured recording time limit still applies.
