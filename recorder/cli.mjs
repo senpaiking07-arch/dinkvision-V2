@@ -20,7 +20,6 @@ import {
 } from "./hardware.mjs";
 import { randomUUID } from "node:crypto";
 import { syncCaptures } from "./capture-manager.mjs";
-import { uploadLoop } from "./drive-upload.mjs";
 import { emailLoop } from "./email-delivery.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 
@@ -251,7 +250,6 @@ async function main() {
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     const pendingPath = join(home, "completion.json");
-    const uploads = uploadLoop(home, config, api, () => stopping);
     const emails = emailLoop(config, api, () => stopping);
     const cleanup = cleanupLoop(home, config, api, () => stopping);
     try {
@@ -317,7 +315,6 @@ async function main() {
       }
     } finally {
       stopping = true;
-      await uploads;
       await emails;
       await cleanup;
       process.off("SIGINT", stop);

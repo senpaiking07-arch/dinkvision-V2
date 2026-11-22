@@ -70,6 +70,6 @@ export default function LocalClips() {
       {!item.sourceSessionId&&<button disabled={busy||item.localAvailable===false||item.validationFailed} onClick={()=>void clip(item)}>Save last minute</button>}{" "}
       {item.status==="failed"&&!item.validationFailed&&<button disabled={busy} onClick={()=>void worker.current?.retry(item.id,device).then(()=>refresh(device)).catch(e=>setError(e.message))}>Retry upload</button>}
     </article>)}
-    <p>Videos under one minute are kept locally without a Drive upload or email. Browser data belongs to this device; clearing it removes local recordings.</p>
+    <p>Videos under one minute are kept locally without a cloud upload or email. Browser data belongs to this device; clearing it removes local recordings.</p>
   </section></main>;
 }

@@ -2,11 +2,7 @@ import { browserTablet, canSetup, publicTablet } from "@/lib/browser-tablets";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { json, readBody, sameOrigin } from "@/lib/http";
 import { uuid, InputError } from "@/lib/validation";
-import {
-  browserUpload,
-  browserUploadQueue,
-  browserUploadStatus,
-} from "@/lib/browser-upload";
+import { browserUploadQueue } from "@/lib/browser-upload";
 import { after } from "next/server";
 import { deviceInfoInput } from "@/lib/device-info";
 import { deliverNextEmail } from "@/lib/email-server";
@@ -77,7 +73,7 @@ export async function browserTabletState(
     return json({
       enabled: true,
       capabilities: {enrollmentRecovery:true,deviceCopyReporting: true,brandingProgressReporting:true,localFileSizeReporting:true,queuePresenceReporting:true,
-        uploadProtocol: usesR2() ? R2_UPLOAD_PROTOCOL : "drive-resumable",
+        uploadProtocol: R2_UPLOAD_PROTOCOL,
         uploadBackoffScheduling:retrySchedule,
         recorderDiagnostics:process.env.RECORDER_DIAGNOSTICS_ENABLED==="true"},
       browser: true,
@@ -323,7 +319,7 @@ export async function POST(request: Request) {
           b.duration_ms < 1 || b.duration_ms > 7_200_000))
         throw new InputError("The recovered video needs a valid duration.");
       // Save the first report before the saved action can make the file eligible
-      // for Drive delivery. Retries cannot replace the original capture cause.
+      // for cloud delivery. Retries cannot replace the original capture cause.
       const interruption = await db.from("recording_sessions")
         .update({
           capture_interruption_code: b.capture_interruption_code,
@@ -360,7 +356,7 @@ export async function POST(request: Request) {
       }
     }
     if (b.action === "queue-presence") {
-      // Presence is not a state transition: never reset confirmed Drive bytes,
+      // Presence is not a state transition: never reset confirmed upload bytes,
       // backoff, retry counts, leases, FIFO position or an administrator action.
       const presence = await db.from("browser_recordings")
         .update({last_seen_at: new Date().toISOString()})
@@ -427,7 +423,8 @@ export async function POST(request: Request) {
       if (updated.error) throw updated.error;
       return json({ ok: true });
     }
-    if (usesR2() && ["upload","retry-upload","restart-upload","upload-status","upload-part","upload-parts","finish"].includes(String(b.action))) {
+    if (["upload","retry-upload","restart-upload","upload-status","upload-part","upload-parts","finish"].includes(String(b.action))) {
+      if (!usesR2()) return json({error:"Private recording storage is not configured."},503);
       if (b.upload_protocol !== R2_UPLOAD_PROTOCOL)
         return json({error:"Update this recorder to the R2-compatible version. Saved videos are retained.",code:"upload_protocol_required"},426);
       if (b.action === "retry-upload") {
@@ -438,8 +435,6 @@ export async function POST(request: Request) {
       if (result.ready) after(async () => { await deliverNextEmail(undefined,undefined,t.kiosk.tenant_id); });
       return json(result);
     }
-    if (b.action === "upload-status")
-      return json(await browserUploadStatus(id, t.device.id));
     if (b.action === "upload-failed") {
       if (["uploaded", "complete", "cancelled"].includes(owned.data.upload_state))
         return json({ ok: true, upload_state: owned.data.upload_state });
@@ -516,41 +511,6 @@ export async function POST(request: Request) {
         upload_updated_at: state.upload_updated_at,
         ...(scheduled ? { upload_retry_at: state.upload_retry_at ?? null } : {}),
       });
-    }
-    if (
-      ["upload", "finish", "restart-upload", "retry-upload"].includes(
-        String(b.action),
-      )
-    ) {
-      if (b.action === "retry-upload") {
-        const retried = await db.rpc("retry_browser_upload", {
-          p_session: id,
-          p_device: t.device.id,
-        });
-        if (retried.error || !retried.data)
-          return json(
-            { error: "This cancelled upload could not be retried." },
-            409,
-          );
-      }
-      if (b.action === "restart-upload") {
-        await db
-          .from("browser_recordings")
-          .update({ upload_uri_encrypted: null })
-          .eq("session_id", id)
-          .or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`);
-      }
-      const r = await browserUpload(
-        id,
-        t.device.id,
-        b.action === "finish",
-        b.direct_upload === true,
-      );
-      if (r.ready)
-        after(async () => {
-          await deliverNextEmail();
-        });
-      return json(r);
     }
     if (
       !["started", "stopped", "captured", "saved", "failed", "reset"].includes(

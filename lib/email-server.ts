@@ -25,12 +25,13 @@ export async function deliverNextEmail(recorderId?: string, fileId?: string, ten
     if (f.error) throw f.error;
     const file = f.data;
     if (file.status !== "ready" || file.deleted_at || Date.parse(file.expires_at) <= Date.now()) throw new MailError("recording_expired", "failed");
+    if (file.storage_provider !== "r2") throw new MailError("replay_storage_unsupported", "failed");
     const settings = await db.from("venue_settings").select("venue_time_zone").eq("id", true).single();
     if (settings.error) throw settings.error;
     const smtp = smtpConfig();
     const session = file.recording_sessions as unknown as {
       recipient_email: string;
-      configuration_snapshot?: { sharing_mode?: string; recipient_emails?: unknown };
+      configuration_snapshot?: { recipient_emails?: unknown };
       capture_interruption_code?: string | null;
       browser_recordings?: { duration_ms: number | null } | null;
     };
@@ -45,7 +46,7 @@ export async function deliverNextEmail(recorderId?: string, fileId?: string, ten
       "",
       file.expires_at,
       settings.data.venue_time_zone || "Asia/Manila",
-      file.storage_provider === "r2" || session.configuration_snapshot?.sharing_mode === "link",
+      true,
       { code: session.capture_interruption_code, durationMs: session.browser_recordings?.duration_ms },
       replayLink(file.tenant_id, file.id, file.expires_at),
     );

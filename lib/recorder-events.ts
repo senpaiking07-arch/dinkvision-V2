@@ -9,7 +9,7 @@ export const stages = {
   microphone_prepare:"Configuring microphone routing", encoder_prepare:"Preparing encoder and watermark", countdown:"Three-second countdown",
   capture:"Recording on the device", finalize:"Finalizing the video",
   validate:"Checking saved video and logo integrity", saved_report:"Reporting the saved video",
-  branding:"Adding the logo", transfer:"Transferring to Drive", verify:"Verifying Drive upload", queue_wait:"Waiting for the upload turn",
+  branding:"Adding the logo", transfer:"Uploading to cloud storage", verify:"Verifying cloud upload", queue_wait:"Waiting for the upload turn",
   cleanup:"Releasing the uploaded private copy", complete:"Completed",
 } as const;
 export const codes = {

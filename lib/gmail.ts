@@ -53,11 +53,7 @@ export function recordingMessage(sender: string, recipient: string | string[], f
   if (!["https:", "http:"].includes(replay.protocol) || replay.username || replay.password || !/^\/replay(?:\/|$)/.test(replay.pathname))
     throw new MailError("invalid_replay_link", "failed");
   const deadline = new Intl.DateTimeFormat("en-PH", { timeZone: zone, dateStyle: "medium", timeStyle: "short" }).format(new Date(expires));
-  const accessNote = linkAccess
-    ? "Anyone with this link can watch. Share it only with people you want to see your recording."
-    : recipients.length === 1
-      ? `Sign in to Google as ${recipients[0]} to view this private recording.`
-      : "Sign in using one of the recipient Google accounts to view this private recording.";
+  const accessNote = "Anyone with this link can watch. Share it only with people you want to see your recording.";
   const notice = captureInterruptionNotice(interruption?.code, interruption?.durationMs);
   const replayUrl = replay.href;
   const text = `Your game. On replay.\n\nYour DinkVision recording is ready.\n\n${notice ? `${notice}\n\n` : ""}Watch your recording:\n${replayUrl}\n\nWatch or download your video from the replay page.\n${accessNote}\n\nAvailable until ${deadline} (${zone}). Save a copy before this deadline; the replay link expires then.\n\nYour court. Your moment.\nDinkVision\nPowered by WrenLabs`;

@@ -173,7 +173,6 @@ final class Api {
   UploadTransfer.Transport uploadTransport(String session, File file) {
     UUID.fromString(session);
     return new UploadTransfer.Transport() {
-      private String address = "";
       private String attemptId = "";
       private int attemptPartSize = 8 * 1024 * 1024;
 
@@ -183,31 +182,21 @@ final class Api {
         JSONObject result = tablet(action, new JSONObject().put("id", session).put("direct_upload", true)
             .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId));
         if (Set.of("upload", "retry-upload", "restart-upload").contains(action)) {
-          address = "";
           attemptId = "";
           attemptPartSize = 8 * 1024 * 1024;
           if (!result.optBoolean("ready") && !result.optBoolean("queued")) {
             JSONObject multipart = result.optJSONObject("upload");
-            if (multipart != null) {
-              int ps = multipart.optInt("partSize", 8 * 1024 * 1024);
-              boolean validSize = (ps == 8 * 1024 * 1024 || ps == 16 * 1024 * 1024 || ps == 32 * 1024 * 1024);
-              if (!"r2-multipart-v1".equals(multipart.optString("protocol"))
-                  || multipart.optLong("bytes") != file.length()
-                  || !validSize
-                  || !"video/mp4".equals(multipart.optString("mime")))
-                throw new Exception("The upload does not match this saved video.");
-              attemptId = UUID.fromString(multipart.getString("attemptId")).toString();
-              attemptPartSize = ps;
-              return result;
-            }
-            JSONObject grant = result.optJSONObject("directUpload");
-            if (grant == null)
-              throw new Exception("Direct upload is unavailable. Ask Admin to update the hosted app. Your video stays in Saved videos.");
-            if (grant.getLong("bytes") != file.length() || !"video/mp4".equals(grant.optString("mime")))
-              throw new Exception("The upload session does not match this saved video.");
-            String candidate = grant.getString("url");
-            driveAddress(candidate);
-            address = candidate;
+            if (multipart == null)
+              throw new Exception("Private storage upload is unavailable. Your video stays in Saved videos.");
+            int ps = multipart.optInt("partSize", 8 * 1024 * 1024);
+            boolean validSize = ps == 8 * 1024 * 1024 || ps == 16 * 1024 * 1024 || ps == 32 * 1024 * 1024;
+            if (!"r2-multipart-v1".equals(multipart.optString("protocol"))
+                || multipart.optLong("bytes") != file.length()
+                || !validSize
+                || !"video/mp4".equals(multipart.optString("mime")))
+              throw new Exception("The upload does not match this saved video.");
+            attemptId = UUID.fromString(multipart.getString("attemptId")).toString();
+            attemptPartSize = ps;
           }
         }
         return result;
@@ -226,60 +215,55 @@ final class Api {
       }
 
       public java.util.List<UploadTransfer.PartGrant> grants(long offset, int count, int partSize, long totalBytes) throws Exception {
-        if (!attemptId.isEmpty()) {
-          if (partSize != attemptPartSize || offset % partSize != 0)
-            throw new Exception("Invalid confirmed upload offset.");
-          java.util.List<Integer> numbers = new java.util.ArrayList<>();
-          for (int i = 0; i < count; i++) {
-            long off = offset + (long) i * partSize;
-            if (off >= totalBytes) break;
-            numbers.add((int) (off / partSize) + 1);
-          }
-          if (numbers.isEmpty()) return java.util.Collections.emptyList();
-          JSONObject body = new JSONObject().put("id", session)
-              .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId);
-          if (numbers.size() == 1) body.put("part_number", numbers.get(0));
-          else body.put("part_numbers", new org.json.JSONArray(numbers));
-          JSONObject grant = tablet(numbers.size() == 1 ? "upload-part" : "upload-parts", body);
-          if (grant.optBoolean("queued")) throw new UploadTransfer.WaitingForTurn();
-          if (grant.optBoolean("uploaded")) return java.util.Collections.emptyList();
-          java.util.List<UploadTransfer.PartGrant> out = new java.util.ArrayList<>();
-          if (grant.has("parts")) {
-            org.json.JSONArray parts = grant.optJSONArray("parts");
-            if (parts == null) throw new Exception("Upload not accepted. Retry the saved video.");
-            for (int i = 0; i < parts.length(); i++) {
-              JSONObject p = parts.getJSONObject(i);
-              int pn = p.getInt("partNumber");
-              long expectedOff = (long) (pn - 1) * partSize;
-              int expectedLen = (int) Math.min(partSize, totalBytes - expectedOff);
-              out.add(parseGrant(p, expectedOff, expectedLen));
-              if (out.get(out.size() - 1).partNumber == -1) return java.util.Collections.singletonList(out.get(out.size() - 1));
-            }
-          } else {
-            out.add(parseGrant(grant, offset, (int) Math.min(partSize, totalBytes - offset)));
-          }
-          return out;
+        if (attemptId.isEmpty() || partSize != attemptPartSize || offset % partSize != 0)
+          throw new Exception("Invalid confirmed upload offset.");
+        java.util.List<Integer> numbers = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+          long off = offset + (long) i * partSize;
+          if (off >= totalBytes) break;
+          numbers.add((int) (off / partSize) + 1);
         }
-        return UploadTransfer.Transport.super.grants(offset, count, partSize, totalBytes);
+        if (numbers.isEmpty()) return java.util.Collections.emptyList();
+        JSONObject body = new JSONObject().put("id", session)
+            .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId);
+        if (numbers.size() == 1) body.put("part_number", numbers.get(0));
+        else body.put("part_numbers", new org.json.JSONArray(numbers));
+        JSONObject grant = tablet(numbers.size() == 1 ? "upload-part" : "upload-parts", body);
+        if (grant.optBoolean("queued")) throw new UploadTransfer.WaitingForTurn();
+        if (grant.optBoolean("expired"))
+          return java.util.Collections.singletonList(new UploadTransfer.PartGrant(-1, offset, 0, ""));
+        if (grant.optBoolean("uploaded")) return java.util.Collections.emptyList();
+        java.util.List<UploadTransfer.PartGrant> out = new java.util.ArrayList<>();
+        if (grant.has("parts")) {
+          org.json.JSONArray parts = grant.optJSONArray("parts");
+          if (parts == null) throw new Exception("Upload not accepted. Retry the saved video.");
+          if (parts.length() != numbers.size()) throw new Exception("Invalid upload part count.");
+          for (int i = 0; i < parts.length(); i++) {
+            JSONObject p = parts.getJSONObject(i);
+            int pn = p.getInt("partNumber");
+            if (pn != numbers.get(i)) throw new Exception("Invalid upload part number.");
+            long expectedOff = (long) (pn - 1) * partSize;
+            int expectedLen = (int) Math.min(partSize, totalBytes - expectedOff);
+            out.add(parseGrant(p, expectedOff, expectedLen));
+            if (out.get(out.size() - 1).partNumber == -1) return java.util.Collections.singletonList(out.get(out.size() - 1));
+          }
+        } else {
+          out.add(parseGrant(grant, offset, (int) Math.min(partSize, totalBytes - offset)));
+        }
+        return out;
       }
 
       public boolean putPart(UploadTransfer.PartGrant grant) throws Exception {
-        if (!attemptId.isEmpty()) {
-          JSONObject r = uploadR2Part(grant.url, file, grant.offset, grant.length);
-          if (r.optBoolean("expired")) throw new UploadTransfer.ExpiredPartException();
-          return r.optBoolean("accepted");
-        }
-        JSONObject r = uploadDriveChunk(address, file, grant.offset, grant.length);
-        if (r.optBoolean("expired")) throw new UploadTransfer.ExpiredPartException();
-        return r.optBoolean("accepted") || r.optBoolean("complete");
+        JSONObject result = uploadR2Part(grant.url, file, grant.offset, grant.length);
+        if (result.optBoolean("expired")) throw new UploadTransfer.ExpiredPartException();
+        return result.optBoolean("accepted");
       }
 
       public JSONObject chunk(long offset, int length) throws Exception {
-        java.util.List<UploadTransfer.PartGrant> g = grants(offset, 1, attemptId.isEmpty() ? 4 * 1024 * 1024 : attemptPartSize, file.length());
+        java.util.List<UploadTransfer.PartGrant> g = grants(offset, 1, attemptPartSize, file.length());
         if (g.isEmpty()) return new JSONObject().put("accepted", true).put("complete", true);
         UploadTransfer.PartGrant grant = g.get(0);
         if (grant.partNumber == -1) return new JSONObject().put("expired", true);
-        if (attemptId.isEmpty()) return uploadDriveChunk(address, file, grant.offset, grant.length);
         JSONObject r = uploadR2Part(grant.url, file, grant.offset, grant.length);
         if (r.optBoolean("expired")) return r;
         return new JSONObject().put("accepted", r.optBoolean("accepted")).put("url", grant.url).put("partNumber", grant.partNumber).put("offset", grant.offset).put("length", grant.length).put("attemptId", attemptId);
@@ -333,64 +317,5 @@ final class Api {
           status >= 500 ? "http_server" : "http_client", status);
     } catch (IOException interrupted) { throw networkFailure(interrupted); }
     finally { if (c != null) c.disconnect(); }
-  }
-
-  private static URL driveAddress(String address) throws Exception {
-    try {
-      if (address.length() > 4096) throw new IllegalArgumentException();
-      URI uri = new URI(address);
-      if (!"https".equals(uri.getScheme()) || !"www.googleapis.com".equals(uri.getHost())
-          || uri.getRawUserInfo() != null || uri.getPort() != -1 || uri.getRawFragment() != null
-          || uri.getPath() == null || !uri.getPath().matches("/upload/drive/v3/files(?:/[A-Za-z0-9_-]{8,200})?")
-          || uri.getRawQuery() == null || !uri.getRawQuery().matches("(?:.*&)?upload_id=[^&]+(?:&.*)?"))
-        throw new IllegalArgumentException();
-      return uri.toURL();
-    } catch (Exception invalid) {
-      throw new Exception("Invalid Google Drive upload session. Your video stays in Saved videos.");
-    }
-  }
-
-  JSONObject uploadDriveChunk(String address, File file, long offset, int length) throws Exception {
-    if (offset < 0 || length < 1 || length > 4 * 1024 * 1024 || offset + length > file.length())
-      throw new Exception("Invalid upload chunk.");
-    URL destination = driveAddress(address);
-    HttpURLConnection c = null;
-    try {
-      c = connections.open(destination);
-      c.setInstanceFollowRedirects(false);
-      c.setUseCaches(false);
-      c.setConnectTimeout(15000);
-      c.setReadTimeout(60000);
-      c.setRequestMethod("PUT");
-      c.setDoOutput(true);
-      c.setFixedLengthStreamingMode(length);
-      c.setRequestProperty("Content-Type", "video/mp4");
-      c.setRequestProperty(
-          "Content-Range", "bytes " + offset + "-" + (offset + length - 1) + "/" + file.length());
-      try (RandomAccessFile f = new RandomAccessFile(file, "r");
-          OutputStream o = c.getOutputStream()) {
-        f.seek(offset);
-        byte[] b = new byte[65536];
-        int remain = length;
-        while (remain > 0) {
-          if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Upload paused.");
-          int n = f.read(b, 0, Math.min(b.length, remain));
-          if (n < 0) throw new IOException("Video incomplete.");
-          o.write(b, 0, n);
-          remain -= n;
-        }
-      }
-      int status = c.getResponseCode();
-      if (status == 404 || status == 410) return new JSONObject().put("expired", true);
-      if (status == 308 || status == 200 || status == 201)
-        return new JSONObject().put("accepted", true).put("complete", status != 308);
-      throw new RequestFailure("Google Drive upload paused (HTTP " + status + "). Your video stays in Saved videos.",status>=500?"http_server":"http_client",status);
-    } catch (IOException interrupted) {
-      // Network exceptions can contain the bearer URL; never put it into logs,
-      // the saved queue, Admin or player-facing errors.
-      throw networkFailure(interrupted);
-    } finally {
-      if (c != null) c.disconnect();
-    }
   }
 }

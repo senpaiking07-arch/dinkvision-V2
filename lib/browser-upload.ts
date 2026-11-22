@@ -60,15 +60,3 @@ export async function browserUploadQueue(
   if (!row) throw new Error("This recording is not available in the upload queue.");
   return publicQueue(row);
 }
-
-export async function browserUploadStatus(_sessionId: string, _deviceId: string) {
-  throw new Error("Legacy direct upload status is unavailable. Use R2 upload.");
-}
-
-export async function browserUploadChunk(..._args: unknown[]) {
-  throw new Error("Legacy direct upload chunks are unavailable. Use R2 upload.");
-}
-
-export async function browserUpload(..._args: unknown[]) {
-  return { ready: false, queued: false, unsupported: true };
-}

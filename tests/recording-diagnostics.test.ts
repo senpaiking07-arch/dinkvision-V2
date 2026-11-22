@@ -25,7 +25,7 @@ test("the capture cause remains visible after an upload failure or verified deli
  assert.equal(failed.interruption,"Camera disconnected");
  assert.equal(failed.recoveredDuration,"1 minute 24 seconds");
  assert.equal(failed.detail,"Drive connection expired.");
- assert.equal(failed.stage,"Google Drive upload");
+ assert.equal(failed.stage,"Cloud storage upload");
  const ready=recordingDiagnostics({...session,status:"ready",failure_stage:null,browser_recordings:null});
  assert.equal(ready.interruption,failed.interruption);
  assert.equal(ready.recoveredDuration,null);

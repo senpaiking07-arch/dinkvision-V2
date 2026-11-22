@@ -6,8 +6,8 @@ import ts from "typescript";
 import * as protocol from "../lib/r2-protocol";
 
 const source=ts.transpileModule(readFileSync("lib/r2-upload.ts","utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-function fixture() {
- const b:any={session_id:"session",device_id:"device",file_id:"file",bytes:protocol.R2_PART_SIZE+5,mime_type:"video/mp4",upload_state:"uploading",lease_until:null};
+function fixture(bytes = protocol.R2_PART_SIZE + 5) {
+ const b:any={session_id:"session",device_id:"device",file_id:"file",bytes,mime_type:"video/mp4",upload_state:"uploading",lease_until:null};
  let counter=0;
  const state={attempt:null as any,parts:[] as any[],head:null as any,creates:0,signatures:0,completions:0,finishes:0,allowed:true,lostCompletion:false,storageError:false};
  const db={
@@ -67,6 +67,30 @@ test("prepare is idempotent and grants sequential/batched part URLs while preser
  assert.equal(part.length,f.b.bytes);assert.equal(f.state.signatures,1);
  f.state.allowed=false;assert.equal((await f.call("upload-part",{attempt_id:prepared.upload.attemptId,part_number:1,reconcile:true})).queued,true);
  assert.equal(f.state.signatures,1);
+});
+
+test("530 MiB recording receives APK-compatible batch grants and a short final part",async()=>{
+ const f=fixture(556434927);
+ const {upload}=await f.call("upload");
+ const partSize=upload.partSize;
+ const lastPart=Math.ceil(f.b.bytes/partSize);
+ for(const reconcile of [false,true]){
+   const reply=await f.call("upload-parts",{attempt_id:upload.attemptId,part_numbers:[1,2,3,4],reconcile});
+   assert.equal(reply.offset,0);
+   for(const [index,part] of reply.parts.entries()){
+     assert.equal(part.partNumber,index+1);
+     assert.equal(part.offset,index*partSize);
+     assert.equal(part.length,partSize);
+     assert.equal(part.attemptId,upload.attemptId);
+   }
+ }
+ f.state.parts=Array.from({length:lastPart-1},(_,index)=>({PartNumber:index+1,Size:partSize,ETag:`"part-${index+1}"`}));
+ const tail=await f.call("upload-part",{attempt_id:upload.attemptId,part_number:lastPart,reconcile:true});
+ assert.equal(tail.partNumber,lastPart);
+ assert.equal(tail.offset,(lastPart-1)*partSize);
+ assert.equal(tail.length,f.b.bytes-tail.offset);
+ assert.equal(tail.parts[0].offset,tail.offset);
+ assert.equal(tail.parts[0].attemptId,upload.attemptId);
 });
 
 test("finish verifies R2 metadata, recovers a lost completion response and commits only once",async()=>{

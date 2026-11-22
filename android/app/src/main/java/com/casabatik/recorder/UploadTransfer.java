@@ -131,9 +131,8 @@ final class UploadTransfer {
       int partSize = upload == null ? 4 * 1024 * 1024 : upload.optInt("partSize");
       if (upload != null) {
         String protocol = upload.optString("protocol");
-        boolean legacyDrive = "drive-resumable".equals(protocol) || protocol.isEmpty();
         boolean r2 = "r2-multipart-v1".equals(protocol);
-        if ((!legacyDrive && !r2) || upload.optLong("bytes") != bytes)
+        if (!r2 || upload.optLong("bytes") != bytes)
           throw new Exception("Invalid storage upload contract. The local video is retained.");
         if (r2 && (partSize < 8 * 1024 * 1024 || partSize > 32 * 1024 * 1024 || (partSize & (partSize - 1)) != 0))
           throw new Exception("Invalid storage upload contract. The local video is retained.");

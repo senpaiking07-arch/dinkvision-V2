@@ -17,7 +17,7 @@ const CAMERA_OPEN_TIMEOUT_MS = 20_000;
 // not rounded down to two seconds by WebM/MP4 duration metadata.
 export const ENCODER_FINAL_FRAME_MS = 250;
 const MP4_RECORDING_TYPES = [
-  // H.264 video with AAC audio gives Drive and browser playback the broadest
+  // H.264 video with AAC audio gives browser playback the broadest
   // compatibility. The generic MP4 option lets the browser choose its best
   // MP4 codecs when a specific profile is unavailable.
   "video/mp4;codecs=avc1.42E01E,mp4a.40.2",

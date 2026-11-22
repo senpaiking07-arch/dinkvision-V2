@@ -141,7 +141,7 @@ export async function r2Upload(session: string, device: string, tenant: string, 
       const p = canSkipList ? null : await ensureProgress();
       if (!canSkipList && !p) return { expired: true, timings };
       if (p?.uploaded) return { ...grant, uploaded: true, offset: bytes, parts: [], timings };
-      const confirmedOffset = p ? p.offset : dbUploaded;
+      let confirmedOffset = p ? p.offset : dbUploaded;
       const next = p ? p.parts.length + 1 : expectedNext!;
       if (!numbers.every((n) => n >= next && n <= next + 7)) {
         const reconciled = await ensureProgress();
@@ -150,13 +150,19 @@ export async function r2Upload(session: string, device: string, tenant: string, 
         const nextConfirmed = reconciled.parts.length + 1;
         if (!numbers.every((n) => n >= nextConfirmed && n <= nextConfirmed + 7))
           throw new UploadRequestError("Upload progress changed. Check the confirmed offset before sending the next part.");
-        const entries = numbers.map((n) => ({ number: n, length: Math.min(partSize, bytes - (n - 1) * partSize) }));
-        const urls = await mark("sign_parts", () => store.partUrls(attempt!, entries, 600));
-        return { ...grant, offset: reconciled.offset, uploaded: false, parts: urls, partNumber: urls[0].partNumber, length: urls[0].length, url: urls[0].url, timings };
+        confirmedOffset = reconciled.offset;
       }
       const entries = numbers.map((n) => ({ number: n, length: Math.min(partSize, bytes - (n - 1) * partSize) }));
       const urls = await mark("sign_parts", () => store.partUrls(attempt!, entries, 600));
-      return { ...grant, offset: confirmedOffset, uploaded: false, parts: urls, partNumber: urls[0].partNumber, length: urls[0].length, url: urls[0].url, timings };
+      const parts = urls.map(part => ({
+        ...part,
+        offset: (part.partNumber - 1) * partSize,
+        attemptId: grant.attemptId,
+      }));
+      const first = parts[0];
+      // Keep the flat fields for clients that request one part at a time.
+      return { ...grant, offset: numbers.length === 1 ? first.offset : confirmedOffset, uploaded: false,
+        parts, partNumber: first.partNumber, length: first.length, url: first.url, timings };
     }
 
     if (action !== "finish") throw new UploadRequestError("Unknown upload action.");

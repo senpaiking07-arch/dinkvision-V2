@@ -672,7 +672,7 @@ final class Engine {
         UUID.fromString(sid);
         File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
         if (!file.exists() || (file.isFile() && file.length() == remote.optLong("bytes"))) {
-          // The process may have stopped between verified Drive completion and
+          // The process may have stopped between verified cloud upload and
           // the local journal write, including on its last automatic attempt.
           persistVerifiedUpload(local);
         }

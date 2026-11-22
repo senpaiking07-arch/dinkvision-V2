@@ -36,7 +36,7 @@ export function RecorderTimeline({sessionId,deviceId}:{sessionId?:string;deviceI
         <strong>{stageLabel(e.stage)}</strong> · {(e.duration_ms/1000).toFixed(2)} s · {e.result}
         <br/><small>{e.stage === "start_accepted" && `${e.elapsed_ms} ms after Start · `}{new Date(e.occurred_at).toLocaleString()} · {e.operation} · Queue: {e.queue_count} · Attempt retry: {e.retry_count} · APK build {e.version_code}</small>
         {e.bytes>0&&<p>{(e.bytes/1048576).toFixed(1)} MB</p>}
-        {e.acknowledged_bytes != null && <p>{(e.acknowledged_bytes / 1048576).toFixed(1)} MB acknowledged by Drive</p>}
+        {e.acknowledged_bytes != null && <p>{(e.acknowledged_bytes / 1048576).toFixed(1)} MB confirmed in cloud storage</p>}
         {e.transferred_bytes != null && e.transferred_bytes > 0 && e.duration_ms > 0 &&
           <p>{(e.transferred_bytes * 8 / e.duration_ms / 1000).toFixed(2)} Mbps during this transfer stage</p>}
         {e.action_source && <p>Source: {e.action_source === "player" ? "Player screen" : e.action_source === "admin" ? "Admin" : "Android notification"}</p>}
