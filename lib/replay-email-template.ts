@@ -1,11 +1,11 @@
-type ReplayEmailContent = { replayUrl: string; deadline: string; zone: string; accessNote: string; notice?: string | null; logoCid?: string };
+type ReplayEmailContent = { replayUrl: string; deadline: string; zone: string; accessNote: string; notice?: string | null; logoUrl?: string };
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]!));
 
 export function replayEmailHtml(content: ReplayEmailContent) {
   const url = escapeHtml(content.replayUrl);
-  const logo = content.logoCid
-    ? `<img src="cid:${escapeHtml(content.logoCid)}" alt="DinkVision" width="144" style="display:block;width:144px;height:auto;border:0;color:#041d38;font-size:22px;font-weight:bold;">`
+  const logo = content.logoUrl
+    ? `<img src="${escapeHtml(content.logoUrl)}" alt="DinkVision" width="144" style="display:block;width:144px;height:auto;border:0;color:#041d38;font-size:22px;font-weight:bold;">`
     : `<span style="color:#041d38;font-size:22px;font-weight:bold;letter-spacing:-0.5px;">DinkVision</span>`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your DinkVision replay</title>

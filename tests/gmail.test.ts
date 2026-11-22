@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import MailComposer from "nodemailer/lib/mail-composer";
-import { readFileSync } from "node:fs";
 import { recordingMessage } from "../lib/gmail";
 const mimeFor = async (message: ReturnType<typeof recordingMessage>) => (await new MailComposer(message).compile().build()).toString();
 const id="12345678-1234-1234-1234-123456789abc";
@@ -48,19 +47,24 @@ test("recovered replay includes capture notice", () => {
   assert.match(camera.subject as string, /recording interrupted/);
 });
 
-test("R2 email uses current APK branding, an embedded logo and escaped replay links",async()=>{
-  const message=recordingMessage("DinkVision <owner@gmail.com>","player@gmail.com",id,"","2026-11-24T00:00:00Z","Asia/Manila",true,undefined,"https://example.com/replay/token?exp=1&sig=x");
+test("R2 email displays the public logo in the body without creating a MIME attachment",async()=>{
+  const message=recordingMessage("DinkVision <owner@gmail.com>","player@gmail.com",id,"","2026-11-24T00:00:00Z","Asia/Manila",true,undefined,"https://dinkvision-v2.vercel.app/replay/token?exp=1&sig=x");
   assert.match(message.html,/#041d38/);
   assert.match(message.html,/#0bd6c1/);
   assert.match(message.html,/Your game\./);
   assert.match(message.html,/On replay\./);
-  assert.match(message.html,/src="cid:dinkvision-logo"/);
+  assert.match(message.html,/src="https:\/\/dinkvision-v2\.vercel\.app\/dink-vision-logo\.png" alt="DinkVision"/);
   assert.match(message.html,/exp=1&amp;sig=x/);
   assert.doesNotMatch(message.html,/Sign in to Google|drive\.google\.com|#f4f2ea|Georgia/);
-  assert.deepEqual(message.attachments?.[0].content,readFileSync("android/app/src/main/assets/dink-vision-logo.png"));
   const mime=await mimeFor(message);
-  assert.match(mime,/Content-ID: <dinkvision-logo>/);
-  assert.match(mime,/Content-Type: image\/png/);
+  assert.match(mime,/Content-Type: multipart\/alternative/i);
+  assert.doesNotMatch(mime,/^Content-(?:Disposition|ID):|^Content-Type: image\//mi);
   assert.throws(()=>recordingMessage("Owner <owner@gmail.com>\r\nBcc: attacker@gmail.com","player@gmail.com",id,"","2026-11-24","Asia/Manila",true,undefined,"https://example.com/replay"));
   assert.throws(()=>recordingMessage("owner@gmail.com, attacker@gmail.com","player@gmail.com",id,"","2026-11-24","Asia/Manila",true,undefined,"https://example.com/replay"));
+});
+
+test("a local HTTP replay uses the DinkVision wordmark instead of an inaccessible image",()=>{
+  const message=recordingMessage("owner@gmail.com","player@gmail.com",id,"","2026-11-24T00:00:00Z","Asia/Manila",true,undefined,"http://192.168.1.9:3000/replay/token");
+  assert.match(message.html,/>DinkVision<\/span>/);
+  assert.doesNotMatch(message.html,/<img\b/);
 });
