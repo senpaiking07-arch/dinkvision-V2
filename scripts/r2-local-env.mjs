@@ -53,7 +53,7 @@ export async function loadTestEnvironment(command, root = process.cwd()) {
     for (const key of Object.keys(values)) env[key] = "";
   }
   for (const key of Object.keys(env)) {
-    if (/^(NEXT_PUBLIC_|SUPABASE_|R2_|GOOGLE_|DATABASE_|MIGRATION_|ANDROID_|RECORDER_|REPLAY_)/.test(key) ||
+    if (/^(NEXT_PUBLIC_|SUPABASE_|R2_|SMTP_|GOOGLE_|DATABASE_|MIGRATION_|ANDROID_|RECORDER_|REPLAY_)/.test(key) ||
         ["APP_ORIGIN", "CRON_SECRET", "TOKEN_ENCRYPTION_KEY", "VENUE_TIME_ZONE"].includes(key)) env[key] = "";
   }
   return { ...env, ...local, DINKVISION_LOCAL_TEST: "true", RECORDING_STORAGE_PROVIDER: "r2" };

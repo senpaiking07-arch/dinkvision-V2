@@ -52,7 +52,9 @@ test("test commands reject production destinations and cannot inherit omitted se
   for(const changed of [{R2_BUCKET:"production"},{NEXT_PUBLIC_SUPABASE_URL:"https://other.supabase.co"},{APP_ORIGIN:"https://dinkvision.vercel.app"},{MIGRATION_DATABASE_URL:"postgresql://postgres:password@db.other.supabase.co/postgres"}])
     assert.throws(()=>validateTestEnvironment({...config,...changed},"dev"));
   const root=await mkdtemp(join(tmpdir(),"dinkvision-r2-env-"));
+  const previousSmtpPass=process.env.SMTP_PASS;
   try {
+    process.env.SMTP_PASS="inherited-production-secret";
     await mkdir(join(root,".local"));
     await writeFile(join(root,".env"),"GOOGLE_CLIENT_SECRET=production-secret\nUNEXPECTED_APP_SECRET=production-secret\n");
     await writeFile(join(root,".local/r2-test.env"),Object.entries(config).map(([k,v])=>`${k}=${v}`).join("\n"));
@@ -60,5 +62,9 @@ test("test commands reject production destinations and cannot inherit omitted se
     assert.equal(env.GOOGLE_CLIENT_SECRET,"");
     assert.equal(env.UNEXPECTED_APP_SECRET,"");
     assert.equal(env.SUPABASE_SECRET_KEY,"secret-test");
-  } finally {await rm(root,{recursive:true,force:true});}
+    assert.equal(env.SMTP_PASS,"");
+  } finally {
+    if(previousSmtpPass===undefined)delete process.env.SMTP_PASS;else process.env.SMTP_PASS=previousSmtpPass;
+    await rm(root,{recursive:true,force:true});
+  }
 });

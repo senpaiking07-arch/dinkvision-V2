@@ -2,7 +2,7 @@
 
 Target: Supabase `gwermdkkrotvvpoxkqdx`, Cloudflare account `42c7c9ce788292c080caf0ad3e8daded`, private Standard/APAC bucket `dinkvision-videos-dev`.
 
-New browser and Java Android recordings use R2. Existing Drive recordings and links remain intact. Gmail remains the mail provider. Do not run migrations against the original project.
+New browser and Java Android recordings use R2. Existing Drive recordings and links remain intact. Email is delivered through server-configured SMTP. Do not run migrations against the original project.
 
 ## Phases and exit criteria
 
@@ -13,35 +13,35 @@ New browser and Java Android recordings use R2. Existing Drive recordings and li
 5. **Upload API:** versioned `r2-multipart-v1`; sequential 8 MiB parts; server-authorized part URLs; R2-confirmed resume offsets; serialized prepare/finish/restart; idempotent verified completion; cancellation preserves local footage.
 6. **Browser:** direct upload using bounded blobs; retry/resume from server truth; do not discard local video before verified completion.
 7. **Android:** Java streaming uploads, bounded buffers/timeouts, interruption/retry handling, strict signed-URL validation; build a separate debugLocal APK and checksum.
-8. **Playback and Gmail:** authenticated admin/player playback and expiring guest replay links; short-lived private R2 URLs; Gmail-only OAuth independent of Drive; local replay links use the PC LAN origin.
+8. **Playback and SMTP:** authenticated admin/player playback and expiring guest replay links; short-lived private R2 URLs; SMTP credentials independent of Drive; local replay links use the PC LAN origin.
 9. **Admin and jobs:** expose storage/email status independently; reconcile interrupted completion; delete only expired R2 objects; abort abandoned attempts; preserve old Drive links.
 10. **Cleanup and automated verification:** remove Drive assumptions from active browser/APK flows; focused regression, permission and failure tests, typecheck, web build, Android tests/build and final diff review.
-11. **Client acceptance:** start with the Android emulator, then PC browser and Android phone/USB OTG camera; ADB reverse port 3000; record over one minute, interrupt/retry upload, play/download, test denied/expired links. Hardware and actual Gmail delivery require explicit observed results.
+11. **Client acceptance:** start with the Android emulator, then PC browser and Android phone/USB OTG camera; ADB reverse port 3000; record over one minute, interrupt/retry upload, play/download, test denied/expired links. Hardware and actual SMTP inbox delivery require explicit observed results.
 
 ## Local environment
 
-The application is local, while the explicitly selected test Supabase project and R2 bucket are hosted. At the user's request on 22 November, the root `.env` was updated to match the verified `.local/r2-test.env` configuration; the previous file is backed up privately as `.local/env-before-r2-20261122-1795293953393.env`. Gmail credentials remain unset. Prefer `npm run dev:r2`, `npm run jobs:r2`, and `npm run db:migrate:r2` for their explicit destination checks. Build Android with `assembleDebugLocal` when using the local HTTP origin.
+The application is local, while the explicitly selected test Supabase project and R2 bucket are hosted. At the user's request on 22 November, the root `.env` was updated to match the verified `.local/r2-test.env` configuration; the previous file is backed up privately as `.local/env-before-r2-20261122-1795293953393.env`. Email uses the separate SMTP server variables documented below. Prefer `npm run dev:r2`, `npm run jobs:r2`, and `npm run db:migrate:r2` for their explicit destination checks. Build Android with `assembleDebugLocal` when using the local HTTP origin.
 
-MCP authentication is separate from application credentials. The application needs a bucket-scoped R2 S3 Access Key ID/Secret Access Key, the test project's Supabase secret key, and (for direct CLI migrations) its database connection string. Gmail needs its OAuth client configuration and a fresh consent for this test project. Never paste secrets into chat.
+MCP authentication is separate from application credentials. The application needs a bucket-scoped R2 S3 Access Key ID/Secret Access Key, the test project's Supabase secret key, and (for direct CLI migrations) its database connection string. Email needs SMTP host, port, TLS, authentication and sender configuration. Never paste secrets into chat.
 
 ## Implementation status — 22 November 2026
 
-Phases 1–10 have implementation and automated checks. Live Supabase sign-in, admin API reads, multipart storage transfers, replay downloads and retention cleanup pass. Both an emulator recording and an 82-second Galaxy A22/EMEET recording passed capture, branding, upload, server confirmation and local-copy cleanup; their replay downloads decoded fully. The physical recording survived an offline app restart before upload. Browser camera capture, additional hardware scenarios and Gmail delivery remain pending. Synthetic API, emulator and physical-device results are separate evidence.
+Phases 1–10 have implementation and automated checks. Live Supabase sign-in, admin API reads, multipart storage transfers, replay downloads and retention cleanup pass. Emulator, 82-second Galaxy A22/EMEET and 72-second OPPO/EMEET recordings passed capture, branding, upload, server confirmation and local-copy cleanup; their replay downloads decoded fully. The Galaxy recording survived an offline app restart before upload. The OPPO recording recovered after an app restart during upload, reusing eight R2 parts (64 MiB), including a part accepted by storage before the client recorded its progress. Browser camera capture, additional hardware scenarios and SMTP inbox delivery remain pending. Synthetic API, emulator and physical-device results are separate evidence.
 
 | Area | Implemented and verified | Remaining acceptance |
 | --- | --- | --- |
 | Services | Runtime Supabase and R2 credentials verified again on 21 November. R2 is private, APAC, Standard. Local CORS is configured. | Complete client/hardware acceptance remains; MCP availability is separate from runtime access |
 | Database | 64 historical migrations plus 3 R2 migrations applied to the test project; 67 ledger entries. RLS and server-only completion/cleanup RPCs checked. | Admin sign-in verified; separate player-account acceptance pending |
-| Upload | Browser and Java APK support direct 8 MiB multipart transfers, server-confirmed resume, leased retries, idempotent completion, inspection/cancellation guards. Emulator and physical APK transfers passed, including recovery after an offline stop and app restart. | Browser capture and interruption during an individual part transfer |
+| Upload | Browser and Java APK support direct 8 MiB multipart transfers, server-confirmed resume, leased retries, idempotent completion, inspection/cancellation guards. Emulator and physical APK transfers passed, including an OPPO restart during upload and recovery from R2-confirmed parts on the same attempt. | Browser capture and controlled Wi-Fi loss during an individual part transfer |
 | Playback | Tenant-authorized playback and signed guest links; active tenant, ready file and expiry checked; private GET URLs expire within 5 minutes. Emulator replay decoded fully; extracted frame shows DinkVision watermark. | Interactive playback and seeking on browsers/physical phone |
-| Email | Gmail-only OAuth, encrypted per-tenant refresh token, existing send deduplication and ambiguous-send handling. | Connect test sender and explicitly test delivery |
+| Email | Server-configured SMTP, validated display-name sender, private team recipients, embedded current logo and APK-themed HTML/plain text. Local SMTP receiver and worker tests pass; partial acceptance requires review. | Deploy the fixes and explicitly verify a message in the intended inbox |
 | Admin/jobs | Tenant-scoped status, independent storage/mail health, interrupted-completion recovery, abandoned-upload abort, atomic expiry confirmation. | Live expiry cleanup passed; additional interruption/concurrency scenarios remain |
-| Android | Local APK built, lint passed; emulator enrolled and captured an 80-second recording; 18 targeted instrumentation tests passed. Galaxy A22 / Android 13 and EMEET C60E completed an 82-second upload/recovery test; picture/audio confirmed by the user. OPPO CPH2849 / Android 17 enrolled separately. | OPPO acceptance in progress; built-in-camera start-time mismatch and intermittent emulator timing remain unresolved |
+| Android | Local APK built, lint passed; emulator enrolled and captured an 80-second recording; 18 targeted instrumentation tests passed. Galaxy A22 / Android 13 and OPPO CPH2849 / Android 17 completed EMEET capture/upload/recovery tests; picture/audio confirmed by the user on both phones. | Built-in-camera start-time mismatch and intermittent emulator timing remain unresolved; interactive phone replay/seek remains pending |
 | Code | TypeScript check and Next.js production build passed. Full regression suite: 225 passed; 5 additional R2 boundary tests passed. | Live integration acceptance below |
 
 The test project now has the owner-authorized admin account and a synthetic integration-test recording whose R2 object was removed by retention cleanup. Its test court/device/kiosk are disabled; diagnostic history remains. No test message was sent. Historical Drive recordings were not migrated or deleted.
 
-Next.js was updated from 16.3.6 to 16.4.6 after the dependency audit identified critical advisories. The post-update audit reported zero vulnerabilities. Changes are on `codex/r2-local-integration`; `origin` points to `senpaiking07-arch/dinkvision-V2`. No GitHub push or deployment has been performed.
+Next.js was updated from 16.3.6 to 16.4.6 after the dependency audit identified critical advisories. The post-update audit reported zero vulnerabilities. Changes are on `codex/r2-local-integration`; `origin` points to `senpaiking07-arch/dinkvision-V2`. No Vercel deployment has been performed.
 
 ## Data flow and failure handling
 
@@ -54,7 +54,7 @@ flowchart LR
   A -->|list parts and verify final object| R
   A -->|atomic ready state and email job| S
   J[Local jobs process] --> A
-  A -->|authorized replay message| G[Gmail]
+  A -->|authorized replay message| G[SMTP mail server]
   P[Player replay link] --> A
   A -->|short-lived private GET| R
 ```
@@ -76,7 +76,7 @@ Edit `.local/r2-test.env` in the checkout. It is ignored by Git. Do not put secr
 | `SUPABASE_SECRET_KEY` | The **test** project's [API keys settings](https://supabase.com/dashboard/project/gwermdkkrotvvpoxkqdx/settings/api-keys): server secret key, not the publishable key |
 | `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` | Cloudflare R2 → Manage R2 API Tokens → create an **Object Read & Write** token restricted to `dinkvision-videos-dev`; use its S3 access-key pair |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | SMTP server/app password for recording email delivery |
-| `SMTP_FROM` | Sender address shown in replay emails |
+| `SMTP_FROM` | Sender address shown in replay emails; accepts `DinkVision <your-mailbox>` or a plain mailbox |
 | `MIGRATION_DATABASE_URL` | Optional for subsequent local migration commands; test-project Postgres connection string. Already-applied MCP migrations do not require it to start the app. |
 
 The project URL, publishable key, account ID, bucket, local origins, and random encryption/replay/cron secrets have already been written locally. Preserve the generated keys: changing encryption keys invalidates stored Google credentials; changing the replay key invalidates existing links.
@@ -94,7 +94,7 @@ Local commands deliberately reject another Supabase project, another bucket, pub
 
 ## Run the app, admin and worker
 
-Before starting, run `npm run check:r2`. This read-only check reports all missing runtime keys, validates the isolated destinations, and checks Supabase server reads and R2 bucket access when credentials are present. It never prints key values or writes remote data. A passing preflight does not prove uploads, Gmail delivery or hardware capture work.
+Before starting, run `npm run check:r2`. This read-only check reports all missing runtime keys, validates the isolated destinations, and checks Supabase server reads and R2 bucket access when credentials are present. It never prints key values or writes remote data. A passing preflight does not prove uploads, SMTP inbox delivery or hardware capture work.
 
 From this checkout in PowerShell:
 
@@ -118,7 +118,7 @@ npm run account:create:r2 -- your-test-email@example.com admin "Test Admin" 0000
 
 The command creates a verified test account and tenant membership without sending email. It saves the random password under `.local/account-<user-id>.json`, never prints it, and never resets an existing account's password. Use role `player` for a separate player test account.
 
-In Admin, configure the court/device, enroll the recorder and confirm camera setup. Configure the Gmail sender and connect Gmail when testing mail. Use only recipient addresses you control for acceptance recordings; confirmed recordings can queue automatic replay mail once Gmail is connected.
+In Admin, configure the court/device, enroll the recorder and confirm camera setup. Configure SMTP when testing mail. Use only recipient addresses you control for acceptance recordings; confirmed recordings can queue automatic replay mail once SMTP is configured.
 
 ## Local APK and physical device setup
 
@@ -159,7 +159,7 @@ Run each case with both browser and APK where applicable; record observed result
 5. Interrupt Wi-Fi during a multipart upload; restore it and confirm resumption from storage-confirmed bytes. Restart the app during retry and verify the local backup survives.
 6. Cancel, retry, and duplicate completion requests. Confirm a single authoritative file/email job; test capture interruption that requires inspection.
 7. Play, seek and download from admin/player and the guest link. Test expired, tampered, removed-file and disabled-tenant links. Validate playback after several minutes, when an earlier R2 URL has expired.
-8. Connect Gmail and explicitly send a replay to your own test inbox. Confirm one message with the LAN replay link. Review ambiguous delivery manually rather than resending automatically.
+8. Configure SMTP and explicitly send a replay to your own test inbox. Confirm one message with the LAN replay link. Review ambiguous delivery manually rather than resending automatically.
 9. Set a short retention interval for a new test recording. Observe denied playback at expiry, later remote deletion, and matching file/session/audit state. Interrupt cleanup and verify safe recovery.
 10. Test legacy Drive playback separately before any future deployment using historical data. Test storage quotas, concurrent devices, low disk space and long recordings before expanding beyond local evaluation.
 
@@ -179,8 +179,19 @@ Run each case with both browser and APK where applicable; record observed result
 - `.local/r2-phone-final-build.log`: clean debugLocal APK and lint passed; temporary timestamp diagnostics were removed. The built-in-camera-only probe was skipped because a USB camera was connected, so it does not establish built-in capture correctness.
 - `.local/r2-phone-offline-ui.json` and `.local/r2-phone-offline-restart-ui.json`: Galaxy A22 retained a branded 71,936,786-byte recording with retry status while ADB reverse for backend port 3000 was removed, including after force-stopping and reopening only the local-test app. Restoring that mapping resumed upload; nine multipart parts completed. This tests backend unavailability before transfer, not a Wi-Fi interruption during a part PUT.
 - `.local/r2-phone-replay-result.json`: the physical replay downloaded through the guest endpoint and all video/audio frames decoded; fresh admin sign-in and the admin device API confirmed ready/uploaded state. Supabase reported R2 storage and `local_available=false`; the APK's Saved videos list was empty only after completion. The first download check timed out at 30 seconds; the retry with a longer bounded test-download timeout passed. Gmail failed safely as unconfigured; no test email was sent.
+- OPPO camera-check recovery: Auto mode previously selected a faster sample with only 2.670 seconds of audio over a valid fallback with 3.179 seconds, then failed the final three-second requirement. `Engine.java` now excludes incomplete samples from candidate selection and the early-exit condition. The rebuilt APK and lint passed (`.local/r2-oppo-build.log`); the physical camera check reached review and the user confirmed clear picture/audio. Its 1920×1080 profile measured approximately 22.4 fps despite requesting 60 fps; this does not validate 60 fps capture.
+- `.local/r2-oppo-offline-restart-ui.json`, `.local/r2-oppo-stored-parts.json` and `.local/r2-oppo-resumed-ui.json`: force-stopping and reopening the local-test APK with its backend mapping removed preserved the 140,577,932-byte recording. Removing the mapping alone did not interrupt an existing connection. After the restart, the client remembered seven parts, while R2 held eight; retry recovered all eight parts (67,108,864 bytes) on the same upload attempt.
+- `.local/r2-oppo-replay-result.json`: the completed 72-second recording downloaded through the guest replay endpoint and all audio/video frames decoded. Fresh admin sign-in confirmed ready/uploaded state, Supabase confirmed the same completed attempt and `local_available=false`, and the extracted replay frame showed the DinkVision watermark. This verifies download/decode, not interactive playback/seek. Gmail remains unconfigured and no email was sent.
 - Local directory maintenance removed stale test folders, old APKs/screenshots and SHA-256-identical video downloads, freeing 667 MB. Older scripts, evidence and unique recordings are preserved in `.local/archive/legacy-debug/`; credentials and `.local/device-backups/` remain intact. `recorder/cleanup.test.mjs` now removes its temporary directory after every test; the focused test passed with no leftover cleanup-test folders.
-- Remaining: browser capture/branding and UI playback, physical APK/camera acceptance, Gmail OAuth and delivery, plus broader interruption/concurrency testing. Runtime Supabase and R2 credentials are verified. Short emulator camera checks sometimes fail the existing timing validation; do not treat a successful retry as proof that this is resolved.
+- Remaining: browser capture/branding and interactive playback/seek, additional physical camera scenarios, SMTP inbox delivery, plus broader interruption/concurrency testing. Runtime Supabase and R2 credentials are verified. Short emulator camera checks sometimes fail the existing timing validation; do not treat a successful retry as proof that this is resolved.
+
+## SMTP sender and email theme verification — 22 November 2026
+
+The old sender path handed a Gmail base64url payload to SMTP and omitted envelope recipients. A healthy SMTP connection did not detect this. The worker now supplies structured message fields, explicit envelope recipients and a validated display-name sender. Nodemailer creates MIME and removes Bcc headers; four-player recipients remain private. Partial SMTP acceptance is recorded as `unknown` for manual review, preventing automatic duplicate delivery to players who already received it.
+
+Replay emails use the APK's navy (`#041d38`), teal (`#0bd6c1`) and lime accents, bold italic headings, the existing logo embedded by Content-ID, an expiry panel and a text alternative. The old camera-test thumbnail is not reused. Standard email fonts provide a fallback for the APK's bundled font. Desktop and 375 px mobile previews were inspected, with no mobile horizontal overflow; Gmail/Outlook rendering and real inbox delivery still need a live acceptance test.
+
+Local SMTP receiver, worker and message tests cover single/four-recipient delivery, display-name senders, private team headers, partial acceptance, expired files, lost leases and interruption notices. The Next.js build passes and its output traces include the embedded logo in every mail-sending route. Preview files are in `artifacts/testing/email/` (ignored by Git). No message was sent externally and these changes have not been deployed to Vercel. SMTP verification checks connectivity/authentication; it does not prove delivery to an inbox.
 
 ## Before any future deployment
 
@@ -190,4 +201,4 @@ The [application quality guide](application-quality-guide.md) defines the eight 
 
 ## Current local session
 
-The app and `jobs:r2` were restarted on 21 November at `http://127.0.0.1:3000`. Logs are `.local/r2-dev.log` and `.local/r2-jobs.log`; development request logs may contain replay bearer links, so keep them private. The test admin is `senpaiking07@gmail.com`; its generated password is saved only in `.local/account-5d9fb324-59a9-4b99-8f40-58f1855d0bb0.json`. No password is printed in chat. Emulator `DinkVision_Upgrade50` uses package `com.casabatik.recorder.dev`; restore `adb -s emulator-5554 reverse tcp:3000 tcp:3000` whenever the emulator or ADB daemon restarts.
+The app was restarted on 22 November at `http://127.0.0.1:3000` to finish OPPO replay verification; run `jobs:r2` when testing jobs or retention. Logs are `.local/r2-dev.log` and `.local/r2-jobs.log`; development request logs may contain replay bearer links, so keep them private. The test admin is `senpaiking07@gmail.com`; its generated password is saved only in `.local/account-5d9fb324-59a9-4b99-8f40-58f1855d0bb0.json`. No password is printed in chat. The OPPO uses package `com.casabatik.recorder.dev`; obtain its current serial with `adb devices -l` and restore its port-3000 reverse mapping after an ADB restart. Wireless debugging ports may change. Supabase MCP is enabled with OAuth in the local Codex configuration, but its tools were unavailable in this chat when checked; the live checks used application credentials.

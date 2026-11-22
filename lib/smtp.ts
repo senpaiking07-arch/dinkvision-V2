@@ -1,5 +1,6 @@
 ﻿import "server-only";
 import nodemailer from "nodemailer";
+import { MailError, recordingSender, type RecordingEmail } from "./gmail";
 
 type SmtpConfig = {
   host: string;
@@ -27,6 +28,7 @@ export function smtpConfig(): SmtpConfig {
   const from = process.env.SMTP_FROM?.trim() || user;
   if (!Number.isFinite(port) || port <= 0) throw new Error("Invalid SMTP_PORT");
   if (!from) throw new Error("Missing SMTP_FROM");
+  recordingSender(from);
   if ((user && !pass) || (!user && pass)) throw new Error("SMTP_USER and SMTP_PASS must be set together");
   return { host, port, secure, user, pass, from };
 }
@@ -42,6 +44,9 @@ export function smtpTransport() {
         port: config.port,
         secure: config.secure,
         auth: config.user ? { user: config.user, pass: config.pass } : undefined,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 20000,
       }),
     };
   }
@@ -63,9 +68,10 @@ export async function smtpHealth() {
   }
 }
 
-export async function sendSmtpMail(raw: Buffer | string) {
-  const { config, transport } = smtpTransport();
-  const envelope = raw instanceof Buffer ? raw : Buffer.from(raw);
-  const info = await transport.sendMail({ envelope: { from: config.from }, raw: envelope });
+export async function sendSmtpMail(message: RecordingEmail) {
+  const { transport } = smtpTransport();
+  const info = await transport.sendMail(message);
+  if (info.rejected?.length || info.accepted?.length !== message.envelope.to.length)
+    throw new MailError("partial_email_delivery", "unknown");
   return info.messageId || "";
 }

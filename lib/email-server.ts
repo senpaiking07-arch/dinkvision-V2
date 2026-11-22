@@ -38,7 +38,7 @@ export async function deliverNextEmail(recorderId?: string, fileId?: string, ten
     const recipients = Array.isArray(configured) && configured.every(value => typeof value === "string")
       ? configured as string[]
       : session.recipient_email;
-    const raw = recordingMessage(
+    const message = recordingMessage(
       smtp.from,
       recipients,
       file.id,
@@ -53,7 +53,7 @@ export async function deliverNextEmail(recorderId?: string, fileId?: string, ten
     if (lease.error || !lease.data) return;
     if (Date.parse(file.expires_at) <= Date.now()) throw new MailError("recording_expired", "failed");
     sending = true;
-    const id = await sendSmtpMail(raw);
+    const id = await sendSmtpMail(message);
     const saved = await db.from("email_jobs").update({ status: "sent", gmail_message_id: id, sent_at: new Date().toISOString(), lease_until: null, safe_error: null }).eq("file_id", job.file_id).eq("lease_token", job.lease_token).eq("status", "sending");
     if (saved.error) throw saved.error;
     await db.from("audit_events").insert({ session_id: file.session_id, action: "email.sent" });
