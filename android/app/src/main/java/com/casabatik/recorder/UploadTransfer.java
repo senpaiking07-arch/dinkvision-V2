@@ -1,6 +1,7 @@
 package com.casabatik.recorder;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -163,12 +164,9 @@ final class UploadTransfer {
         prepared = waitForTurn(transport.action("restart-upload"), transport, queueProgress, yieldWhenQueued);
         previous = -1; continue;
       }
-      boolean expired = uploadParts(transport, grants, parallelism);
-      if (expired) {
-        if (++restarts > 2) throw new Exception("Upload expired. Retry the saved video.");
-        prepared = waitForTurn(transport.action("restart-upload"), transport, queueProgress, yieldWhenQueued);
-        previous = -1;
-      }
+      // A rejected part URL does not establish that the multipart upload is gone.
+      // The next status check reconciles accepted parts and the stall limit bounds renewals.
+      uploadParts(transport, grants, parallelism);
     }
     progress.verifying(bytes);
     if (!transport.action("finish").optBoolean("ready"))
@@ -176,39 +174,48 @@ final class UploadTransfer {
     progress.update(100);
   }
 
-  private static boolean uploadParts(Transport transport, List<PartGrant> grants, int parallelism) throws Exception {
-    if (grants.size() == 1) return putWithRetry(transport, grants.get(0));
+  private static void uploadParts(Transport transport, List<PartGrant> grants, int parallelism) throws Exception {
+    if (grants.size() == 1) {
+      putWithRetry(transport, grants.get(0));
+      return;
+    }
     ExecutorService exec = Executors.newFixedThreadPool(Math.min(parallelism, grants.size()));
+    boolean interrupted = false;
     try {
-      List<Future<Boolean>> futures = new ArrayList<>();
-      for (PartGrant grant : grants) futures.add(exec.submit((Callable<Boolean>) () -> putWithRetry(transport, grant)));
-      boolean expired = false;
+      List<Future<Void>> futures = new ArrayList<>();
+      for (PartGrant grant : grants) futures.add(exec.submit((Callable<Void>) () -> { putWithRetry(transport, grant); return null; }));
       Exception first = null;
-      for (Future<Boolean> f : futures) {
-        try { expired |= f.get(); }
+      for (Future<Void> f : futures) {
+        try { f.get(); }
+        catch (InterruptedException pause) {
+          interrupted = true;
+          InterruptedIOException cancelled = new InterruptedIOException("Waiting for upload parts was interrupted.");
+          cancelled.initCause(pause);
+          throw cancelled;
+        }
         catch (Exception e) {
           Throwable c = e.getCause() != null ? e.getCause() : e;
-          if (c instanceof ExpiredPartException) expired = true;
-          else if (first == null) first = c instanceof Exception ? (Exception) c : new Exception(c.getMessage(), c);
+          if (first == null) first = c instanceof Exception ? (Exception) c : new Exception(c.getMessage(), c);
         }
       }
       if (first != null) throw first;
-      return expired;
     } finally {
       exec.shutdownNow();
-      try { exec.awaitTermination(5, TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+      try { exec.awaitTermination(5, TimeUnit.SECONDS); }
+      catch (InterruptedException pause) { interrupted = true; }
+      finally { if (interrupted) Thread.currentThread().interrupt(); }
     }
   }
 
-  private static boolean putWithRetry(Transport transport, PartGrant grant) throws Exception {
+  private static void putWithRetry(Transport transport, PartGrant grant) throws Exception {
     int attempts = 0;
     long backoff = 1000;
     while (true) {
       try {
         transport.putPart(grant);
-        return false;
+        return;
       } catch (ExpiredPartException e) {
-        return true;
+        return;
       } catch (Exception e) {
         attempts++;
         if (Thread.currentThread().isInterrupted()) throw e;

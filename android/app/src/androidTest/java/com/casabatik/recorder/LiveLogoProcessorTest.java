@@ -72,6 +72,11 @@ public class LiveLogoProcessorTest {
         var canvas=processor.input().lockHardwareCanvas(); canvas.drawColor(Color.GREEN);
         processor.input().unlockCanvasAndPost(canvas); Thread.sleep(17);
       }
+      assertTrue(processor.firstEncodedFrame.await(5, TimeUnit.SECONDS));
+      long now = System.nanoTime();
+      processor.checkFrameProgress(now);
+      assertThrows(CameraCapture.Interruption.class,
+          () -> processor.checkFrameProgress(now + TimeUnit.SECONDS.toNanos(7)));
       Thread.sleep(100); processor.stop(); encoder.signalEndOfInputStream(); result.get(25,TimeUnit.SECONDS);
       processor.completed(file); assertTrue(LiveLogoEvidence.verified(file));
       MediaMetadataRetriever retriever=new MediaMetadataRetriever();

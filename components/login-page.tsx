@@ -2,7 +2,8 @@ import LoginForm from "./login-form";
 import { isConfigured } from "@/lib/supabase-server";
 import { getAccount } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import { WebsiteHeader } from "@/components/website-frame";
+import AdminHeader from "./admin-header";
+import AdminPagePanel from "./admin-page-panel";
 
 export default async function LoginPage({
   admin = false,
@@ -15,16 +16,9 @@ export default async function LoginPage({
   if (account && (!admin || account.role === "admin"))
     redirect(account.role === "admin" ? next || "/admin" : "/");
   return <>
-    <WebsiteHeader />
-    <main className="shell website-main">
-      <div className="website-sign-in">
-        <section className="website-panel">
-        <h1>{admin ? "Venue sign-in" : "Player sign-in"}</h1>
-        <p>
-          {admin
-            ? "Manage your courts, cameras, and club settings."
-            : "Sign in to access your venue’s courts."}
-        </p>
+    <AdminHeader />
+    <AdminPagePanel title={admin ? "Venue sign-in" : "Player sign-in"}
+      description={admin ? "Use your venue account to manage courts, recorders, and replays." : "Sign in to access your venue’s courts."}>
         {problem && (
           <p className="form-error" role="alert">
             {problem}
@@ -32,9 +26,6 @@ export default async function LoginPage({
         )}
         <LoginForm admin={admin} next={next} configured={isConfigured()} />
         {!admin && <a className="auth-switch" href="/admin/login">Venue administrator sign-in</a>}
-        </section>
-        <div className="site-court-art website-sign-in-art" aria-hidden="true" />
-      </div>
-    </main>
+    </AdminPagePanel>
   </>;
 }

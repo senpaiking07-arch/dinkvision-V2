@@ -36,6 +36,29 @@ final class LocalVideoExporter {
     } catch (Exception unavailable) { return false; }
   }
 
+  static boolean matchesOriginal(ContentResolver resolver, String value, File source) {
+    long size = source.length();
+    if (!verifiedCopy(resolver, value, size)) return false;
+    try (var original = new java.io.DataInputStream(new FileInputStream(source));
+         var exported = resolver.openInputStream(Uri.parse(value))) {
+      if (exported == null) return false;
+      var copy = new java.io.DataInputStream(exported);
+      byte[] originalBytes = new byte[64 * 1024];
+      byte[] copyBytes = new byte[originalBytes.length];
+      for (long remaining = size; remaining > 0;) {
+        if (Thread.currentThread().isInterrupted()) return false;
+        int count = (int) Math.min(remaining, originalBytes.length);
+        original.readFully(originalBytes, 0, count);
+        copy.readFully(copyBytes, 0, count);
+        if (!java.util.Arrays.equals(originalBytes, copyBytes)) return false;
+        remaining -= count;
+      }
+      return original.read() == -1 && copy.read() == -1;
+    } catch (Exception unavailable) {
+      return false;
+    }
+  }
+
   static Uri save(Context context, File source, String name, Uri chosen,
       IntConsumer progress, Consumer<Uri> created) throws Exception {
     return save(context,source,name,chosen,progress,created,ignored->{});

@@ -5,7 +5,9 @@ import android.content.*;
 import android.content.pm.ServiceInfo;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.*;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.*;
 import org.json.*;
 import org.junit.Test;
 
@@ -111,6 +113,9 @@ public class BackgroundTransferRecoveryTest {
         if (++chunks[0] == 1) control.pause();
         return new JSONObject().put("accepted", true);
       }
+      public List<UploadTransfer.PartGrant> grants(long offset, int count, int size, long total) {
+        return List.of(new UploadTransfer.PartGrant((int) (offset / size) + 1, offset, size, ""));
+      }
     };
     try (var first = control.begin()) {
       try { UploadTransfer.send(8 * 1024 * 1024, first.guard(transport), percent -> {}); fail(); }
@@ -122,6 +127,46 @@ public class BackgroundTransferRecoveryTest {
       UploadTransfer.send(8 * 1024 * 1024, retry.guard(transport), percent -> {});
     }
     assertEquals(2, chunks[0]);
+  }
+
+  @Test public void pauseCancelsWaitingMultipartWorkerWithoutFinishing() throws Exception {
+    BackgroundTransfers control = new BackgroundTransfers(isolatedContext());
+    CountDownLatch partsStarted = new CountDownLatch(2);
+    CountDownLatch releaseParts = new CountDownLatch(1);
+    ExecutorService worker = Executors.newSingleThreadExecutor();
+    int partSize = 8 * 1024 * 1024;
+    UploadTransfer.Transport transport = new UploadTransfer.Transport() {
+      public JSONObject action(String action) throws Exception {
+        if ("upload".equals(action)) return new JSONObject().put("upload", new JSONObject()
+            .put("protocol", "r2-multipart-v1").put("partSize", partSize).put("bytes", 2L * partSize));
+        if ("upload-status".equals(action)) return new JSONObject().put("offset", 0);
+        throw new AssertionError("Cancellation must not finalize the upload: " + action);
+      }
+      public List<UploadTransfer.PartGrant> grants(long offset, int count, int size, long total) {
+        return List.of(new UploadTransfer.PartGrant(1, 0, partSize, ""),
+            new UploadTransfer.PartGrant(2, partSize, partSize, ""));
+      }
+      public JSONObject chunk(long offset, int length) throws Exception {
+        partsStarted.countDown();
+        if (!releaseParts.await(10, TimeUnit.SECONDS)) throw new AssertionError("Part worker was not released");
+        return new JSONObject().put("accepted", true);
+      }
+    };
+    try {
+      Future<?> result = worker.submit(() -> {
+        try (var ticket = control.begin()) {
+          assertThrows(InterruptedIOException.class,
+              () -> UploadTransfer.send(2L * partSize, ticket.guard(transport), percent -> {}));
+        }
+        return null;
+      });
+      assertTrue(partsStarted.await(5, TimeUnit.SECONDS));
+      control.pause();
+      result.get(8, TimeUnit.SECONDS);
+    } finally {
+      releaseParts.countDown();
+      worker.shutdownNow();
+    }
   }
 
   @Test public void serviceTimeoutReleasesTransfersAndPreservesCameraProtection() throws Exception {

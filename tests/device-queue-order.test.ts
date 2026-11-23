@@ -7,6 +7,12 @@ test("Drive-acknowledged bytes distinguish transfer from verification and comple
   assert.equal(recordingStageLabel({ ...row, upload_state: "uploaded" }, 0), "Uploaded");
   assert.equal(recordingStageLabel({ upload_state: "failed",
     recording_sessions: { capture_inspection_required: true } }, 0), "Interrupted video · inspection required");
+  assert.equal(recordingStageLabel({ upload_state: "saved_locally", branding_state: null,
+    recording_sessions: { status: "finalizing" } }, 0), "Finalizing recording");
+  assert.equal(recordingStageLabel({ upload_state: "queued", branding_state: null,
+    recording_sessions: { status: "finalizing" } }, 0), "Waiting to add logo");
+  assert.equal(recordingStageLabel({ upload_state: "uploading", bytes: 100, uploaded_bytes: 50,
+    recording_sessions: { status: "finalizing" } }, 0), "Uploading 50%");
 });
 test("deferred work appears after eligible FIFO work and changes label when its delay elapses", () => {
   const now = Date.parse("2026-11-12T02:00:00Z");

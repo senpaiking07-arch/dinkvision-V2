@@ -62,8 +62,16 @@ test("Admin renders its dashboard and focused recording when interruption column
 
 test("Admin still reports other database failures", async () => {
   const {html,selections} = await dashboard({code:"42501",message:"permission denied"});
-  assert.match(html,/Database setup needs attention/);
+  assert.match(html,/Admin data could not load/);
+  assert.match(html,/Recording logs/);
+  assert.doesNotMatch(html,/permission denied/);
   assert.ok(selections.every(fields=>fields.includes("capture_interruption_code")));
+});
+
+test("Admin calls out a database update only for a missing schema", async () => {
+  const {html} = await dashboard({code:"PGRST205",message:"Private database schema details"});
+  assert.match(html,/Database setup needs attention/);
+  assert.doesNotMatch(html,/Private database schema details/);
 });
 
 async function readQueue(route: "admin/tablets" | "tablet", missing: string[], summary = false) {

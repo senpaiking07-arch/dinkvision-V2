@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; media-src 'self'; font-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-src 'none'; form-action 'none'">
     <meta name="theme-color" content="#041d38">
-    <title>Dink Vision recorder</title>
+    <title>DinkVision recorder</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="kiosk-theme.css">
   </head>
@@ -13,7 +13,7 @@
     <svg class="brand-filter" aria-hidden="true" width="0" height="0"><defs><filter id="brand-on-navy" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="1.508 -3.153 1.645 0 1  .241 -.504 .263 0 1  .362 -.757 .395 0 1  0 0 0 1 0"/></filter></defs></svg>
     <div class="backdrop" aria-hidden="true"></div>
     <header>
-      <div class="brand"><img src="dink-vision-logo.png" alt="Dink Vision"></div>
+      <div class="brand"><img src="dink-vision-logo.png" alt="DinkVision"></div>
       <div class="header-status" aria-live="polite"><span id="camera-status" class="camera-status">Checking camera</span><span id="header-court" hidden></span></div>
       <div id="connection-notice" hidden><span id="connection-text" role="status"></span><button id="connection-retry" type="button" hidden>Retry connection</button></div>
     </header>
@@ -69,7 +69,7 @@
         <h1 id="session-title">Your match</h1>
         <p class="subtitle" id="progress"></p>
         <div id="loading" class="loading" hidden><span></span><b>Working…</b></div>
-        <div id="timer">00:00</div>
+        <div id="timer" role="timer" aria-label="Elapsed recording time">00:00</div>
         <div class="actions"><button id="stop" class="primary" type="button" hidden>■ Stop recording</button><button id="reset" class="primary" type="button" hidden>Done · Next player</button></div>
       </section>
       <section id="camera-test" hidden>
@@ -80,7 +80,7 @@
         <label class="camera-quality-label" for="camera-quality">Video quality
           <select id="camera-quality"><option value="auto">Auto · best supported quality</option></select>
         </label>
-        <div class="actions"><button id="camera-test-retry" class="quiet" type="button">Record another test</button><button id="camera-test-confirm" class="primary" type="button">I can see and hear the test</button></div>
+        <div class="actions"><button id="camera-test-retry" class="quiet" type="button">Record another test</button><button id="camera-test-confirm" class="primary" type="button" disabled>I can see and hear the test</button></div>
       </section>
       <section id="saved-videos" hidden aria-labelledby="saved-title">
         <div class="saved-heading">
@@ -126,10 +126,10 @@
       <button id="saved-open" class="reenroll" type="button" hidden>Saved videos</button>
     </div>
     <footer><span id="app-version">Android recorder</span></footer>
-    <div id="modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="modal-title">
+    <div id="modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="modal-title" aria-describedby="modal-copy">
       <div class="modal-card">
         <div id="modal-kicker" class="modal-kicker" hidden></div>
-        <h2 id="modal-title"></h2>
+        <h2 id="modal-title" tabindex="-1"></h2>
         <p id="modal-copy" class="modal-copy" hidden></p>
         <div id="modal-content" class="modal-content"></div>
         <div id="modal-error" class="modal-error" role="alert" hidden></div>

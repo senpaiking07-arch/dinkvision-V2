@@ -125,21 +125,21 @@ export function EnrollmentInvitation({
   }, [invitation, closeTabOnSuccess]);
 
   if (status === "paired") return (
-    <div role="status">
-      <h2>Device paired</h2>
+    <div role="status" className="recorder-alert is-success admin-enrollment-status">
+      <strong>Device paired</strong>
       <p>Continue with the three-second camera check on the Android device.</p>
       {closeTabOnSuccess && <p>This tab will close shortly. You can also return to Admin below.</p>}
     </div>
   );
   if (status === "unavailable") return (
-    <p role="status">This invitation is no longer available. Open Devices &amp; cameras in Admin to create a new one.</p>
+    <p role="status" className="recorder-alert">This invitation is no longer available. Open Devices &amp; cameras in Admin to create a new one.</p>
   );
   return (
     <>
       {instructions && <p>{instructions}</p>}
       <EnrollmentQrDetails invitation={invitation} />
       <p>Single use · Expires at <time dateTime={invitation.expiresAt}>{new Date(invitation.expiresAt).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})}</time></p>
-      <p role="status">{statusError || (invitation.id ? "Waiting for the device to pair…" : "Check Devices & cameras for the result of this invitation.")}</p>
+      <p role="status" className="recorder-alert">{statusError || (invitation.id ? "Waiting for the device to pair…" : "Check Devices & cameras for the result of this invitation.")}</p>
       {openTab && <button type="button" className="sign-in" onClick={openTab}>Open QR tab</button>}
     </>
   );
@@ -162,19 +162,22 @@ export default function AdminEnrollmentQr() {
   }, []);
 
   return (
-    <section className="website-panel website-message enrollment-qr-card">
-      <h1>Device enrollment</h1>
+    <section className="admin-card recorder-workspace admin-page-panel enrollment-qr-card">
+      <header className="recorder-workspace-header">
+        <div><h1>Device enrollment</h1><p>Pair a recorder in the DinkVision Android app.</p></div>
+      </header>
+      <div className="admin-work-panel admin-page-content">
       {invitation ? (
         <EnrollmentInvitation invitation={invitation} closeTabOnSuccess
           instructions="Open enrollment in DinkVision. Scan the QR or enter the code below. On a registered tablet, start with Re-enroll device." />
       ) : loaded ? (
-        <p role="status">This invitation has expired or is unavailable. Open Devices &amp; cameras in Admin to create a new QR.</p>
+        <p role="status" className="recorder-alert">This invitation has expired or is unavailable. Open Devices &amp; cameras in Admin to create a new QR.</p>
       ) : (
         <div role="status"><span className="admin-sr-only">Loading enrollment invitation</span>
           <span className="admin-skeleton-block enrollment-qr-skeleton" aria-hidden="true" />
         </div>
       )}
-      <a href="/admin" className="sign-in">Back to Admin</a>
+      </div>
     </section>
   );
 }

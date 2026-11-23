@@ -212,6 +212,7 @@ final class Engine {
           continue;
         }
         JSONObject item = queueItem(id);
+        if (!file.isFile() || file.length() == 0 || item.optLong("localRemovedAt") > 0) continue;
         if ("uploaded".equals(item.optString("status"))) continue;
         if (item.length() == 0) {
           saveQueueItem(
@@ -224,7 +225,10 @@ final class Engine {
                   .put("retryCount", 0)
                   .put("localAvailable", true));
         } else if (!item.optBoolean("localAvailable", true)) {
-          item.put("localAvailable", true).put("status", "pending").put("bytes", file.length());
+          item.put("localAvailable", true).put("status", "pending").put("bytes", file.length())
+              .put("validationPending", true).put("validationFailed", false)
+              .put("brandingState", item.optBoolean("branded") ? "complete" : "failed")
+              .put("presenceReportPending", true).put("lastError", "");
           saveQueueItem(item);
         } else if (backgroundTransfers.isPaused() && "uploading".equals(item.optString("status"))) {
           pauseUploadItem(item);
@@ -266,20 +270,25 @@ final class Engine {
   }
 
   void reconcileMissingLocalFiles() throws Exception {
-    JSONArray current = queue();
-    for (int index = 0; index < current.length(); index++) {
-      JSONObject item = current.optJSONObject(index);
-      if (item == null || !item.optBoolean("localAvailable", true)
-          || item.optString("id").equals(activeSession) || "uploaded".equals(item.optString("status"))) continue;
-      String sid = item.optString("id");
-      UUID.fromString(sid);
-      File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
-      // VideoBranding replaces files atomically and its swap recovery runs first at startup.
-      if (file.isFile() && file.length() > 0) continue;
-      item.put("localAvailable", false).put("status", "failed").put("brandingState", "failed")
-          .put("lastError", MISSING_LOCAL_VIDEO).put("nextRetryAt", 0)
-          .put("validationFailed", true).put("presenceReportPending", true);
-      saveQueueItem(item);
+    synchronized (vault) {
+      JSONArray current = queue();
+      for (int index = 0; index < current.length(); index++) {
+        JSONObject item = current.optJSONObject(index);
+        if (item == null || !item.optBoolean("localAvailable", true)
+            || item.optString("id").equals(activeSession)
+            || item.optString("id").equals(uploadWorkerSession)
+            || (busy && "recording".equals(item.optString("status")))
+            || "uploaded".equals(item.optString("status"))) continue;
+        String sid = item.optString("id");
+        try { UUID.fromString(sid); } catch (IllegalArgumentException invalid) { continue; }
+        File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
+        // The branding worker may be swapping files. Startup repairs its backups before this scan.
+        if (file.isFile() && file.length() > 0) continue;
+        item.put("localAvailable", false).put("status", "failed").put("brandingState", "failed")
+            .put("lastError", MISSING_LOCAL_VIDEO).put("nextRetryAt", 0)
+            .put("validationPending", false).put("validationFailed", true).put("presenceReportPending", true);
+        saveQueueItem(item);
+      }
     }
   }
 
@@ -1681,11 +1690,12 @@ final class Engine {
     return result;
   }
 
-  void start(String recipientJson, long bridgeReceivedNanos) {
+  synchronized void start(String recipientJson, long bridgeReceivedNanos) {
     if (!claim()) {
       noteRepeatedStart();
       return;
     }
+    if (!visible) { busy = false; return; }
     startHasRecoverableFootage = false;
     if (updateBlocksPlayer()) {
       error = "Check and install the required Android update first.";
@@ -2041,6 +2051,11 @@ final class Engine {
       trace.repeatedStop(RecorderDiagnostics.ActionSource.PLAYER);
   }
 
+  synchronized void leavePlayerWorkflow() {
+    visible = false;
+    if ("connecting".equals(phase) || "countdown".equals(phase)) requestStop(captureAttempt);
+  }
+
   void requestStop(String attempt) {
     requestStop(attempt, RecorderDiagnostics.ActionSource.PLAYER);
   }
@@ -2158,8 +2173,8 @@ final class Engine {
         (item.optBoolean("validationPending") || "processing".equals(item.optString("brandingState")));
   }
 
-  boolean isInterruptedPreviewUnavailable(String sid) {
-    return interruptedNeedsInspection(queueItem(sid));
+  boolean isPreviewInvalid(String sid) {
+    return queueItem(sid).optBoolean("validationFailed");
   }
 
   private static boolean interruptedNeedsInspection(JSONObject item) {
@@ -2183,19 +2198,11 @@ final class Engine {
     return belongsToCurrentDevice(item) && item.optBoolean("localAvailable", true)
         && java.util.Arrays.asList("local_only", "failed", "uploaded").contains(item.optString("status"))
         && !"processing".equals(item.optString("brandingState"))
-        && !item.optString("id").equals(activeSession);
+        && !item.optString("id").equals(activeSession) && !item.optString("id").equals(uploadWorkerSession);
   }
 
   private void finishLocalRemoval(JSONObject item) throws Exception {
-    String sid = item.getString("id"); UUID.fromString(sid);
     if (!removableLocalItem(item)) throw new Exception("Finish processing or uploading this video before removing it.");
-    File source = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
-    if (source.exists()) {
-      if (source.length() != item.optLong("exportedBytes") || !LocalVideoExporter.verifiedCopy(
-          context.getContentResolver(), item.optString("exportedUri"), source.length()))
-        throw new Exception("The exported copy cannot be verified. Use Details to save another copy first.");
-      if (!source.delete()) throw new Exception("Could not remove the app copy. It is still saved here.");
-    }
     item.put("localAvailable", false).put("localRemovedAt", System.currentTimeMillis())
         .put("removalPending", false).put("presenceReportPending", true).put("nextRetryAt", 0)
         .put("lastError", "App copy removed by user. A separate copy was saved to Gallery / Files.");
@@ -2208,7 +2215,14 @@ final class Engine {
       for (int i=0;i<items.length();i++) {
         JSONObject item=items.optJSONObject(i);
         if(item!=null && item.optBoolean("removalPending") && belongsToCurrentDevice(item)) {
-          try { finishLocalRemoval(item); }
+          try {
+            String sid = item.getString("id");
+            UUID.fromString(sid);
+            File source = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
+            if (source.exists())
+              throw new Exception("Removal was interrupted. The original remains saved. Select Remove from app to try again.");
+            finishLocalRemoval(item);
+          }
           catch(Exception unavailable) {
             // A moved/deleted export must preserve the original and must not
             // prevent other saved videos from reconciling at startup.
@@ -2226,15 +2240,25 @@ final class Engine {
     localVideoSession = sid;
     exports.execute(() -> {
       try {
+        JSONObject receipt = queueItem(sid);
+        if (busy || uploadWorkerRunning.get() || !removableLocalItem(receipt))
+          throw new Exception("Finish recording, processing and uploading before removing this app copy.");
+        File source = localPlaybackFile(sid);
+        long bytes = source.length(), modifiedAt = source.lastModified();
+        if (bytes != receipt.optLong("exportedBytes") || !LocalVideoExporter.matchesOriginal(
+            context.getContentResolver(), receipt.optString("exportedUri"), source))
+          throw new Exception("Save a verified device copy first. Use Details to save another copy if needed.");
         synchronized (vault) {
           JSONObject item=queueItem(sid);
           if (busy || uploadWorkerRunning.get() || !removableLocalItem(item))
             throw new Exception("Finish recording, processing and uploading before removing this app copy.");
-          File source=localPlaybackFile(sid);
-          if (source.length()!=item.optLong("exportedBytes") || !LocalVideoExporter.verifiedCopy(
-              context.getContentResolver(),item.optString("exportedUri"),source.length()))
-            throw new Exception("Save a verified device copy first. Use Details to save another copy if needed.");
+          if (source.length() != bytes || source.lastModified() != modifiedAt
+              || !receipt.optString("exportedUri").equals(item.optString("exportedUri"))
+              || receipt.optLong("exportedAt") != item.optLong("exportedAt"))
+            throw new Exception("The video or its exported copy changed. Try removing the app copy again.");
           item.put("removalPending",true); saveQueueItem(item);
+          if (!source.delete())
+            throw new Exception("Could not remove the app copy. It is still saved here.");
           finishLocalRemoval(item);
         }
         localVideoError="";
@@ -2624,7 +2648,7 @@ final class Engine {
         item.put("brandingState", "complete");
       }
       ticket.check();
-      item.put("brandingProgress", 100);
+      item.put("brandingProgress", 100).put("validationPending", false).put("validationFailed", false);
       item
           .put("status", "pending")
           .put("bytes", file.length())
@@ -2747,7 +2771,7 @@ final class Engine {
             .put("nextRetryAt", permanent ? 0 : System.currentTimeMillis() + delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L)));
         if (!item.optBoolean("branded", false) && item.has("brandingState") && !item.optBoolean("liveLogoRequired"))
           item.put("brandingState", "failed");
-        if (validationFailed && item.has("captureInterruptionCode")) item.put("validationPending", false);
+        if (validationFailed) item.put("validationPending", false);
         if (!permanent) trace.retryDelay(Math.max(0, item.optLong("nextRetryAt") - System.currentTimeMillis()));
         trace.finish(failure);
         saveQueueItem(item);

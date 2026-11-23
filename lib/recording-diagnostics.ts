@@ -3,10 +3,17 @@ import { captureDurationLabel, captureInterruptionLabel } from "./capture-interr
 const reasons:Record<string,string>={player_stop:'Stopped manually.',time_limit:'Reached the maximum recording duration.',interrupted:'Recording was interrupted.',capture_error:'The camera could not complete the recording.',storage_full:'The device ran out of recording space.',device_missing:'The camera became unavailable.',cancelled_before_start:'Cancelled before recording started.',short_recording:'Kept on the device because the clip is under one minute; it is not uploaded or emailed.',unsupported_format:'Kept on the device because its video format is not supported for upload.'};
 const stages:Record<string,string>={capture:'Camera recording',browser_capture:'Camera recording / saved-video validation',upload:'Cloud storage upload',sharing:'Cloud storage sharing',upload_cancelled:'Upload cancelled',device_removed:'Device registration removed',short_recording:'No failure · local-only policy',unsupported_format:'Video format validation'};
 const title=(value:string)=>value.replaceAll('_',' ').replace(/^./,s=>s.toUpperCase());
+export function recordingReportText(value?: string | null) {
+ const message = value?.trim() || "";
+ if (/\b(?:google\s+drive|drive\s+(?:upload|storage|connection|file|resumable|authorization|quota)|drive_[a-z])/i.test(message)) {
+   return "This recording has an older storage report. Check Cloudflare R2 in Settings before retrying any copy saved on the recorder.";
+ }
+ return message;
+}
 export function recordingDiagnostics(session:Pick<Session,'status'|'stop_reason'|'failure_stage'|'browser_recordings'|'capture_interruption_code'>){
  const report=Array.isArray(session.browser_recordings)?session.browser_recordings[0]:session.browser_recordings;
  const interruption=captureInterruptionLabel(session.capture_interruption_code);
- const detail=(report?.last_error||report?.safe_error||'').trim();
+ const detail=recordingReportText(report?.last_error||report?.safe_error);
  const useful=detail&&!/^Adding (?:the )?Dink ?Vision logo\.?$/i.test(detail)?detail:'';
  const active=['requested','starting','recording','finalizing'].includes(session.status);
  const removed=session.failure_stage==='device_removed';

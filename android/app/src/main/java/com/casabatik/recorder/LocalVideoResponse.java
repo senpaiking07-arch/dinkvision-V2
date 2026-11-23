@@ -13,7 +13,7 @@ final class LocalVideoResponse {
     try {
       if (!name.endsWith(".mp4")) throw new IOException("Unknown video.");
       String session = name.substring(0, name.length() - 4);
-      if (engine.isInterruptedPreviewUnavailable(session)) throw new IOException("Video needs inspection.");
+      if (engine.isPreviewInvalid(session)) throw new IOException("Video needs inspection.");
       if (engine.isPreviewPending(session))
         return new WebResourceResponse("text/plain", "UTF-8", 503, "Processing",
             Collections.singletonMap("Retry-After", "5"), new ByteArrayInputStream(new byte[0]));

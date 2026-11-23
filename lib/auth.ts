@@ -50,7 +50,7 @@ export const getAccount = cache(
     const membership = await db.from("tenant_memberships")
       .select("role,tenants!inner(id,name,active)")
       .eq("user_id", user.id).eq("active", true);
-    if (membership.error) return { account: null, problem: "Tenant access could not be verified. Please retry." };
+    if (membership.error) return { account: null, problem: "Venue access could not be verified. Please try again." };
     let tenants = (membership.data || []).flatMap(row => {
       const tenant = Array.isArray(row.tenants) ? row.tenants[0] : row.tenants;
       return tenant?.active && ["admin", "player"].includes(row.role)
@@ -58,7 +58,7 @@ export const getAccount = cache(
     });
     if (profile.is_super_admin) {
       const available = await db.from("tenants").select("id,name").eq("active", true).order("name");
-      if (available.error) return { account: null, problem: "Tenant access could not be verified. Please retry." };
+      if (available.error) return { account: null, problem: "Venue access could not be verified. Please try again." };
       tenants = (available.data || []).map(t => ({ ...t, role: "admin" as const }));
     }
     const selected = selectAccountTenant(tenants, (await cookies()).get(TENANT_COOKIE)?.value);

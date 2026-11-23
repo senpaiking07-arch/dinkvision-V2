@@ -24,7 +24,8 @@ test("the capture cause remains visible after an upload failure or verified deli
  const failed=recordingDiagnostics(session);
  assert.equal(failed.interruption,"Camera disconnected");
  assert.equal(failed.recoveredDuration,"1 minute 24 seconds");
- assert.equal(failed.detail,"Drive connection expired.");
+ assert.match(failed.detail,/older storage report.*Cloudflare R2/);
+ assert.doesNotMatch(failed.detail,/Drive/);
  assert.equal(failed.stage,"Cloud storage upload");
  const ready=recordingDiagnostics({...session,status:"ready",failure_stage:null,browser_recordings:null});
  assert.equal(ready.interruption,failed.interruption);

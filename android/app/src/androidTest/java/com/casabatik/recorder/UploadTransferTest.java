@@ -46,17 +46,26 @@ public class UploadTransferTest {
           : new JSONObject().put("offset", offset);
     }
 
+    boolean offline;
+
+    public java.util.List<UploadTransfer.PartGrant> grants(long start, int count, int partSize, long total) {
+      if (expire) {
+        expire = false;
+        return java.util.List.of(new UploadTransfer.PartGrant(-1, start, 0, ""));
+      }
+      return java.util.List.of(new UploadTransfer.PartGrant((int) (start / partSize) + 1, start,
+          (int) Math.min(partSize, total - start), ""));
+    }
+
     public JSONObject chunk(long start, int length) throws Exception {
+      if (offline) throw new java.io.IOException("Offline");
       assertEquals(offset, start);
       assertTrue(length > 0 && length <= 4 * 1024 * 1024);
       chunks++;
-      if (expire) {
-        expire = false;
-        return new JSONObject().put("expired", true);
-      }
       offset += length;
       if (loseResponse) {
         loseResponse = false;
+        offline = true;
         throw new java.io.IOException("Connection interrupted");
       }
       return new JSONObject().put("accepted", true).put("complete", offset == bytes);
@@ -144,6 +153,7 @@ public class UploadTransferTest {
     } catch (java.io.IOException expected) {
     }
     assertEquals(4 * 1024 * 1024, backend.offset);
+    backend.offline = false;
     UploadTransfer.send(backend.bytes, backend, value -> {});
     assertEquals(2, backend.chunks);
     assertEquals(backend.bytes, backend.offset);
@@ -173,6 +183,23 @@ public class UploadTransferTest {
     progress.clear();
     UploadTransfer.send(backend.bytes, backend, observer);
     assertEquals(java.util.List.of("verifying:" + backend.bytes, "percent:100"), progress);
-    assertEquals(3, backend.chunks);
+    assertEquals(2, backend.chunks);
+  }
+
+  @Test public void rejectedPartUrlResumesFromConfirmedOffsetWithoutAborting() throws Exception {
+    Backend backend = new Backend() {
+      boolean rejected;
+      public boolean putPart(UploadTransfer.PartGrant grant) throws Exception {
+        if (grant.offset > 0 && !rejected) {
+          rejected = true;
+          throw new UploadTransfer.ExpiredPartException();
+        }
+        return chunk(grant.offset, grant.length).getBoolean("accepted");
+      }
+    };
+    UploadTransfer.send(backend.bytes, backend, percent -> {});
+    assertEquals(backend.bytes, backend.offset);
+    assertEquals(0, backend.restarts);
+    assertEquals(2, backend.chunks);
   }
 }

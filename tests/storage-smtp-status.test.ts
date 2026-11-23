@@ -37,6 +37,34 @@ test("an initial status request shows a skeleton before there is a connection re
   assert.doesNotMatch(html, /Needs attention|Not configured/);
 });
 
+test("the connection panel distinguishes missing R2 configuration from connection failures", () => {
+  const smtp = { ready: false, configured: true, detail: "Raw provider error" };
+  const unconfigured = renderStatus({ storage: { ready: false, code: "r2_not_configured" }, smtp });
+  const failed = renderStatus({ storage: { ready: false, code: "r2_unavailable" }, smtp });
+  assert.match(unconfigured, /Set the Cloudflare account ID/);
+  assert.match(failed, /Connection failed/);
+  assert.match(failed, /Verify that the R2 bucket exists/);
+  assert.doesNotMatch(failed, /Raw provider error/);
+});
+
+test("R2 health separates invalid server settings from a failed bucket check", async () => {
+  for (const configured of [false, true]) {
+    const service = load("lib/storage-health.ts", {
+      "server-only": {},
+      "./r2-server": {
+        usesR2: () => true,
+        r2Store: () => {
+          if (!configured) throw Error("Private configuration detail");
+          return { healthy: async () => { throw Error("Private provider detail"); } };
+        },
+      },
+    });
+    const result = await service.storageHealth();
+    assert.equal(result.code, configured ? "r2_unavailable" : "r2_not_configured");
+    assert.doesNotMatch(JSON.stringify(result), /Private/);
+  }
+});
+
 function routes(configured: boolean, ready: boolean, account: unknown = { role: "admin", tenantId: "tenant" }) {
   const checkedAt = "2026-11-22T12:00:00.000Z";
   const storage = { ready: true, code: "connected", checkedAt };

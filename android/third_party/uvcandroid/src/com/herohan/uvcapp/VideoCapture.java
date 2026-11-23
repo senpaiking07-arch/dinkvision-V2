@@ -118,6 +118,8 @@ public class VideoCapture {
      * Amount of time to wait for dequeuing a buffer from the videoEncoder.
      */
     private static final int DEQUE_TIMEOUT_USEC = 10000;
+    private static final long EOS_TIMEOUT_NS = 5_000_000_000L;
+    private final AtomicBoolean audioFailed = new AtomicBoolean();
     /**
      * Android preferred mime type for AVC video.
      */
@@ -457,6 +459,7 @@ public class VideoCapture {
             return;
         }
 
+        audioFailed.set(false);
         mEndOfVideoStreamSignal.set(false);
         mEndOfAudioStreamSignal.set(false);
         mEndOfAudioVideoSignal.set(false);
@@ -474,6 +477,7 @@ public class VideoCapture {
         mVideoHandler.post(
                 () -> {
                     boolean errorOccurred = videoEncode(postListener, outputFileOptions);
+                    errorOccurred |= audioFailed.get();
                     if (!errorOccurred && surfaceProcessor != null) {
                         try { surfaceProcessor.completed(outputFileOptions.getFile()); }
                         catch (Exception failure) {
@@ -707,7 +711,7 @@ public class VideoCapture {
 
         // Write data to mMuxer if available
         if (mMuxerStarted.get()) {
-            if (mVideoBufferInfo.size > 0) {
+            if (mVideoBufferInfo.size > 0 && (mVideoBufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                 outputBuffer.position(mVideoBufferInfo.offset);
                 outputBuffer.limit(mVideoBufferInfo.offset + mVideoBufferInfo.size);
                 // Preserve the camera timestamp carried through EGL and MediaCodec.
@@ -731,7 +735,8 @@ public class VideoCapture {
                         }
                     }
 
-                    mMuxer.writeSampleData(mVideoTrackIndex, outputBuffer, mVideoBufferInfo);
+                    if (mIsFirstVideoKeyFrameWrite.get())
+                        mMuxer.writeSampleData(mVideoTrackIndex, outputBuffer, mVideoBufferInfo);
                 }
             } else {
                 Log.i(TAG, "mVideoBufferInfo.size <= 0, index " + bufferIndex);
@@ -750,7 +755,8 @@ public class VideoCapture {
         buffer.position(mAudioBufferInfo.offset);
         if (mMuxerStarted.get()) {
             try {
-                if (mAudioBufferInfo.size > 0 && mAudioBufferInfo.presentationTimeUs > 0) {
+                if (mAudioBufferInfo.size > 0 && mAudioBufferInfo.presentationTimeUs > 0
+                        && (mAudioBufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
                     synchronized (mMuxerLock) {
                         if (!mIsFirstAudioSampleWrite.get()) {
                             Log.i(TAG, "First audio sample written.");
@@ -762,19 +768,12 @@ public class VideoCapture {
                     Log.i(TAG, "mAudioBufferInfo size: " + mAudioBufferInfo.size + " "
                             + "presentationTimeUs: " + mAudioBufferInfo.presentationTimeUs);
                 }
-            } catch (Exception e) {
-                Log.e(
-                        TAG,
-                        "audio error:size="
-                                + mAudioBufferInfo.size
-                                + "/offset="
-                                + mAudioBufferInfo.offset
-                                + "/timeUs="
-                                + mAudioBufferInfo.presentationTimeUs);
-                e.printStackTrace();
+            } finally {
+                mAudioEncoder.releaseOutputBuffer(bufferIndex, false);
             }
+        } else {
+            mAudioEncoder.releaseOutputBuffer(bufferIndex, false);
         }
-        mAudioEncoder.releaseOutputBuffer(bufferIndex, false);
         return (mAudioBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
     }
 
@@ -789,13 +788,18 @@ public class VideoCapture {
         // Main encoding loop. Exits on end of stream.
         boolean errorOccurred = false;
         boolean videoEos = false;
+        long drainStarted = 0;
         try {
             while (!videoEos && !errorOccurred) {
                 // Check for end of stream from main thread
                 if (mEndOfVideoStreamSignal.get()) {
                     mVideoEncoder.signalEndOfInputStream();
+                    drainStarted = System.nanoTime();
                     mEndOfVideoStreamSignal.set(false);
                 }
+
+                if (drainStarted != 0 && System.nanoTime() - drainStarted > EOS_TIMEOUT_NS)
+                    throw new IllegalStateException("Video encoder did not finish draining.");
 
                 // Deque buffer to check for processing step
                 int outputBufferId =
@@ -808,6 +812,7 @@ public class VideoCapture {
                                     "Unexpected change in video encoding format.",
                                     null);
                             errorOccurred = true;
+                            break;
                         }
 
                         synchronized (mMuxerLock) {
@@ -830,11 +835,13 @@ public class VideoCapture {
                         videoEos = writeVideoEncodedBuffer(outputBufferId);
                 }
             }
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
             videoSavedCallback.onError(ERROR_ENCODER,
                     "Video encoder encode failed!", e);
             errorOccurred = true;
         }
+
+        if (errorOccurred) mEndOfAudioStreamSignal.set(true);
 
         try {
             Log.i(TAG, "videoEncoder stop");
@@ -849,22 +856,21 @@ public class VideoCapture {
             // new MediaMuxer instance required for each new file written, and release current one.
             synchronized (mMuxerLock) {
                 if (mMuxer != null) {
-                    if (mMuxerStarted.get()) {
-                        Log.i(TAG, "Muxer already started");
-                        mMuxer.stop();
-                    }
-                    mMuxer.release();
+                    MediaMuxer muxer = mMuxer;
                     mMuxer = null;
+                    try {
+                        if (mMuxerStarted.get()) muxer.stop();
+                    } finally {
+                        muxer.release();
+                    }
                 }
             }
 
             // A final checking for recording result, if the recorded file has no key
             // frame, then the video file is not playable, needs to call
-            // onError() and will be removed.
+            // onError(). Keep the original available for recovery.
 
-            boolean checkResult = removeRecordingResultIfNoVideoKeyFrameArrived(outputFileOptions);
-
-            if (!checkResult) {
+            if (!mIsFirstVideoKeyFrameWrite.get()) {
                 videoSavedCallback.onError(ERROR_RECORDING_TOO_SHORT,
                         "The file has no video key frame.", null);
                 errorOccurred = true;
@@ -912,45 +918,30 @@ public class VideoCapture {
         boolean audioEos = false;
         int outIndex;
         long lastAudioTimestamp = 0;
-        while (!audioEos && mIsRecording) {
-            // Check for end of stream from main thread
-            if (mEndOfAudioStreamSignal.get()) {
-                mEndOfAudioStreamSignal.set(false);
-                mIsRecording = false;
-            }
-
-            // get audio deque input buffer
-            if (mAudioEncoder != null && mAudioRecorder != null) {
-                try {
-                    int index = mAudioEncoder.dequeueInputBuffer(-1);
+        boolean inputEnded = false;
+        long stopStarted = 0;
+        try {
+            while (!audioEos && mIsRecording) {
+                if (stopStarted == 0 && mEndOfAudioStreamSignal.getAndSet(false))
+                    stopStarted = System.nanoTime();
+                if (stopStarted != 0 && System.nanoTime() - stopStarted > EOS_TIMEOUT_NS)
+                    throw new IllegalStateException("Audio encoder did not finish draining.");
+                if (!inputEnded) {
+                    int index = mAudioEncoder.dequeueInputBuffer(DEQUE_TIMEOUT_USEC);
                     if (index >= 0) {
-                        final ByteBuffer buffer = getInputBuffer(mAudioEncoder, index);
+                        ByteBuffer buffer = getInputBuffer(mAudioEncoder, index);
                         buffer.clear();
-                        int length = mAudioRecorder.read(buffer, mAudioBufferSize);
-                        if (length > 0) {
-                            mAudioEncoder.queueInputBuffer(
-                                    index,
-                                    0,
-                                    length,
-                                    (System.nanoTime() / 1000),
-                                    mIsRecording ? 0 : MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                        }
-                    }
-                } catch (Exception e) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-                            && e instanceof MediaCodec.CodecException) {
-                        Log.i(TAG, "audio dequeueInputBuffer CodecException " + e.getMessage());
-                    } else if (e instanceof IllegalStateException) {
-                        Log.i(TAG,
-                                "audio dequeueInputBuffer IllegalStateException " + e.getMessage());
-                    } else {
-                        throw e;
+                        int length = stopStarted == 0 ? mAudioRecorder.read(buffer, mAudioBufferSize) : 0;
+                        if (length < 0) throw new IllegalStateException("Microphone read failed: " + length);
+                        inputEnded = stopStarted != 0;
+                        mAudioEncoder.queueInputBuffer(index, 0, length, System.nanoTime() / 1000,
+                                inputEnded ? MediaCodec.BUFFER_FLAG_END_OF_STREAM : 0);
                     }
                 }
 
                 // start to dequeue audio output buffer
                 do {
-                    outIndex = mAudioEncoder.dequeueOutputBuffer(mAudioBufferInfo, 0);
+                    outIndex = mAudioEncoder.dequeueOutputBuffer(mAudioBufferInfo, inputEnded ? DEQUE_TIMEOUT_USEC : 0);
                     switch (outIndex) {
                         case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
                             synchronized (mMuxerLock) {
@@ -967,6 +958,7 @@ public class VideoCapture {
                         default:
                             // Drops out of order audio frame if the frame's earlier than last
                             // frame.
+                            if (outIndex < 0) break;
                             if (mAudioBufferInfo.presentationTimeUs > lastAudioTimestamp) {
                                 audioEos = writeAudioEncodedBuffer(outIndex);
                                 lastAudioTimestamp = mAudioBufferInfo.presentationTimeUs;
@@ -977,12 +969,17 @@ public class VideoCapture {
                                                 + " is earlier that last frame "
                                                 + lastAudioTimestamp);
                                 // Releases this frame from output buffer
+                                audioEos = (mAudioBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
                                 mAudioEncoder.releaseOutputBuffer(outIndex, false);
                             }
                     }
                 } while (outIndex >= 0 && !audioEos); // end of dequeue output buffer
             }
-        } // end of while loop
+        } catch (RuntimeException failure) {
+            audioFailed.set(true);
+            videoSavedCallback.onError(ERROR_ENCODER, "Audio encoder failed.", failure);
+        }
+        mIsRecording = false;
 
         // Audio Stop
         try {
@@ -991,6 +988,7 @@ public class VideoCapture {
                 mAudioRecorder.stop();
             }
         } catch (IllegalStateException e) {
+            audioFailed.set(true);
             videoSavedCallback.onError(
                     ERROR_ENCODER, "Audio recorder stop failed!", e);
         }
@@ -998,6 +996,7 @@ public class VideoCapture {
         try {
             mAudioEncoder.stop();
         } catch (IllegalStateException e) {
+            audioFailed.set(true);
             videoSavedCallback.onError(ERROR_ENCODER,
                     "Audio encoder stop failed!", e);
         }
@@ -1099,43 +1098,6 @@ public class VideoCapture {
         mAudioChannelCount = mConfig.getAudioChannelCount();
         mAudioSampleRate = mConfig.getAudioSampleRate();
         mAudioBitRate = mConfig.getAudioBitRate();
-    }
-
-    private boolean removeRecordingResultIfNoVideoKeyFrameArrived(
-            @NonNull OutputFileOptions outputFileOptions) {
-        boolean checkKeyFrame;
-
-        // 1. There should be one video key frame at least.
-        Log.i(TAG,
-                "check Recording Result First Video Key Frame Write: "
-                        + mIsFirstVideoKeyFrameWrite.get());
-        if (!mIsFirstVideoKeyFrameWrite.get()) {
-            Log.i(TAG, "The recording result has no key frame.");
-            checkKeyFrame = false;
-        } else {
-            checkKeyFrame = true;
-        }
-
-        // 2. If no key frame, remove file except the target is a file descriptor case.
-        if (outputFileOptions.isSavingToFile()) {
-            File outputFile = outputFileOptions.getFile();
-            if (!checkKeyFrame) {
-                Log.i(TAG, "Delete file.");
-                outputFile.delete();
-            }
-        } else if (outputFileOptions.isSavingToMediaStore()) {
-            if (!checkKeyFrame) {
-                Log.i(TAG, "Delete file.");
-                if (mSavedVideoUri != null) {
-                    ContentResolver contentResolver = outputFileOptions.getContentResolver();
-                    if (contentResolver != null) {
-                        contentResolver.delete(mSavedVideoUri, null, null);
-                    }
-                }
-            }
-        }
-
-        return checkKeyFrame;
     }
 
     private MediaMuxer initMediaMuxer(@NonNull OutputFileOptions outputFileOptions)

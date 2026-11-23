@@ -31,9 +31,13 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
   private volatile boolean stopped;
   private volatile Exception failure;
   private volatile long frames;
+  private volatile long lastEncoderFrameNanos;
   final CountDownLatch firstInputFrame = new CountDownLatch(1);
   final CountDownLatch firstEncodedFrame = new CountDownLatch(1);
   private long lastTimestamp;
+  private final boolean usingMediaRecorder;
+  private long firstCameraTimestamp;
+  private long firstRecorderTimestamp;
   private final float[] transform = new float[16];
   private static final float[] IDENTITY = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
   private final FloatBuffer vertices = floats(-1,-1, 1,-1, -1,1, 1,1);
@@ -56,6 +60,7 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
   LiveLogoProcessor(Context context, Surface encoder, int width, int height, int rotation,
       boolean encoding, boolean validateSavedMediaInBackground,
       java.util.function.Consumer<Exception> onFailure) throws Exception {
+    usingMediaRecorder = !encoding;
     this.width = width; this.height = height; this.rotation = rotation; this.encoding = encoding;
     this.validateSavedMediaInBackground = validateSavedMediaInBackground;
     // Invert the MP4 playback rotation so the logo reads upright at bottom right.
@@ -125,9 +130,20 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
       GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
       draw(logoProgram,logoTexture,GLES20.GL_TEXTURE_2D,logoUv,IDENTITY);
       checkGl();
-      require(EGLExt.eglPresentationTimeANDROID(display,window,timestamp), "Frame timestamp");
+      // Camera2 sensor timestamps can include deep sleep. MediaRecorder audio uses
+      // monotonic time. Anchor once and retain the camera cadence for the whole clip.
+      long presentationTime = timestamp;
+      if (usingMediaRecorder) {
+        if (frames == 0) {
+          firstCameraTimestamp = timestamp;
+          firstRecorderTimestamp = System.nanoTime();
+        }
+        presentationTime = firstRecorderTimestamp + (timestamp - firstCameraTimestamp);
+      }
+      require(EGLExt.eglPresentationTimeANDROID(display,window,presentationTime), "Frame timestamp");
       require(EGL14.eglSwapBuffers(display,window), "Encode live logo frame");
       lastTimestamp = timestamp; frames++;
+      lastEncoderFrameNanos = System.nanoTime();
       firstEncodedFrame.countDown();
     } catch (Exception e) { failure = e; onFailure.accept(e); }
   }
@@ -144,6 +160,12 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
     GLES20.glUniform1i(GLES20.glGetUniformLocation(program,"image"),0);
     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP,0,4);
     GLES20.glDisableVertexAttribArray(position); GLES20.glDisableVertexAttribArray(coord);
+  }
+
+  void checkFrameProgress(long now) throws CameraCapture.Interruption {
+    if (now - lastEncoderFrameNanos > TimeUnit.SECONDS.toNanos(6))
+      throw new CameraCapture.Interruption(CameraCapture.InterruptionCode.CAMERA_FAILURE,
+          "The camera stopped delivering frames to the encoder.");
   }
 
   void startEncoding() { encoding = true; }

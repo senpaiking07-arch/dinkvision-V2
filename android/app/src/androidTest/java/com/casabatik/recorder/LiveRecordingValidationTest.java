@@ -40,6 +40,11 @@ public class LiveRecordingValidationTest {
       assertEquals(bytes, file.length());
       assertTrue("The old footer alone cannot prove unchanged bytes", LiveLogoEvidence.hasSeal(file));
       assertThrows(RecordingAccuracy.Failure.class, () -> validation.validate(file, -1, false));
+      try (RandomAccessFile edit = new RandomAccessFile(file, "rw")) {
+        edit.setLength(bytes / 2);
+      }
+      assertFalse(LiveLogoEvidence.hasSeal(file));
+      assertThrows(RecordingAccuracy.Failure.class, () -> validation.validate(file, -1, false));
     } finally { file.delete(); }
   }
 
@@ -85,20 +90,22 @@ public class LiveRecordingValidationTest {
     });
     engine.heartbeat.shutdownNow();
     engine.server = new JSONObject().put("device", new JSONObject().put("id", device));
-    File[] files = new File[3];
+    File[] files = new File[4];
     try {
       var upload = Engine.class.getDeclaredMethod("upload", JSONObject.class, BackgroundTransfers.Ticket.class);
       upload.setAccessible(true);
       for (int i = 0; i < files.length; i++) {
         String sid = UUID.randomUUID().toString();
         File file = files[i] = new File(directory, sid + ".mp4");
-        if (i != 1) copySample(file);
+        boolean invalidMedia = i == 1 || i == 3;
+        if (!invalidMedia) copySample(file);
         else try (FileOutputStream out = new FileOutputStream(file)) { out.write(new byte[2048]); }
         JSONArray queue = engine.vault.array("upload-queue");
         queue.put(new JSONObject().put("id", sid).put("device", device).put("status", "recording")
             .put("liveLogoRequired", true).put("audioExpected", false));
         engine.vault.put("upload-queue", queue.toString());
-        if (i != 0) engine.noteCaptureInterruption(sid, new CameraCapture.Interruption(
+        boolean interrupted = i == 1 || i == 2;
+        if (interrupted) engine.noteCaptureInterruption(sid, new CameraCapture.Interruption(
             CameraCapture.InterruptionCode.CAMERA_DISCONNECTED, "Camera disconnected."));
         assertThrows(RecordingAccuracy.Failure.class, () -> engine.saveFinalizedCapture(sid, file, 1000));
         LiveLogoEvidence.mark(file);
@@ -113,10 +120,10 @@ public class LiveRecordingValidationTest {
         JSONObject updated = new Vault(fixture).array("upload-queue").getJSONObject(i);
         assertTrue(file.exists());
         assertFalse(actions.contains("upload"));
-        if (i != 0) assertEquals("camera_disconnected", updated.getString("captureInterruptionCode"));
+        if (interrupted) assertEquals("camera_disconnected", updated.getString("captureInterruptionCode"));
         for (JSONObject request : requests) {
           assertEquals(sid, request.getString("id"));
-          if (i == 0) {
+          if (!interrupted) {
             assertFalse(request.has("capture_interruption_code"));
             assertFalse(request.has("capture_interrupted_at"));
           } else {
@@ -124,7 +131,7 @@ public class LiveRecordingValidationTest {
             assertEquals(updated.getLong("captureInterruptedAt"), request.getLong("capture_interrupted_at"));
           }
         }
-        if (i != 1) {
+        if (!invalidMedia) {
           assertEquals(List.of("captured", "saved"), actions);
           assertEquals("local_only", updated.getString("status"));
           assertFalse(updated.getBoolean("validationPending"));
@@ -137,10 +144,13 @@ public class LiveRecordingValidationTest {
           assertEquals(List.of("captured", "upload-failed"), actions);
           assertEquals("failed", updated.getString("status"));
           assertTrue(updated.getBoolean("validationFailed"));
+          assertFalse(updated.getBoolean("validationPending"));
           assertEquals(404, LocalVideoResponse.open(engine, file.getName(), null).getStatusCode());
           assertEquals(file, engine.localPlaybackFile(sid));
-          engine.retryUpload(sid);
-          assertEquals("failed", new Vault(fixture).array("upload-queue").getJSONObject(i).getString("status"));
+          if (interrupted) {
+            engine.retryUpload(sid);
+            assertEquals("failed", new Vault(fixture).array("upload-queue").getJSONObject(i).getString("status"));
+          }
         }
       }
     } finally {

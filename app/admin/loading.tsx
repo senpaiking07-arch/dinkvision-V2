@@ -1,13 +1,9 @@
 import { AdminSkeleton, SkeletonBlock, SkeletonRows } from "@/components/admin-skeleton";
+import AdminHeader from "@/components/admin-header";
 
 export default function LoadingAdmin() {
   return <>
-    <header className="site-header shell">
-      <a href="/" className="brand">
-        <img src="/dink-vision-logo.png" alt="Dink Vision" />
-        <span>Venue Management</span>
-      </a>
-    </header>
+    <AdminHeader />
     <main className="shell admin-main">
       <div className="admin-title"><h1>Venue management</h1></div>
       <AdminSkeleton label="Loading the admin dashboard">

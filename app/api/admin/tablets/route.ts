@@ -15,11 +15,11 @@ export async function GET(request: Request) {
   const summary = new URL(request.url).searchParams.get("summary") === "1";
   const db = recorderDatabase(account.tenantId);
   const queue = (captureDetails: boolean, retrySchedule: boolean) => db.from("browser_recordings").select(
-    `session_id,device_id,job_id,file_id,safe_error,last_error,last_seen_at,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_progress,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,device_copy_saved_at,device_copy_bytes,${retrySchedule ? "upload_retry_at," : ""}recording_sessions(id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,configuration_snapshot,failure_stage,${captureDetails ? "capture_interruption_code,capture_inspection_required," : ""}recording_files(id,status,drive_file_id,storage_provider,storage_key,email_jobs(status,safe_error)))`,
+    `session_id,device_id,job_id,file_id,safe_error,last_error,last_seen_at,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_progress,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,device_copy_saved_at,device_copy_bytes,${retrySchedule ? "upload_retry_at," : ""}recording_sessions(id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,configuration_snapshot,failure_stage,${captureDetails ? "capture_interruption_code,capture_inspection_required," : ""}recording_files(id,status,storage_provider,storage_key,email_jobs(status,safe_error)))`,
   ).order("last_seen_at", { ascending: false }).limit(100);
   if (summary) {
     const devices = await db.from("browser_devices")
-      .select("id,name,court_id,enabled,kiosk_id,last_seen_at,tested_at,camera_name").order("created_at");
+      .select("id,name,court_id,enabled,kiosk_id,last_seen_at,tested_at,camera_name,recorder_mode,device_info").order("created_at");
     if (devices.error) return json({ error: "Recorder status is temporarily unavailable." }, 503);
     return json({ devices: devices.data.map(publicTablet) });
   }
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   ]);
   if (devices.error || courts.error || recordings.error)
     return json(
-      { error: "Tablet setup needs the latest database migration." },
+      { error: "Recorder status is temporarily unavailable. Select Refresh to try again." },
       503,
     );
   return json({
@@ -172,7 +172,7 @@ export async function POST(request: Request) {
     }
     const name = String(b.name || "").trim();
     if (!name || name.length > 100)
-      throw new InputError("Enter a tablet name (up to 100 characters).");
+      throw new InputError("Enter a recorder name (up to 100 characters).");
     const court = b.court_id ? uuid(b.court_id) : null;
     const issue = b.action === "enroll" || !id;
     const code = issue ? randomBytes(9).toString("base64url") : "";
@@ -219,9 +219,9 @@ export async function POST(request: Request) {
         error:
           e instanceof InputError
             ? e.message
-            : "Tablet setup could not be saved.",
+            : "The recorder update could not be confirmed. Refresh the device status before trying again.",
       },
-      400,
+      e instanceof InputError ? 400 : 503,
     );
   }
 }

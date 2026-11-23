@@ -1923,6 +1923,76 @@ summary {
 .recorder-setup-guide { border-top: 1px solid var(--recorder-border); color: var(--recorder-muted); }
 
 /* Shared admin surfaces */
+.admin-site-header .admin-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 14px;
+  min-width: 0;
+}
+.admin-header-actions .sign-in {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 38px;
+}
+.admin-page-panel { width: min(100%, 650px); margin-inline: auto; }
+.recorder-workspace-header h1 {
+  margin: 0;
+  color: var(--recorder-ink);
+  font-family: Georgia, serif;
+  font-weight: 400;
+  font-size: clamp(24px, 3vw, 33px);
+  letter-spacing: -.02em;
+  overflow-wrap: anywhere;
+}
+.admin-page-content {
+  font-family: "DM Sans", Arial, sans-serif;
+}
+.admin-page-panel.enrollment-qr-card { width: min(100%, 650px); text-align: start; }
+.admin-page-content .enrollment-qr-details { justify-self: center; text-align: center; }
+.admin-page-content .enrollment-qr-details img { max-width: 100%; height: auto; }
+.admin-page-content > :is(p, .stack-form),
+.admin-enrollment-status p { margin: 0; }
+.admin-page-content > :is(.primary, .sign-in),
+.admin-page-panel > .primary { justify-self: start; }
+.admin-work-panel :is(h2, h3) {
+  overflow-wrap: anywhere;
+}
+.admin-pairing-help {
+  padding-top: 10px;
+  border-top: 1px solid var(--recorder-border);
+}
+.admin-pairing-help p { color: var(--recorder-muted); line-height: 1.55; }
+.admin-pairing-help input {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 9px;
+  padding: 8px;
+  font: inherit;
+  border: 1px solid var(--recorder-border);
+  border-radius: 8px;
+}
+.admin-enrollment-status { display: grid; }
+.admin-main .confirm-modal {
+  color: var(--recorder-ink, #12363c);
+  border-color: var(--recorder-border, #d9e4de);
+  border-radius: 15px;
+}
+@media (max-width: 615px) {
+  .admin-site-header {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    height: auto;
+    min-height: 78px;
+    padding-block: 10px;
+  }
+  .admin-site-header .brand img { width: clamp(78px, 24vw, 110px); height: auto; }
+  .admin-site-header .brand > span { font-size: clamp(13px, 3.7vw, 17px); letter-spacing: .045em; }
+  .admin-site-header .admin-header-actions { justify-content: flex-start; }
+}
 .admin-main .admin-title h1 { margin: 0; font-size: clamp(29px, 4.6vw, 43px); }
 .admin-main .admin-tabs { margin-block: 22px; }
 .admin-main .admin-tabs button:focus-visible,
@@ -2145,3 +2215,50 @@ summary {
   .recorder-overview-stats dd span { white-space: normal; }
 }
 .device-progress-unreported{display:block;height:7px;background:#dce3d7;border-radius:7px}
+
+/* Device editor */
+.recorder-editor-content > button, .device-editor-access .save-row button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.device-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: clamp(12px, 2.4vw, 20px);
+  border: 1px solid var(--recorder-border);
+  border-radius: 12px;
+  background: var(--recorder-tint);
+}
+.device-editor-header h3 { margin: 5px 0; font-size: clamp(22px, 3vw, 30px); overflow-wrap: anywhere; }
+.device-editor-header h3:focus { outline: none; }
+.tablet-editor { scroll-margin-top: 10px; }
+.device-editor-header p { margin: 0; color: var(--recorder-muted); font-size: 13px; line-height: 1.5; }
+.tablet-editor .device-editor-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+}
+.device-editor-fields legend { padding: 0 0 10px; font-size: 15px; font-weight: 700; }
+.device-editor-fields label small { line-height: 1.4; }
+.device-editor-save { display: flex; justify-content: flex-end; padding-top: 10px; border-top: 1px solid var(--recorder-border); }
+.device-editor-support { display: grid; gap: 10px; }
+.device-editor-support.has-access { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+.device-editor-access { display: grid; align-items: start; gap: 10px; }
+.device-editor-access > button { justify-self: start; }
+.device-editor-access .save-row { margin: 0; gap: 7px; flex-wrap: wrap; }
+.device-editor-access p, .device-editor-camera p { margin-top: 6px; }
+.device-editor-technical { border-top: 1px solid var(--recorder-border); padding-block: 8px; }
+.device-editor-technical p { color: var(--recorder-muted); margin: 5px 0; overflow-wrap: anywhere; }
+@media (max-width: 920px) {
+  .device-editor-support.has-access { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .tablet-editor .device-editor-fields { grid-template-columns: minmax(0, 1fr); }
+  .device-editor-save .primary { width: 100%; }
+
+}

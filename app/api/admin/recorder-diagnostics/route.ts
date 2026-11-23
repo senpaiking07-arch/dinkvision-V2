@@ -17,7 +17,7 @@ export async function GET(request:Request) {
     const db = await serverSupabase(selectedTenant ? uuid(selectedTenant) : undefined);
     const admin = await db.rpc("is_admin");
     if (admin.error) throw admin.error;
-    if (admin.data !== true) return json({error:"Tenant administrator required."},403);
+    if (admin.data !== true) return json({error:"Venue administrator access required."},403);
     let query=db.from("recorder_diagnostics").select("*");
     if (session) query=query.eq("session_id",uuid(session));
     else query=query.eq("device_id",uuid(device));

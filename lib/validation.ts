@@ -33,6 +33,28 @@ export function integer(
     );
   return value;
 }
+
+export const SECONDS_PER_DAY = 86400;
+export const MIN_RETENTION_DAYS = 1 / 24;
+export const MAX_RETENTION_DAYS = 30;
+
+function retentionSeconds(body: Record<string, unknown>) {
+  const hasDays = Object.hasOwn(body, "retention_days");
+  const hasHours = Object.hasOwn(body, "retention_hours");
+  if (hasDays && hasHours)
+    throw new InputError("Send video retention in days or hours, using one field.");
+  if (!hasDays && !hasHours)
+    throw new InputError("Enter a video retention duration.");
+  if (hasHours)
+    return integer(body.retention_hours, 1, 720, "Retention") * 3600;
+
+  const days = body.retention_days;
+  if (typeof days !== "number" || !Number.isFinite(days) || days < MIN_RETENTION_DAYS || days > MAX_RETENTION_DAYS)
+    throw new InputError("Video retention must be between 1 hour and 30 days. Fractions of a day are allowed.");
+  // Stored durations are whole seconds. This also round-trips days displayed from any stored value.
+  return Math.round(days * SECONDS_PER_DAY);
+}
+
 export function settingsInput(body: Record<string, unknown>) {
   const zone = text(body.venue_time_zone, "Venue time zone", 80);
   try {
@@ -43,8 +65,7 @@ export function settingsInput(body: Record<string, unknown>) {
   return {
     max_duration_seconds:
       integer(body.duration_minutes, 1, 120, "Duration") * 60,
-    retention_seconds:
-      integer(body.retention_hours, 1, 720, "Retention") * 3600,
+    retention_seconds: retentionSeconds(body),
     venue_time_zone: zone,
     updated_at: new Date().toISOString(),
   };

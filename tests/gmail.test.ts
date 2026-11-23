@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import ffmpeg from "ffmpeg-static";
 import MailComposer from "nodemailer/lib/mail-composer";
 import { recordingMessage } from "../lib/gmail";
 const mimeFor = async (message: ReturnType<typeof recordingMessage>) => (await new MailComposer(message).compile().build()).toString();
@@ -53,7 +55,9 @@ test("R2 email displays the public logo in the body without creating a MIME atta
   assert.match(message.html,/#0bd6c1/);
   assert.match(message.html,/Your game\./);
   assert.match(message.html,/On replay\./);
-  assert.match(message.html,/src="https:\/\/dinkvision-v2\.vercel\.app\/dink-vision-logo\.png" alt="DinkVision"/);
+  assert.match(message.html,/src="https:\/\/dinkvision-v2\.vercel\.app\/dink-vision-logo-email-dark\.png" alt="DinkVision"/);
+  assert.match(message.html,/<td style="padding:0;">\s*<img\b/);
+  assert.doesNotMatch(message.html,/bgcolor="#f5f9ff"/);
   assert.match(message.html,/exp=1&amp;sig=x/);
   assert.doesNotMatch(message.html,/Sign in to Google|drive\.google\.com|#f4f2ea|Georgia/);
   const mime=await mimeFor(message);
@@ -65,6 +69,24 @@ test("R2 email displays the public logo in the body without creating a MIME atta
 
 test("a local HTTP replay uses the DinkVision wordmark instead of an inaccessible image",()=>{
   const message=recordingMessage("owner@gmail.com","player@gmail.com",id,"","2026-11-24T00:00:00Z","Asia/Manila",true,undefined,"http://192.168.1.9:3000/replay/token");
-  assert.match(message.html,/>DinkVision<\/span>/);
+  assert.match(message.html,/>Dink<span style="color:#00c9bc;">Vision<\/span><\/span>/);
   assert.doesNotMatch(message.html,/<img\b/);
+});
+
+test("the dark email logo retains visible light and teal lettering at display size", () => {
+  assert.ok(ffmpeg, "A PNG decoder is required for the logo check");
+  const pixels = execFileSync(ffmpeg, [
+    "-loglevel", "error", "-i", "public/dink-vision-logo-email-dark.png",
+    "-vf", "scale=144:-1", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1",
+  ]);
+  let transparent = 0, light = 0, teal = 0;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const [r, g, b, alpha] = pixels.subarray(i, i + 4);
+    if (alpha < 10) transparent++;
+    if (alpha > 200 && r > 180 && g > 180 && b > 180) light++;
+    if (alpha > 200 && r < 80 && g > 150 && b > 140) teal++;
+  }
+  const area = pixels.length / 4;
+  assert.ok(transparent > area * 0.5, "The background must let the navy header show through");
+  assert.ok(light > area * 0.03 && teal > area * 0.05, "Both wordmark colors need solid coverage");
 });

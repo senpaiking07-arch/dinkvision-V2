@@ -310,7 +310,7 @@ final class Api {
         }
       }
       int status = c.getResponseCode();
-      if (status == 404 || status == 410) return new JSONObject().put("expired", true);
+      if (status == 403 || status == 404 || status == 410) return new JSONObject().put("expired", true);
       if (status >= 200 && status < 300) return new JSONObject().put("accepted", true);
       throw new RequestFailure("Private storage upload paused (HTTP " + status + "). The video remains saved locally.",
           status >= 500 ? "http_server" : "http_client", status);

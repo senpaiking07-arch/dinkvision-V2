@@ -6,6 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { DEFAULT_TENANT_ID } from "../lib/tenant-scope";
 import { migrationSQL } from "../scripts/migration-role-compat.mjs";
 import { R2_MAX_BYTES, uploadPartSize } from "../lib/r2-protocol";
+import { settingsInput } from "../lib/validation";
 
 test("R2 completion is atomic, tenant-bound, idempotent and cannot undo cancellation",async()=>{
  const db=new PGlite();
@@ -68,8 +69,23 @@ test("R2 completion is atomic, tenant-bound, idempotent and cannot undo cancella
   assert.equal(await finish(one),true);
   assert.equal(await finish(one),true);
   assert.equal((await db.query<{n:number}>("select count(*)::int n from email_jobs where file_id=$1",[one.file])).rows[0].n,1);
-  const file=(await db.query<any>("select storage_provider,storage_key,drive_file_id,status,expires_at from recording_files where id=$1",[one.file])).rows[0];
+  const file=(await db.query<any>("select storage_provider,storage_key,drive_file_id,status,expires_at::text as expires_at from recording_files where id=$1",[one.file])).rows[0];
   assert.equal(file.storage_provider,"r2");assert.equal(file.drive_file_id,null);assert.equal(file.status,"ready");
+  const pendingRetention = await recording();
+  const saved = settingsInput({ duration_minutes: 15, retention_days: 7, venue_time_zone: "Asia/Manila" });
+  await db.query("update venue_settings set retention_seconds=$1 where id=true and tenant_id=$2", [saved.retention_seconds, DEFAULT_TENANT_ID]);
+  const loaded = await db.query<{ retention_seconds: number }>(
+   "select retention_seconds from venue_settings where id=true and tenant_id=$1", [DEFAULT_TENANT_ID]);
+  assert.equal(loaded.rows[0].retention_seconds, 604800);
+  const existingExpiry = await db.query<{ expires_at: string }>(
+   "select expires_at::text as expires_at from recording_files where id=$1", [one.file]);
+  assert.equal(existingExpiry.rows[0].expires_at, file.expires_at);
+  assert.equal(await finish(pendingRetention), true);
+  const retained = await db.query<{ snapshot: number; lifetime: number }>(
+   `select (s.configuration_snapshot->>'retention_seconds')::int as snapshot,
+     extract(epoch from f.expires_at - f.uploaded_at)::int as lifetime
+     from recording_sessions s join recording_files f on f.session_id=s.id where f.id=$1`, [pendingRetention.file]);
+  assert.deepEqual(retained.rows[0], { snapshot: 3600, lifetime: 3600 });
   await db.query("update browser_recordings set upload_state='failed',last_error='late failure' where session_id=$1",[one.session]);
   assert.equal((await db.query<any>("select upload_state from browser_recordings where session_id=$1",[one.session])).rows[0].upload_state,"uploaded");
   const two=await recording();

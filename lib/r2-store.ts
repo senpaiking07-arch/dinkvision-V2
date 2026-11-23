@@ -65,10 +65,12 @@ export class R2Store {
   async remove(object: R2Object) {
     await this.client.send(new DeleteObjectCommand(this.target(object)), {abortSignal:AbortSignal.timeout(15000)});
   }
-  async playback(object: R2Object, download: boolean, expiresIn: number) {
+  async playback(object: R2Object, download: boolean, expiresIn: number, downloadFilename?: string) {
+    const filename = download && downloadFilename?.endsWith(".mp4") && /^[a-z0-9][a-z0-9_-]{0,95}\.mp4$/.test(downloadFilename)
+      ? downloadFilename : "dinkvision-replay.mp4";
     return getSignedUrl(this.client,new GetObjectCommand({
       ...this.target(object),ResponseContentType:"video/mp4",ResponseCacheControl:"private, no-store",
-      ResponseContentDisposition:`${download ? "attachment" : "inline"}; filename="dinkvision-replay.mp4"`,
+      ResponseContentDisposition:`${download ? "attachment" : "inline"}; filename="${filename}"`,
     }), {expiresIn});
   }
 }

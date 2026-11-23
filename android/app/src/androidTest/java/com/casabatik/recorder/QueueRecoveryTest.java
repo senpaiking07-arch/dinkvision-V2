@@ -79,7 +79,9 @@ public class QueueRecoveryTest {
     };
     String present=UUID.randomUUID().toString(), missing=UUID.randomUUID().toString();
     File original=new File(directory,present+".mp4");
-    try(FileOutputStream out=new FileOutputStream(original)){out.write(new byte[2048]);}
+    File backup=new File(directory,present+".mp4.dinkvision.backup");
+    assertTrue(original.createNewFile());
+    try(FileOutputStream out=new FileOutputStream(backup)){out.write(new byte[2048]);}
     Vault vault=new Vault(context);
     JSONArray jobs=new JSONArray();
     for(String id:new String[]{present,missing}) jobs.put(new JSONObject().put("id",id).put("device",device)
@@ -92,6 +94,7 @@ public class QueueRecoveryTest {
       assertEquals("saved_locally",restored.getJSONObject(0).getString("status"));
       assertFalse("A stale processing flag must be cleared at restart", "processing".equals(restored.getJSONObject(0).optString("brandingState")));
       assertEquals(3,restored.getJSONObject(0).getInt("retryCount"));assertEquals(2048,original.length());
+      assertFalse("Startup restores a nonempty backup over an empty replacement", backup.exists());
       assertFalse(restored.getJSONObject(1).getBoolean("localAvailable"));
       assertEquals("failed",restored.getJSONObject(1).getString("status"));
       assertTrue(restored.getJSONObject(1).getString("lastError").contains("no longer present"));
@@ -101,7 +104,71 @@ public class QueueRecoveryTest {
       assertEquals(200,LocalVideoResponse.open(engine,present+".mp4",null).getStatusCode());
     } finally {
       if(engine!=null){engine.heartbeat.shutdownNow();engine.work.shutdownNow();engine.uploads.shutdownNow();engine.exports.shutdownNow();}
-      original.delete();directory.delete();root.delete();context.getSharedPreferences("vault",0).edit().clear().commit();
+      original.delete();backup.delete();directory.delete();root.delete();context.getSharedPreferences("vault",0).edit().clear().commit();
+    }
+  }
+
+  @Test public void restartRevalidatesReappearingBytesAndSkipsEmptyOrphans() throws Exception {
+    Context base = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    String namespace = "restored-file-" + UUID.randomUUID();
+    String device = UUID.randomUUID().toString();
+    File root = new File(base.getCacheDir(), namespace), directory = new File(root, "recordings");
+    assertTrue(directory.mkdirs());
+    Context context = new ContextWrapper(base) {
+      @Override public Context getApplicationContext() { return this; }
+      @Override public File getFilesDir() { return root; }
+      @Override public File getCacheDir() { return root; }
+      @Override public SharedPreferences getSharedPreferences(String name, int mode) {
+        return base.getSharedPreferences(namespace + name, mode);
+      }
+    };
+    String id = UUID.randomUUID().toString(), preparing = UUID.randomUUID().toString();
+    File original = new File(directory, id + ".mp4");
+    File empty = new File(directory, UUID.randomUUID() + ".mp4");
+    assertTrue(empty.createNewFile());
+    try (FileOutputStream out = new FileOutputStream(original)) { out.write(new byte[2048]); }
+    Vault vault = new Vault(context);
+    vault.put("device-id", device);
+    vault.put("upload-queue", new JSONArray().put(new JSONObject()
+        .put("id", id).put("device", device).put("status", "failed").put("liveLogoRequired", true)
+        .put("localAvailable", false).put("validationFailed", true)
+        .put("captureInterruptionCode", "app_interrupted")).toString());
+    try {
+      for (int restart = 0; restart < 2; restart++) {
+        Engine engine = new Engine(context, url -> { throw new IOException("Isolated recovery fixture"); });
+        try {
+          engine.heartbeat.shutdownNow();
+          JSONArray restored = engine.vault.array("upload-queue");
+          assertEquals(1, restored.length());
+          JSONObject item = restored.getJSONObject(0);
+          assertEquals(id, item.getString("id"));
+          assertEquals("pending", item.getString("status"));
+          assertTrue(item.getBoolean("validationPending"));
+          assertFalse(item.getBoolean("validationFailed"));
+          assertEquals(503, LocalVideoResponse.open(engine, original.getName(), null).getStatusCode());
+          assertEquals(2048, original.length());
+          assertTrue(empty.isFile());
+          if (restart == 1) {
+            restored.put(new JSONObject().put("id", preparing).put("status", "recording"));
+            engine.vault.put("upload-queue", restored.toString());
+            engine.busy = true;
+            engine.reconcileMissingLocalFiles();
+            assertEquals("recording", engine.vault.array("upload-queue").getJSONObject(1).getString("status"));
+          }
+        } finally {
+          engine.heartbeat.shutdownNow();
+          engine.work.shutdownNow();
+          engine.uploads.shutdownNow();
+          engine.exports.shutdownNow();
+        }
+      }
+    } finally {
+      original.delete();
+      empty.delete();
+      new File(root, "camera-test").delete();
+      directory.delete();
+      root.delete();
+      context.getSharedPreferences("vault", 0).edit().clear().commit();
     }
   }
   @Test public void fivePendingUploadsRemainFifoAndKeepTheirFiles() throws Exception {

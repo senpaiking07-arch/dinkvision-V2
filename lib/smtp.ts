@@ -58,12 +58,12 @@ export async function smtpHealth() {
     const { transport } = smtpTransport();
     await transport.verify();
     return { ready: true, code: "connected", checkedAt: new Date().toISOString() };
-  } catch (error) {
+  } catch {
     return {
       ready: false,
       code: "smtp_unavailable",
       checkedAt: new Date().toISOString(),
-      detail: error instanceof Error ? error.message : "SMTP verification failed",
+      detail: "Could not connect to the mail server. Check the SMTP host, port, TLS settings, and credentials.",
     };
   }
 }

@@ -372,6 +372,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
           engine.discard();
           break;
         case "leave-confirmed":
+          engine.leavePlayerWorkflow();
           runOnUiThread(() -> moveTaskToBack(true));
           break;
       }

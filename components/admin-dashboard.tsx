@@ -20,6 +20,8 @@ import type { AdminData, Court } from "@/lib/admin-types";
 import type { AdminDevice } from "@/components/admin-device-types";
 import { devicePresence } from "@/lib/device-presence";
 import { recordingIsConfirmed } from "@/lib/recording-status";
+import { cameraHealth } from "@/lib/camera-health";
+import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, SECONDS_PER_DAY } from "@/lib/validation";
 import { AdminSkeleton, SkeletonBlock } from "@/components/admin-skeleton";
 import { RecordingLogRow, recordingLogStatus, recordingStatuses } from "@/components/admin-recording-log";
 
@@ -387,6 +389,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
   );
   const now = Date.now();
   const connectedTablets = tablets?.filter(device => devicePresence(device, now).connected);
+  const readyCameras = tablets?.filter(device => cameraHealth(device, devicePresence(device, now), now).state === "ready").length;
   const courtQuery = courtSearch.trim().toLowerCase();
   const visibleCourts = [...activeCourts, ...data.courts.filter(court => !court.active)]
     .filter(court => `${court.name} ${court.location || ""}`.toLowerCase().includes(courtQuery));
@@ -400,7 +403,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
   const overviewStatuses = [
     { label: "Active courts", icon: LayoutGrid, value: activeCourts.length, tab: "courts" },
     { label: "Connected recorders", icon: Wifi, value: connectedTablets?.length, tab: "cameras" },
-    { label: "Tested cameras", icon: CameraIcon, value: tablets?.filter(device => device.enabled && device.tested_at).length, tab: "cameras" },
+    { label: "Cameras ready", icon: CameraIcon, value: readyCameras, tab: "cameras" },
     { label: "Recent recordings", icon: List, value: data.sessions.length, tab: "logs" },
   ] as const;
   const nav = [
@@ -416,9 +419,6 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
         <div>
           <h1>Venue management</h1>
         </div>
-        <a className="sign-in" href="/tenants">
-          Venue access
-        </a>
       </div>
       <nav className="admin-tabs" aria-label="Admin sections">
         {nav.map((item) => (
@@ -466,7 +466,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
               <dt><Icon size={16} aria-hidden="true" />{label}</dt>
               <dd>{value ?? (deviceStatusError ? "—" : <AdminSkeleton label={`Loading ${label.toLowerCase()}`}><SkeletonBlock className="is-number" /></AdminSkeleton>)}</dd>
               <button type="button" className="recorder-text-action" onClick={() => { if (next === "logs") resetFilters(); setTab(next); }}>
-                {next === "courts" ? "View courts" : next === "logs" ? "Open logs" : label === "Tested cameras" ? "Check cameras" : "View recorders"} <ChevronRight size={14} aria-hidden="true" />
+                {next === "courts" ? "View courts" : next === "logs" ? "Open logs" : label === "Cameras ready" ? "Review cameras" : "View recorders"} <ChevronRight size={14} aria-hidden="true" />
               </button>
             </div>)}
           </dl>
@@ -580,7 +580,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
                 resource="settings"
                 convert={(f) => ({
                   duration_minutes: Number(f.get("duration_minutes")),
-                  retention_hours: Number(f.get("retention_hours")),
+                  retention_days: Number(f.get("retention_days")),
                   venue_time_zone: f.get("venue_time_zone"),
                 })}
               >
@@ -598,16 +598,18 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
                     />
                   </label>
                   <label>
-                    Video retention after upload (hours)
+                    Video retention after upload (days)
                     <input
                       type="number"
-                      name="retention_hours"
-                      min={1}
-                      max={720}
-                      step={1}
-                      defaultValue={data.settings.retention_seconds / 3600}
+                      name="retention_days"
+                      min={MIN_RETENTION_DAYS}
+                      max={MAX_RETENTION_DAYS}
+                      step="any"
+                      defaultValue={data.settings.retention_seconds / SECONDS_PER_DAY}
+                      aria-describedby="video-retention-range"
                       required
                     />
+                    <span className="form-note" id="video-retention-range">1 hour to 30 days. For example, 0.5 is 12 hours.</span>
                   </label>
                 </div>
                 <label>
@@ -628,9 +630,8 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
                 </label>
                 <div className="admin-callout">
                   <p>
-                    Duration changes apply to new sessions. Retention changes apply
-                    to newly uploaded videos. Existing recordings keep their saved
-                    limits and expiry.
+                    New sessions use the updated duration and retention. Retention
+                    starts when the video finishes uploading.
                   </p>
                 </div>
                 <label className="check-label">

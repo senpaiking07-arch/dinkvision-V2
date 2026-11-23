@@ -117,6 +117,33 @@ public class RecordingAccuracyTest {
       engine.busy = false;
     }
   }
+  @Test public void leavingCancelsPreparationAndPreservesAnActiveRecording() {
+    Engine engine = Engine.get(InstrumentationRegistry.getInstrumentation().getTargetContext());
+    boolean wasVisible = engine.visible;
+    try {
+      engine.busy = true;
+      engine.captureAttempt = "test-attempt";
+      for (String phase : new String[]{"connecting", "countdown", "recording"}) {
+        engine.visible = true;
+        engine.stop = false;
+        engine.phase = phase;
+        engine.leavePlayerWorkflow();
+        assertFalse(engine.visible);
+        assertEquals(!"recording".equals(phase), engine.stop);
+      }
+      engine.busy = false;
+      engine.phase = "idle";
+      engine.start("invalid delayed start", System.nanoTime());
+      assertEquals("idle", engine.phase);
+    } finally {
+      engine.visible = wasVisible;
+      engine.busy = false;
+      engine.stop = false;
+      engine.phase = "idle";
+      engine.captureAttempt = "";
+    }
+  }
+
   @Test public void incompleteAudioCannotPassRecoveryValidation() throws Exception {
     var instrumentation = InstrumentationRegistry.getInstrumentation();
     File file = new File(instrumentation.getTargetContext().getCacheDir(), "bad-timing.mp4");

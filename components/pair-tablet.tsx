@@ -43,7 +43,7 @@ export default function PairTablet({ requestId, devices }: { requestId: string; 
     }
   }
 
-  if (result) return <p role="status">{result}</p>;
+  if (result) return <p className="recorder-alert is-success" role="status">{result}</p>;
   return <form className="stack-form" onSubmit={submit}>
     <label>Tablet pairing number
       <input inputMode="numeric" pattern="[0-9]{6}" autoComplete="off" maxLength={6} required disabled={busy}
@@ -57,13 +57,15 @@ export default function PairTablet({ requestId, devices }: { requestId: string; 
         {devices.map(choice => <option key={choice.id} value={choice.id}>{choice.name} · {choice.court}</option>)}
       </select>
     </label>
-    {!devices.length && <p>Assign an enabled device to an active court in Devices & cameras first.</p>}
-    {replacementRequired && <label>
+    {!devices.length && <p className="recorder-alert">Assign an enabled device to an active court in Devices &amp; cameras first.</p>}
+    {replacementRequired && <label className="check-label">
       <input type="checkbox" checked={replace} disabled={busy} onChange={event => setReplace(event.target.checked)} />
       Confirm replacement of the existing registration
     </label>}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <button className="primary" disabled={busy || !device || (replacementRequired && !replace)}>Approve pairing</button>
-    {requestId && <button type="submit" value="decline" disabled={busy}>Decline request</button>}
+    <div className="recorder-workspace-actions">
+      <button className="primary" disabled={busy || !device || (replacementRequired && !replace)}>{busy ? "Submitting…" : "Approve pairing"}</button>
+      {requestId && <button className="secondary" type="submit" value="decline" disabled={busy}>Decline request</button>}
+    </div>
   </form>;
 }

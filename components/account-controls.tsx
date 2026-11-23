@@ -2,7 +2,7 @@
 import { useState } from "react";
 import type { Account } from "@/lib/auth";
 
-export default function AccountControls({ account }: { account: Account }) {
+export default function AccountControls({ account, showAdminLink = true }: { account: Account; showAdminLink?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function logout() {
@@ -20,7 +20,7 @@ export default function AccountControls({ account }: { account: Account }) {
   return (
     <div className="account-controls">
       <span>{account.displayName || account.email}</span>
-      {account.role === "admin" && <a href="/admin">Admin</a>}
+      {showAdminLink && account.role === "admin" && <a href="/admin">Admin</a>}
       <button className="sign-in" disabled={busy} onClick={logout}>
         {busy ? "Signing out…" : "Sign out"}
       </button>

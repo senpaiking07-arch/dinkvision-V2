@@ -27,11 +27,13 @@ export default function PairingBrowserFallback({ path }: { path: string }) {
     }
   }
 
-  return <details>
+  return <details className="recorder-disclosure admin-pairing-help">
     <summary>Trouble signing in from your scanner?</summary>
     <p>Choose Open in browser from your scanner menu. You can also copy this link and open it in Safari, Chrome, or your preferred browser.</p>
-    <p><a href={browserLink} target="_blank" rel="noopener noreferrer">Open in external browser</a></p>
-    <button type="button" className="button secondary" onClick={() => void copyLink()}>Copy pairing link</button>
+    <div className="recorder-workspace-actions">
+      <a className="sign-in" href={browserLink} target="_blank" rel="noopener noreferrer">Open in external browser</a>
+      <button type="button" className="secondary" onClick={() => void copyLink()}>Copy pairing link</button>
+    </div>
     <input ref={linkField} aria-label="Pairing link" readOnly hidden />
     <p role="status">{copyStatus}</p>
   </details>;

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Camera, ChevronRight, CloudUpload, Monitor, Plus, QrCode, RefreshCw, Search, Settings2, Smartphone, Trash2, TriangleAlert, Wifi } from "lucide-react";
 import { recordingIsConfirmed } from "@/lib/recording-status";
 import { devicePresence } from "@/lib/device-presence";
+import { cameraHealth } from "@/lib/camera-health";
 import AdminDeviceQueue, { formatDeviceTime, uploadCounts } from "@/components/admin-device-queue";
 import { AdminSkeleton, SkeletonBlock, SkeletonRows } from "@/components/admin-skeleton";
 import type { AdminDevice, AdminDevicesData, DeviceRecording } from "./admin-device-types";
@@ -32,21 +33,28 @@ export default function BrowserTabletsAdmin() {
   const refreshSequence = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
-    if (!newTabletVersion) return;
-    tabletEditor.current?.scrollIntoView({
-      block: "nearest",
-      behavior: "smooth",
-    });
-    tabletEditor.current
-      ?.querySelector<HTMLInputElement>('input[name="name"]')
-      ?.focus({ preventScroll: true });
-  }, [newTabletVersion]);
+    const editor = tabletEditor.current;
+    if (panel === "overview" || !editor) return;
+    const mobile = window.matchMedia("(max-width: 760px)").matches;
+    if (mobile) {
+      editor.scrollIntoView({ block: "start", behavior: "instant" });
+      editor.querySelector<HTMLElement>(".device-editor-header h3")?.focus({ preventScroll: true });
+    } else if (panel === "create") {
+      editor.scrollIntoView({ block: "nearest" });
+      editor.querySelector<HTMLInputElement>('input[name="name"]')?.focus({ preventScroll: true });
+    } else {
+      editor.querySelector<HTMLElement>(".device-editor-header h3")?.focus();
+    }
+  }, [panel, newTabletVersion]);
   async function refresh() {
     const request = ++refreshSequence.current;
     try {
       const r = await fetch("/api/admin/tablets", { cache: "no-store", signal: AbortSignal.timeout(12000) });
-      const d = await r.json();
-      if (!r.ok) throw Error(d.error || "Device status is unavailable.");
+      if (r.status === 401 || r.status === 403) throw Error("Sign in as a venue administrator to refresh recorder status.");
+      const d = await r.json().catch(() => null);
+      if (!d || !r.ok) throw Error(d?.error || "Could not load recorder status. Select Refresh to try again.");
+      if (!Array.isArray(d.devices) || !Array.isArray(d.courts) || !Array.isArray(d.recordings))
+        throw Error("The recorder report was incomplete. Select Refresh to try again.");
       if (request !== refreshSequence.current) return;
       setConnectionNotice("");
       setData({...d,receivedAt:Date.now()});
@@ -55,7 +63,7 @@ export default function BrowserTabletsAdmin() {
       if (request !== refreshSequence.current) return;
       setConnectionNotice(navigator.onLine
         ? e instanceof TypeError || e instanceof DOMException
-          ? "Could not refresh device status. Showing the last report while we reconnect."
+          ? "Could not load recorder status. Select Refresh to try again."
           : (e as Error).message
         : "You’re offline. Device information may be out of date.");
     } finally {
@@ -96,10 +104,11 @@ export default function BrowserTabletsAdmin() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
       });
-      const d = await r.json();
-      if(r.status===409 && d.replacementRequired){setReplacingEnrollment(body);return false;}
-      if (!r.ok) throw Error(d.error);
+      const d = await r.json().catch(() => null);
+      if(r.status===409 && d?.replacementRequired){setReplacingEnrollment(body);return false;}
+      if (!r.ok || !d) throw Error(d?.error || "The recorder update could not be confirmed. Refresh before trying again.");
       if (opensQr) {
         const invitation = enrollmentQrFromResponse(d);
         if (!invitation) throw Error("The enrollment invitation is unavailable. Create a new QR.");
@@ -115,7 +124,9 @@ export default function BrowserTabletsAdmin() {
       await refresh();
       return true;
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof TypeError || e instanceof DOMException
+        ? "The recorder update could not be confirmed. Refresh before trying again."
+        : (e as Error).message);
       return false;
     } finally {
       if (!openedInvitation) qrTab?.close();
@@ -131,13 +142,16 @@ export default function BrowserTabletsAdmin() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file_id: fileId }),
+        signal: AbortSignal.timeout(15000),
       });
-      const result = await response.json();
-      if (!response.ok) throw Error(result.error);
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result) throw Error(result?.error || "The replay email request could not be confirmed.");
       setNotice("Replay email queued. Its delivery status will update here.");
       await refresh();
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof TypeError || e instanceof DOMException
+        ? "The replay email request could not be confirmed. Check its status before trying again."
+        : (e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -160,8 +174,9 @@ export default function BrowserTabletsAdmin() {
   const directory = devices.map(device => {
     const court = courts.find(item => item.id === device.court_id)?.name || "Unassigned";
     const presence = devicePresence(device, now);
+    const camera = cameraHealth(device, presence, now);
     const failed = uploadCounts(recordingsByDevice.get(device.id) || []).failed;
-    return { device, court, presence, failed, attention: device.enabled && (!presence.connected || !device.tested_at || failed > 0) };
+    return { device, court, presence, camera, failed, attention: device.enabled && (!presence.connected || camera.state !== "ready" || failed > 0) };
   });
   const query = search.trim().toLowerCase();
   const filtered = directory.filter(entry =>
@@ -171,12 +186,23 @@ export default function BrowserTabletsAdmin() {
   );
   const selectedEntry = directory.find(entry => entry.device.id === selected?.id);
   const selectedRows = selected ? recordingsByDevice.get(selected.id) || [] : [];
-  const capture = selectedRows.find(row => row.recording_sessions?.status === "recording");
-  const confirmedCapture = capture?.recording_sessions?.status === "recording" && recordingIsConfirmed({
-    status: capture.recording_sessions.status,
-    started_at: capture.recording_sessions.started_at || null,
-    duration_seconds: capture.recording_sessions.duration_seconds,
-  }, { session_id: capture.session_id, last_seen_at: capture.last_seen_at || null }, now);
+  const activeCapture = selectedRows.find(row =>
+    ["recording", "finalizing"].includes(row.recording_sessions?.status || ""));
+  const captureSession = activeCapture?.recording_sessions;
+  const confirmedCapture = captureSession?.status === "recording" && recordingIsConfirmed({
+    status: captureSession.status,
+    started_at: captureSession.started_at || null,
+    duration_seconds: captureSession.duration_seconds ?? null,
+  }, { session_id: activeCapture?.session_id || "", last_seen_at: activeCapture?.last_seen_at || null }, now);
+  // Finalizing is server state from the device's stop report. Only call it live
+  // while the recorder is still in contact; otherwise keep it unconfirmed.
+  const finalizingCapture = captureSession?.status === "finalizing";
+  const captureLive = finalizingCapture ? !!selectedEntry?.presence.connected : confirmedCapture;
+  const captureLabel = finalizingCapture
+    ? (captureLive ? "Finalizing recording" : "Finalizing unconfirmed")
+    : (confirmedCapture ? "Recording now" : "Recording unconfirmed");
+  const readyCameras = directory.filter(entry => entry.camera.state === "ready").length;
+  const registeredCameras = devices.filter(device => device.enabled && device.kiosk_id).length;
   const availableCourts = courts.filter(court => court.id === editing?.court_id ||
     (court.active && !devices.some(device => device.id !== editing?.id && device.court_id === court.id)));
   const hiddenCourtCount = courts.filter(court => court.active).length - availableCourts.filter(court => court.active).length;
@@ -208,12 +234,14 @@ export default function BrowserTabletsAdmin() {
           }}><Plus size={18} aria-hidden="true" /> Add device</button>
         </div>
       </header>
-      {connectionNotice && <p role="status" className="recorder-alert"><TriangleAlert size={17} aria-hidden="true" />{connectionNotice}</p>}
+      {connectionNotice && <p role="status" className="recorder-alert"><TriangleAlert size={17} aria-hidden="true" />
+        <span>{connectionNotice}{data && " The last report is still displayed."}</span>
+      </p>}
       {notice && <p role="status" className="recorder-alert is-success">{notice}</p>}
-      {error && <p role="alert" className="recorder-alert is-danger">{error}</p>}
+      {error && !showEditor && <p role="alert" className="recorder-alert is-danger">{error}</p>}
       {data && <dl className="recorder-overview-stats" aria-label="Recorder status overview">
         <div><dt><Wifi size={16} aria-hidden="true" /> Connected</dt><dd>{directory.filter(entry => entry.presence.connected).length}<span> / {devices.length} devices</span></dd></div>
-        <div><dt><Camera size={16} aria-hidden="true" /> Camera checks due</dt><dd>{devices.filter(device => device.enabled && device.kiosk_id && !device.tested_at).length}</dd></div>
+        <div><dt><Camera size={16} aria-hidden="true" /> Cameras ready</dt><dd>{readyCameras}<span> / {registeredCameras} registered</span></dd></div>
         <div><dt><CloudUpload size={16} aria-hidden="true" /> Uploads in progress</dt><dd>{counts.uploading}<span> · {counts.waiting} waiting</span></dd></div>
         <div><dt><TriangleAlert size={16} aria-hidden="true" /> Failed uploads</dt><dd>{counts.failed}</dd></div>
       </dl>}
@@ -230,7 +258,7 @@ export default function BrowserTabletsAdmin() {
               <input type="checkbox" checked={onlyAttention} onChange={event => setOnlyAttention(event.target.checked)} /> Needs attention only
             </label>
             <ul className="recorder-directory-list">
-              {filtered.map(({ device, court, presence, failed }) => {
+              {filtered.map(({ device, court, presence, camera, failed }) => {
                 const active = panel !== "create" && selected?.id === device.id;
                 const Icon = device.recorder_mode === "android_rtsp" || device.device_info ? Smartphone : Monitor;
                 return <li key={device.id}>
@@ -241,6 +269,7 @@ export default function BrowserTabletsAdmin() {
                       <strong>{device.name}</strong><span>{court}</span>
                       <span className="recorder-directory-status"><i className={presence.connected ? "is-connected" : ""} aria-hidden="true" />{presence.label}
                         {failed > 0 && <span className="recorder-directory-failed"> · {failed} failed</span>}
+                        {camera.state === "disconnected" && <span className="recorder-directory-failed"> · {camera.label}</span>}
                       </span>
                     </span>
                     <ChevronRight size={16} aria-hidden="true" />
@@ -268,8 +297,8 @@ export default function BrowserTabletsAdmin() {
                 <h3>{selected.name}</h3>
                 <div className="recorder-device-statuses">
                   <span className={`recorder-state ${selectedEntry.presence.connected ? "is-success" : selected.enabled ? "is-warning" : ""}`}>{selectedEntry.presence.label}</span>
-                  {selected.enabled && selected.kiosk_id && <span className={`recorder-state ${selected.tested_at ? "is-success" : "is-warning"}`}>{selected.tested_at ? "Camera tested" : "Camera check needed"}</span>}
-                  {capture && <span className={`recorder-state ${confirmedCapture ? "is-live" : "is-warning"}`}>{confirmedCapture ? "Recording now" : "Recording unconfirmed"}</span>}
+                  {selected.enabled && selected.kiosk_id && <span className={`recorder-state ${selectedEntry.camera.tone}`}>{selectedEntry.camera.label}</span>}
+                  {captureSession && <span className={`recorder-state ${captureLive ? "is-live" : "is-warning"}`}>{captureLabel}</span>}
                 </div>
               </div>
               <button className="secondary recorder-manage-button" type="button" disabled={busy} onClick={() => {
@@ -282,15 +311,16 @@ export default function BrowserTabletsAdmin() {
                   <h4><Camera size={18} aria-hidden="true" /> Camera &amp; audio</h4>
                   <dl>
                     <dt>Camera setup</dt><dd>{selected.camera_name || "Not selected"}</dd>
-                    {native && <><dt>Attached USB camera</dt><dd>{hardware?.usb_cameras?.map(camera => camera.name).join(", ") || "None reported"}</dd></>}
+                    {native && <><dt>Attached USB camera</dt><dd>{hardware?.usb_cameras?.map(camera => camera.name).join(", ") || (selectedEntry.camera.state === "disconnected" ? "Not detected" : "None reported")}</dd></>}
                     <dt>Last camera test</dt><dd>{formatDeviceTime(selected.tested_at, zone) || "No successful test reported"}</dd>
                     {native && <>
+                      <dt>Camera report</dt><dd>{formatDeviceTime(hardware?.reported_at, zone) || "Not reported"}</dd>
                       <dt>Microphone</dt><dd>{hardware?.microphone_input || "Not reported"}</dd>
-                      <dt>Recording mode</dt><dd>{hardware?.recording_profile || "Not reported"}</dd>
+                      <dt>Recording profile</dt><dd>{hardware?.recording_profile || "Not reported"}</dd>
                     </>}
                   </dl>
-                  {selected.enabled && selected.kiosk_id && (!selected.tested_at || (native && !hardware?.recording_profile)) &&
-                    <p>Run the camera check in Device setup on this recorder to verify its picture and sound.</p>}
+                  {selected.enabled && selected.kiosk_id && !["ready", "disabled", "unpaired"].includes(selectedEntry.camera.state) &&
+                    <p>{selectedEntry.camera.detail}</p>}
                 </section>
                 <section className="recorder-facts">
                   <h4>{native ? <Smartphone size={18} aria-hidden="true" /> : <Monitor size={18} aria-hidden="true" />} Device details</h4>
@@ -337,7 +367,7 @@ export default function BrowserTabletsAdmin() {
           <header className="device-editor-header">
             <div>
               {editing && <div className="recorder-device-kind"><Settings2 size={16} aria-hidden="true" />{editing.name}</div>}
-              <h3>{editing ? "Manage device" : "Add device"}</h3>
+              <h3 tabIndex={-1}>{editing ? "Manage device" : "Add device"}</h3>
               <p>
                 {editing
                   ? "Update its name or court. Camera selection stays on the physical device."
@@ -348,6 +378,7 @@ export default function BrowserTabletsAdmin() {
               {selectedEntry.presence.label}
             </span>}
           </header>
+          <section className="device-editor-settings admin-work-panel">
           <fieldset className="tablet-fields device-editor-fields" disabled={busy || loading}>
             <legend>Device details</legend>
             <label>
@@ -359,7 +390,7 @@ export default function BrowserTabletsAdmin() {
                 defaultValue={editing?.name || ""}
                 placeholder="Example: Court 1 Tablet"
               />
-              <small>A clear name helps staff identify the physical device.</small>
+              <small>Use the name staff will recognize on the court.</small>
             </label>
             <label>
               <span>Assigned court</span>
@@ -378,11 +409,14 @@ export default function BrowserTabletsAdmin() {
               </small>
             </label>
           </fieldset>
+          {error && !removing && <p role="alert" className="recorder-alert is-danger">{error}</p>}
           <div className="device-editor-save">
             <button className="primary" type="submit" disabled={busy || loading}>
               {editing ? "Save changes" : "Create pairing invitation"}
             </button>
           </div>
+          </section>
+          <div className={`device-editor-support ${editing ? "has-access" : ""}`}>
           <div className="device-editor-camera recorder-facts">
             <h4><Camera size={17} aria-hidden="true" /> Camera setup</h4>
             <p>Open Device setup in the DinkVision Android app to select and test the camera.</p>
@@ -453,6 +487,7 @@ export default function BrowserTabletsAdmin() {
               )}
             </section>
           )}
+          </div>
           {editing && (
             <>
               <details className="recorder-disclosure device-editor-technical">

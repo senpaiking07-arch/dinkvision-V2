@@ -245,6 +245,31 @@ public class SavedVideoRecoveryTest {
     }
   }
 
+  @Test public void sameSizeChangedExportCannotReplaceTheOnlyVerifiedOriginal() throws Exception {
+    org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT >= 29);
+    try (Fixture f = new Fixture()) {
+      String id = f.add(f.device, "local_only");
+      File source = f.engine.localPlaybackFile(id);
+      byte[] original = Files.readAllBytes(source.toPath());
+      f.exportGallery(id);
+      Uri copy = Uri.parse(f.item(id).getString("exportedUri"));
+      f.copies.add(copy);
+      byte[] damaged = original.clone();
+      damaged[damaged.length / 2] ^= 1;
+      try (OutputStream out = f.context.getContentResolver().openOutputStream(copy, "wt")) {
+        assertNotNull(out);
+        out.write(damaged);
+      }
+      assertTrue(LocalVideoExporter.verifiedCopy(f.context.getContentResolver(), copy.toString(), original.length));
+      f.engine.removeLocalVideo(id);
+      f.engine.exports.submit(() -> {}).get(10, TimeUnit.SECONDS);
+      assertArrayEquals(original, Files.readAllBytes(source.toPath()));
+      assertTrue(f.item(id).getBoolean("localAvailable"));
+      assertFalse(f.item(id).optBoolean("removalPending"));
+      assertTrue(f.engine.localVideoError.contains("Save a verified"));
+    }
+  }
+
   @Test public void interruptedRemovalCompletesItsJournalWithoutLosingTheExportReceipt() throws Exception {
     org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT>=29);
     try(Fixture f=new Fixture()){

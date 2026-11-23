@@ -12,23 +12,33 @@ public class LiveLogoCameraTest {
   @Test public void consecutiveUsbRecordingsContainLiveLogo() throws Exception {
     Assume.assumeTrue("true".equals(InstrumentationRegistry.getArguments().getString("liveUsbCamera")));
     var context=InstrumentationRegistry.getInstrumentation().getTargetContext();
-    assertTrue("Run only in the separate diagnostic package",context.getPackageName().endsWith(".honor"));
+    assertTrue("Run only in the separate diagnostic package",context.getPackageName().endsWith(".honor") || context.getPackageName().endsWith(".dev"));
+    int seconds = Integer.parseInt(InstrumentationRegistry.getArguments().getString("segmentSeconds", "65"));
+    assertTrue(seconds >= 3 && seconds <= 900);
+    var previousEnd = new java.util.concurrent.atomic.AtomicLong();
     Engine engine=Engine.get(context);
     try(var activity=ActivityScenario.launch(MainActivity.class);
         PrintWriter log=new PrintWriter(new File(context.getCacheDir(),"live-camera-results.txt"))) {
-      engine.busy=true;engine.phase="testing";engine.startService(true,false);
+      engine.busy=true;engine.phase="testing";activity.onActivity(a -> engine.startService(true,false));
       for(int index=1;index<=3;index++) {
-        File file=new File(context.getCacheDir(),"live-camera-"+index+".mp4");
+        File file=context.getPackageName().endsWith(".dev")
+            ? File.createTempFile("segment-"+index+"-", ".mp4", context.getCacheDir())
+            : new File(context.getCacheDir(),"live-camera-"+index+".mp4");
         final int clip=index;
         long start=System.nanoTime();
-        long captured=UvcCameraRecorder.capture(context,file,65,3,()->false,new CameraCapture.Listener(){
+        long captured=UvcCameraRecorder.capture(context,file,seconds,3,()->false,new CameraCapture.Listener(){
           public void ready() { log.println("ready clip="+clip);log.flush(); }
           public void countdown(int value) {}
-          public void started() { log.println("started clip="+clip);log.flush(); }
+          public void started() {
+            if (clip > 1) log.println("transitionMs="+(System.nanoTime()-previousEnd.get())/1_000_000);
+            log.println("started clip="+clip);log.flush();
+          }
+          public void finalizing() { previousEnd.set(System.nanoTime()); }
           public void frame(int seconds) {}
           public void audio(String label) { engine.recordingAudioInput=label; }
           public void profile(int w,int h,int fps,int bitrate) { log.println("profile="+w+"x"+h+" target="+fps+" bitrate="+bitrate);log.flush(); }
-        },Long.MAX_VALUE,Long.MAX_VALUE,"1920x1080@60");
+        },Long.MAX_VALUE,Long.MAX_VALUE,context.getPackageName().endsWith(".dev") ? "" : "1920x1080@60");
+        assertTrue(Math.abs(captured - seconds * 1000L) <= 1000);
         long validated=RecordedVideo.validate(file,captured,true);
         assertTrue("Saved USB video must have validated live-logo evidence",LiveLogoEvidence.verified(file));
         long before=file.length(),brandStart=System.nanoTime();
@@ -84,14 +94,14 @@ public class LiveLogoCameraTest {
   @Test public void usbDisconnectThenBuiltInCapture() throws Exception {
     Assume.assumeTrue("true".equals(InstrumentationRegistry.getArguments().getString("unplugCamera")));
     var context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-    assertTrue(context.getPackageName().endsWith(".honor"));
+    assertTrue(context.getPackageName().endsWith(".honor") || context.getPackageName().endsWith(".dev"));
     Engine engine = Engine.get(context);
     File interrupted = new File(context.getCacheDir(), "unplug-" + System.currentTimeMillis() + ".mp4");
     try (var activity = ActivityScenario.launch(MainActivity.class);
          PrintWriter log = new PrintWriter(new File(context.getCacheDir(), "unplug-test.txt"))) {
       engine.busy = true;
       engine.phase = "testing";
-      engine.startService(true, false);
+      activity.onActivity(a -> engine.startService(true, false));
       var listener = new CameraCapture.Listener() {
         public void ready() {}
         public void countdown(int value) {}
@@ -103,6 +113,8 @@ public class LiveLogoCameraTest {
         UvcCameraRecorder.capture(context, interrupted, 300, 0, () -> false, listener);
         fail("Expected physical USB disconnection");
       } catch (Exception disconnected) {
+        if (!(disconnected instanceof CameraCapture.Interruption))
+          throw new AssertionError("Disconnection should interrupt active capture", disconnected);
         assertFalse("Camera must have been physically removed", UvcCameraRecorder.hasAttachedCamera(context));
         log.println("USB interrupted: " + disconnected.getMessage() + "; private bytes=" + interrupted.length());
         log.flush();

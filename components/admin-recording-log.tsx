@@ -1,4 +1,4 @@
-import { ChevronRight, Play } from "lucide-react";
+import { ChevronRight, Download, Play } from "lucide-react";
 import type { Session } from "@/lib/admin-types";
 import { recordingDiagnostics } from "@/lib/recording-diagnostics";
 import { RecorderTimeline } from "@/components/recorder-timeline";
@@ -40,6 +40,7 @@ export function RecordingLogRow({ session, court, recipients, timestamp, unconfi
   const tone = unconfirmed ? "is-warning" : state === "failed" || state === "upload_failed" ? "is-danger"
     : session.status === "ready" ? "is-success" : ["recording", "uploading", "finalizing"].includes(session.status) ? "is-live" : "";
   const camera = session.configuration_snapshot?.camera_name;
+  const playback = `/api/recordings/${encodeURIComponent(session.id)}/playback`;
   return <li className="admin-log-item">
     <details open={focused || undefined}>
       <summary aria-label={`Details for ${court}, ${recipients}, ${timestamp(session.created_at)}`}>
@@ -78,8 +79,14 @@ export function RecordingLogRow({ session, court, recipients, timestamp, unconfi
           <summary>Reported codes</summary>
           <p>Reason <code>{session.stop_reason || "not reported"}</code> · Stage <code>{session.failure_stage || "not reported"}</code></p>
         </details>
-        {session.status === "ready" && <a className="sign-in admin-watch-link" target="_blank" rel="noopener noreferrer"
-          href={`/api/recordings/${encodeURIComponent(session.id)}/playback`}><Play size={15} aria-hidden="true" /> Watch recording</a>}
+        {session.status === "ready" && <div className="recorder-workspace-actions">
+          <a className="sign-in admin-watch-link" target="_blank" rel="noopener noreferrer" href={playback}>
+            <Play size={15} aria-hidden="true" /> Watch recording
+          </a>
+          <a className="sign-in admin-watch-link" target="_blank" rel="noopener noreferrer" href={`${playback}?download=1`}>
+            <Download size={15} aria-hidden="true" /> Download recording
+          </a>
+        </div>}
       </div>
     </details>
   </li>;

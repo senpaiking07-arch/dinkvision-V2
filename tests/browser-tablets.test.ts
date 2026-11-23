@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { readdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { R2_MAX_BYTES } from "../lib/r2-protocol";
 import { provisionLegacyFixtureMemberships } from "./helpers/legacy-memberships";
 
 test("browser enrollment, fixed assignments, session ownership, recovery and cloud email leases", async () => {
@@ -199,7 +200,7 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
     assert.ok(stopped.stopped_at);
     assert.equal(await event("failed"), true);
     await assert.rejects(
-      () => event("saved", kiosk, 32_000_000_001, "video/webm"),
+      () => event("saved", kiosk, R2_MAX_BYTES + 1, "video/webm"),
       /Invalid recording/,
       "a video over the bounded upload ceiling is rejected without replacing local footage",
     );
@@ -379,7 +380,10 @@ test("browser enrollment, fixed assignments, session ownership, recovery and clo
       kiosk,
       nativeSession,
     ]);
-    await assert.rejects(()=>db.query("select browser_event($1,$2,'saved',32000000001,'video/mp4')",[kiosk,nativeSession]),/Invalid recording/);
+    await assert.rejects(
+      () => db.query("select browser_event($1,$2,'saved',$3,'video/mp4')", [kiosk, nativeSession, R2_MAX_BYTES + 1]),
+      /Invalid recording/,
+    );
     assert.equal((await db.query<any>("select browser_event($1,$2,'saved',5000000000,'video/mp4') ok",[randomUUID(),nativeSession])).rows[0].ok,false,
       "A large file must still belong to the authenticated device");
     assert.equal((await db.query<any>("select browser_event($1,$2,'saved',5000000000,'video/mp4') ok",[kiosk,nativeSession])).rows[0].ok,true,

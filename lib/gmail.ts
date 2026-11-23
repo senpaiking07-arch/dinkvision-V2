@@ -40,7 +40,7 @@ export function recordingMessage(sender: string, recipient: string | string[], f
   const notice = captureInterruptionNotice(interruption?.code, interruption?.durationMs);
   const replayUrl = replay.href;
   const text = `Your game. On replay.\n\nYour DinkVision recording is ready.\n\n${notice ? `${notice}\n\n` : ""}Watch your recording:\n${replayUrl}\n\nWatch or download your video from the replay page.\n${accessNote}\n\nAvailable until ${deadline} (${zone}). Save a copy before this deadline; the replay link expires then.\n\nYour court. Your moment.\nDinkVision\nPowered by WrenLabs`;
-  const logoUrl = replay.protocol === "https:" ? new URL("/dink-vision-logo.png", replay.origin).href : undefined;
+  const logoUrl = replay.protocol === "https:" ? new URL("/dink-vision-logo-email-dark.png", replay.origin).href : undefined;
   return {
     from,
     ...(recipients.length === 1 ? { to: recipients[0] } : { bcc: recipients }),

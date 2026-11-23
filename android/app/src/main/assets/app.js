@@ -13,6 +13,7 @@ let savedSelection = '', lastSavedToken = '';
 let startRequested = false, startAccepted = false;
 let stopRequestedAttempt = '';
 let qrEnrollmentSubmit = null;
+let modalOpener = null;
 let lastErrorNotice = '', errorNoticeExpiresAt = 0;
 let lastStatusNotice = '', statusNoticeExpiresAt = 0;
 const native = window.CasaNative;
@@ -31,6 +32,9 @@ const hideModal = () => {
   $('modal-content').replaceChildren();
   $('modal-actions').replaceChildren();
   $('modal-error').hidden = true;
+  if (modalOpener?.isConnected && !modalOpener.closest('[hidden], [inert]'))
+    modalOpener.focus({ preventScroll: true });
+  modalOpener = null;
 };
 const node = (tag, className, text) => {
   const element = document.createElement(tag);
@@ -66,6 +70,7 @@ function showNativeModal(raw) {
   try { data = typeof raw === 'string' ? JSON.parse(raw) : raw; }
   catch { return; }
   const modal = $('modal'), content = $('modal-content'), actions = $('modal-actions');
+  if (modal.hidden) modalOpener = document.activeElement;
   qrEnrollmentSubmit = null;
   modal.dataset.kind = data.kind;
   modal.classList.toggle('saved-error', ['saved-video-error','remove-saved-video'].includes(data.kind));
@@ -209,7 +214,7 @@ function showNativeModal(raw) {
       'The tablet uses an attached compatible USB camera such as EMEET when available, otherwise its rear camera.');
     const qualityLabel = node('label', 'modal-field wide', 'VIDEO QUALITY');
     const quality = node('select'); quality.value = state.selectedRecordingMode || 'auto';
-    recordingModeOptions(quality); quality.value = state.selectedRecordingMode || 'auto';
+    recordingModeOptions(quality);
     qualityLabel.append(quality); content.append(qualityLabel);
     modalButton('Record a 3-second test', () => { const mode = quality.value; hideModal(); call('sync-camera', mode); }, true);
     modalButton('Reconnect camera', () => { hideModal(); call('choose-device'); });
@@ -229,11 +234,12 @@ function showNativeModal(raw) {
     modalButton('Delete video', () => { hideModal(); call('discard-confirmed'); }, true);
     cancel('Keep video');
   } else if (data.kind === 'leave') {
-    title('RECORDING IN PROGRESS', 'Leave the recorder?', 'Recording or upload will continue in the background.');
+    title('RECORDING IN PROGRESS', 'Leave the recorder?', 'Leaving cancels a recording that is still preparing. Active recordings and uploads continue.');
     modalButton('Leave app', () => { hideModal(); call('leave-confirmed'); }, true);
     cancel('Stay');
   } else return;
   modal.hidden = false;
+  requestAnimationFrame(() => $('modal-title').focus({ preventScroll: true }));
 }
 window.showNativeModal = showNativeModal;
 window.dismissNativeModal = () => {
@@ -247,6 +253,16 @@ window.setNativeModalError = message => {
 };
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !$('modal').hidden) { hideModal(); event.preventDefault(); }
+  if (event.key !== 'Tab' || $('modal').hidden) return;
+  const controls = [...$('modal').querySelectorAll('button, input, select')].filter(
+    control => !control.disabled && control.getClientRects().length);
+  if (!controls.length) return;
+  const first = controls[0], last = controls[controls.length - 1];
+  if (event.shiftKey && [first, $('modal-title')].includes(document.activeElement)) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus();
+  }
 });
 const isTextInput = target => target instanceof Element && !!target.closest('input, textarea');
 document.addEventListener('keydown', event => {
@@ -414,9 +430,9 @@ function renderSavedVideos() {
   const size = item.status === 'uploading' ? `${transferredMb} / ${sizeMb} MB uploaded` : `${sizeMb} MB`;
   $('saved-video-meta').textContent = `${date ? date + ' · ' : ''}${duration} · ${size}`;
   const waiting = item.brandingState === 'complete' ? 'Waiting to upload' : 'Waiting to add logo';
-  const statuses = {pending: waiting, saved_locally: waiting, retrying: `${item.brandingState === 'failed' ? 'Logo processing' : 'Upload'} retry scheduled · ${item.retryCount || 0}/8 attempts`, uploading: item.verifyingUpload ? 'Verifying upload' : `Uploading ${Math.min(99, item.progress || 0)}%`, uploaded: 'Uploaded · app copy cleanup pending', local_only: 'Local only · under one minute'};
+  const statuses = {pending: waiting, saved_locally: waiting, retrying: `${item.brandingState === 'failed' ? 'Logo processing' : 'Upload'} retry scheduled · ${item.retryCount || 0}/8 attempts`, uploading: item.verifyingUpload ? 'Verifying upload' : `Uploading ${Math.min(99, item.progress || 0)}%`, uploaded: item.localAvailable === false ? 'Uploaded' : 'Uploaded · app copy cleanup pending', local_only: 'Local only · under one minute'};
   const interrupted = !!item.captureInterruptionCode;
-  const needsInspection = interrupted && !!item.validationFailed;
+  const needsInspection = !!item.validationFailed;
   const status = item.status === 'failed'
     ? item.validationFailed ? 'Video needs inspection. Save the original for review.'
       : item.brandingState === 'failed' ? 'Logo processing failed. The original is still saved.'
@@ -425,7 +441,7 @@ function renderSavedVideos() {
       : item.brandingState === 'processing' ? 'Adding the DinkVision logo' : statuses[item.status] || 'Saved in this app';
   $('saved-video-status').textContent = interrupted ? `Interrupted recording · ${status}` : status;
   $('saved-details').hidden = false;
-  $('saved-retry').hidden = needsInspection || !['failed','retrying'].includes(item.status);
+  $('saved-retry').hidden = (interrupted && needsInspection) || !['failed','retrying'].includes(item.status);
   $('saved-retry').textContent = item.status === 'retrying' ? 'Retry now' : item.validationFailed || item.brandingState === 'failed' ? 'Retry processing' : 'Retry upload';
   $('saved-retry').disabled = !!state.busy;
   $('saved-save').disabled = !!state.exportingSession || (item.exported && !item.canRemove);
@@ -755,8 +771,14 @@ function tick() {
   cameraStatus.classList.toggle('ready', ready && !state.busy);
   cameraStatus.classList.toggle('active', state.phase === 'recording');
   cameraStatus.textContent = state.phase === 'recording' ? 'Recording'
-    : state.busy ? 'Camera in use' : !state.enrolled ? 'Setup required'
-    : !state.enabled ? 'Check connection' : ready ? 'Camera ready' : 'Camera check';
+    : state.phase === 'finalizing' ? 'Finalizing'
+    : state.phase === 'countdown' ? 'Starting soon'
+    : state.phase === 'connecting' ? 'Connecting camera'
+    : state.phase === 'testing' ? 'Testing camera'
+    : state.busy ? 'Camera in use'
+    : !state.enrolled ? 'Setup required'
+    : !state.enabled ? 'Check connection'
+    : ready ? 'Camera ready' : 'Camera check';
   $('header-court').hidden = !state.court;
   $('header-court').textContent = state.court || '';
   $('app-version').textContent = `Powered by WrenLabs${state.version ? ` · v${state.version}` : ''}`;
@@ -801,14 +823,22 @@ function tick() {
       : 'Play all three seconds. Confirm if the picture is clear; otherwise record another test.';
     if (state.testHasAudio && state.testAudioInput) $('camera-test-help').textContent += ` Audio: ${state.testAudioInput}.`;
     if (state.recordingProfile) $('camera-test-help').textContent += ` Camera: ${state.recordingProfile}.`;
-    if (innerHeight <= 600) $('camera-test-help').textContent = `Play with sound. ${state.testAudioInput?.startsWith('Camera microphone') ? 'Camera mic.' : 'Device mic.'} ${state.recordingProfile || ''}`;
+    if (innerHeight <= 600) $('camera-test-help').textContent = [
+      state.testHasAudio ? 'Play with sound.' : 'Check the picture.',
+      state.testHasAudio && state.testAudioInput, state.recordingProfile
+    ].filter(Boolean).join(' ');
+    if (!state.testConfirmable || $('camera-quality').value !== (state.selectedRecordingMode || 'auto'))
+      $('camera-test-help').textContent = 'Record another test with the selected settings before confirming.';
     if (state.logoPipeline) $('camera-test-help').textContent += ` ${state.logoPipeline}.`;
     $('camera-test-confirm').textContent = state.testHasAudio ? 'I can see and hear the test' : 'The video looks clear';
   } else if (recordingFlow) {
     show('session');
-    $('session-title').textContent = state.phase === 'recording' ? 'Stay in the game.' : state.phase === 'testing' ? 'Testing your camera' : 'Your match';
+    $('session-title').textContent = {
+      connecting: 'Preparing camera', countdown: 'Starting recording', recording: 'Recording match',
+      finalizing: 'Saving recording', testing: 'Testing your camera'
+    }[state.phase];
     $('progress').textContent = state.phase === 'recording'
-      ? 'Every rally. Every great shot. Captured.'
+      ? (stopRequestedAttempt ? 'Stop requested…' : `Recording limit: ${limitMinutes} minutes`)
       : state.message || 'Preparing your match…';
     const loading = ['connecting', 'testing', 'finalizing'].includes(state.phase);
     $('loading').hidden = !loading;

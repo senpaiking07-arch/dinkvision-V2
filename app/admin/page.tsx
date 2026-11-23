@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { getAccount } from "@/lib/auth";
 import { serverSupabase } from "@/lib/supabase-server";
 import AdminDashboard from "@/components/admin-dashboard";
-import AccountControls from "@/components/account-controls";
+import AdminHeader from "@/components/admin-header";
+import AdminPagePanel from "@/components/admin-page-panel";
 import AppVersionFooter from "@/components/app-version-footer";
 import type { AdminData } from "@/lib/admin-types";
 import { uuid } from "@/lib/validation";
@@ -25,13 +26,12 @@ export default async function AdminPage({ searchParams }: {
   if (!account) redirect("/admin/login");
   if (account.role !== "admin")
     return (
-      <main className="auth-page">
-        <section className="auth-card">
-          <h1>Administrator access required.</h1>
-          <p>Your player account does not have access to venue settings.</p>
-          <AccountControls account={account} />
-        </section>
-      </main>
+      <>
+        <AdminHeader account={account} />
+        <AdminPagePanel title="Administrator access required" description="Sign in with a venue administrator account to manage this venue.">
+          <p className="admin-inline-note">Use Sign out above to switch accounts.</p>
+        </AdminPagePanel>
+      </>
     );
   const db = await serverSupabase(account.tenantId);
   let focusedId = "";
@@ -77,38 +77,35 @@ export default async function AdminPage({ searchParams }: {
   const dashboardSessions = visibleSessions.map(session => session.configuration_snapshot?.capture_mode === "browser"
     ? { ...session, browser_recordings: reportBySession.get(session.id) || null }
     : session);
-  const queryErrors = [
-    ["courts", courts.error],
-    ["settings", settings.error],
-    ["sessions", sessions.error],
-    ["selectedSession", selected.error],
-    ["browserReports", browserReports.error],
-  ].flatMap(([name, error]) => error ? [`${name}:${(error as any).code || "error"} ${(error as any).message || "unknown"}`] : []);
-  const failed = queryErrors.length > 0;
+  const failures = [
+    { label: "Courts", error: courts.error },
+    { label: "Recording settings", error: settings.error },
+    { label: "Recording logs", error: sessions.error },
+    { label: "Linked recording", error: selected.error },
+    { label: "Recorder status", error: browserReports.error },
+  ].filter(({ error }) => error);
+  const needsDatabaseUpdate = failures.some(({ error }) =>
+    ["42703", "42P01", "PGRST204", "PGRST205"].includes(error?.code || ""));
   return (
     <>
-      <header className="site-header shell">
-        <a href="/" className="brand">
-          <img src="/dink-vision-logo.png" alt="Dink Vision" />
-          <span>
-            Venue Management
-          </span>
-        </a>
-        <AccountControls account={account} />
-      </header>
-      {failed ? (
+      <AdminHeader account={account} />
+      {failures.length > 0 ? (
         <main className="shell admin-main">
-          <div className="empty-panel">
-            <h2>Database setup needs attention.</h2>
-            <p>
-              The admin tables could not be loaded. Apply the project
-              migrations, then reload this page.
-            </p>
-            <p className="form-note" role="status">{queryErrors.join(" | ")}</p>
+          <section className="admin-card recorder-workspace admin-page-panel">
+            <header className="recorder-workspace-header"><div>
+              <h1>{needsDatabaseUpdate ? "Database setup needs attention" : "Admin data could not load"}</h1>
+              <p>{needsDatabaseUpdate
+                ? "Check that the installed Supabase migrations match this DinkVision release."
+                : "Reload the dashboard. If this continues, verify the Supabase connection and administrator access."}</p>
+            </div></header>
             <a className="primary" href="/admin">
               Reload dashboard
             </a>
-          </div>
+            <details className="recorder-disclosure">
+              <summary>Affected sections</summary>
+              <p className="admin-inline-note">{failures.map(({ label }) => label).join(", ")}</p>
+            </details>
+          </section>
         </main>
       ) : (
         <AdminDashboard

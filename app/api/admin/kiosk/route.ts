@@ -11,7 +11,7 @@ export async function GET() {
   try {
     return json({ enabled: !!(await kioskDevice()) });
   } catch {
-    return json({ error: "Tablet setup unavailable." }, 503);
+    return json({ error: "Recorder registration is temporarily unavailable." }, 503);
   }
 }
 export async function POST(request: Request) {
@@ -52,6 +52,6 @@ export async function POST(request: Request) {
     });
     return json({ enabled: true });
   } catch {
-    return json({ error: "Could not update tablet setup." }, 503);
+    return json({ error: "Could not update the recorder registration." }, 503);
   }
 }

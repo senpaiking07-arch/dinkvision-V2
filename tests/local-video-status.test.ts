@@ -31,6 +31,11 @@ test('stages distinguish waiting, measured processing, transfer and each failure
  assert.equal(recordingStageLabel({upload_state:'pending',branding_state:'complete'},now),'Waiting to upload');
  assert.equal(recordingStageLabel({upload_state:'saved_locally',branding_state:'processing',branding_progress:85,branding_updated_at:new Date(now).toISOString()},now),'Adding logo 85%');
  assert.equal(recordingStageLabel({upload_state:'uploading',branding_state:'complete',bytes:100,uploaded_bytes:25},now),'Uploading 25%');
+ for (const uploaded_bytes of [null, undefined, '']) {
+   assert.equal(recordingStageLabel({upload_state:'uploading', bytes:100, uploaded_bytes},now),'Uploading');
+ }
+ assert.equal(recordingStageLabel({upload_state:'uploading',bytes:100,uploaded_bytes:0},now),'Uploading 0%');
+ assert.equal(recordingStageLabel({upload_state:'uploading',bytes:100,uploaded_bytes:100},now),'Verifying upload');
  assert.equal(recordingStageLabel({upload_state:'retrying',branding_state:'failed'},now),'Logo processing retry scheduled');
  assert.equal(recordingStageLabel({upload_state:'retrying',branding_state:'complete'},now),'Upload retry scheduled');
  assert.equal(recordingStageLabel({upload_state:'pending'},now,false),'Waiting to upload');

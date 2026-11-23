@@ -40,7 +40,10 @@ final class VideoBranding {
     for (File backup : backups) {
       String name = backup.getName().substring(0, backup.getName().length() - BACKUP_SUFFIX.length());
       File recording = new File(directory, name);
-      if (!recording.exists()) {
+      // A zero-byte destination can be left by an interrupted swap or write.
+      // Keep nonempty originals and backups available for inspection.
+      if (backup.isFile() && backup.length() > 0
+          && (!recording.exists() || (recording.isFile() && recording.length() == 0))) {
         try {
           Files.move(backup.toPath(), recording.toPath(), StandardCopyOption.REPLACE_EXISTING);
           Log.w("DinkVisionVideo", "Restored recording after an interrupted logo save: " + name);
