@@ -1,2 +1,5 @@
-import LocalClips from "@/components/local-clips";
-export default function Page() { return <LocalClips />; }
+import { redirect } from "next/navigation";
+
+export default function Page() {
+  redirect("/admin");
+}

@@ -64,15 +64,25 @@ export default function BrowserTabletsAdmin() {
   }
   useEffect(() => {
     let stopped = false;
+    let polling = false;
     let timer: ReturnType<typeof setTimeout>;
+    const schedule = (delay: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void poll(), delay);
+    };
     async function poll() {
+      if (stopped || polling || document.hidden) return;
+      polling = true;
       await refresh();
-      if (!stopped) timer = setTimeout(() => void poll(), 3000);
+      polling = false;
+      if (!stopped && !document.hidden) schedule(15000);
     }
+    const onVisible = () => { clearTimeout(timer); if (!document.hidden) void poll(); };
     void poll();
     const offline = () => setConnectionNotice("No internet connection detected. Displayed device states may be stale.");
     window.addEventListener("offline", offline);
-    return () => { stopped = true; ++refreshSequence.current; clearTimeout(timer); window.removeEventListener("offline", offline); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { stopped = true; ++refreshSequence.current; clearTimeout(timer); window.removeEventListener("offline", offline); document.removeEventListener("visibilitychange", onVisible); };
   }, []);
   async function action(body: AdminTabletAction) {
     const opensQr = body.action === "enroll" || (body.action === "save" && !body.id);
@@ -254,7 +264,7 @@ export default function BrowserTabletsAdmin() {
             <header className="recorder-device-header">
               <div className="recorder-device-title">
                 <div className="recorder-device-kind">{native ? <Smartphone size={16} aria-hidden="true" /> : <Monitor size={16} aria-hidden="true" />}
-                  {native ? "Android recorder" : "Browser recorder"} <span>·</span> {selectedEntry.court}</div>
+                  {native ? "Android recorder" : "Recorder"} <span>·</span> {selectedEntry.court}</div>
                 <h3>{selected.name}</h3>
                 <div className="recorder-device-statuses">
                   <span className={`recorder-state ${selectedEntry.presence.connected ? "is-success" : selected.enabled ? "is-warning" : ""}`}>{selectedEntry.presence.label}</span>
@@ -375,7 +385,7 @@ export default function BrowserTabletsAdmin() {
           </div>
           <div className="device-editor-camera recorder-facts">
             <h4><Camera size={17} aria-hidden="true" /> Camera setup</h4>
-            <p>Open Device setup in the Android app, or Tablet setup on a browser recorder, to select and test its camera.</p>
+            <p>Open Device setup in the DinkVision Android app to select and test the camera.</p>
           </div>
           {editing && editing.enabled && (
             <section className="device-editor-access recorder-facts">
@@ -475,7 +485,7 @@ export default function BrowserTabletsAdmin() {
         <summary>How to set up a recorder</summary>
         <ol>
           <li>Add a recorder and assign its court.</li>
-          <li>Scan its pairing QR in DinkVision, or enter the pairing code at <a href="/tablet/setup">Tablet setup</a> for a browser recorder.</li>
+          <li>Scan its pairing QR or enter its code in the DinkVision Android app.</li>
           <li>Run the camera check on that recorder to verify the picture and microphone.</li>
         </ol>
       </details>

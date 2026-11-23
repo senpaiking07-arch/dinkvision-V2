@@ -1,5 +1,5 @@
-import TabletKiosk from "@/components/tablet-kiosk";
-import "./tablet.css";
-export default function Home() {
-  return <TabletKiosk />;
+import { redirect } from "next/navigation";
+
+export default function Page() {
+  redirect("/admin");
 }

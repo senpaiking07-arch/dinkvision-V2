@@ -47,7 +47,10 @@ test('device card renders collapsed history with details while keeping failures 
       local_available:true,bytes:1048576,recording_sessions:session,
       last_error:'Recording under one minute. Saved locally; no Drive upload or email.'},
      {device_id:'fixture-device',session_id:'failure-fixture',upload_state:'failed',branding_state:'failed',local_available:true,
-      last_error:'Encoder fixture failure',recording_sessions:session}],timeZone:'Asia/Manila'};
+      last_error:'Encoder fixture failure',recording_sessions:session},
+     ...['sent','failed'].map(status=>({device_id:'fixture-device',session_id:`uploaded-${status}`,upload_state:'uploaded',
+       local_available:false,recording_sessions:{...session, recording_files:[{id:`file-${status}`,status:'ready',
+         storage_provider:'r2',storage_key:'fixture',email_jobs:[{status}]}]}}))],timeZone:'Asia/Manila'};
  const source=ts.transpileModule(readFileSync('components/browser-tablets-admin.tsx','utf8'),{
    compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}
  }).outputText;
@@ -65,4 +68,8 @@ test('device card renders collapsed history with details while keeping failures 
  assert.match(history,/recording=local-fixture/); assert.match(history,/Local-only/);
  assert.doesNotMatch(history,/failure-fixture/);
  assert.match(html.replace(history,''),/Encoder fixture failure/);
+ assert.doesNotMatch(html,/Recent uploads|uploaded-sent/);
+ assert.match(html,/Replay emails needing attention \(1\)/);
+ assert.match(html,/uploaded-failed/);
+ assert.match(html,/Retry replay email/);
 });

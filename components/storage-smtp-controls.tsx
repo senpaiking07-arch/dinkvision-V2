@@ -45,8 +45,7 @@ export default function StorageSmtpControls() {
 
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => void refresh(), 15000);
-    return () => { clearInterval(timer); active.current?.abort(); active.current = null; };
+    return () => { active.current?.abort(); active.current = null; };
   }, []);
 
   const storageReady = !!data?.storage?.ready;

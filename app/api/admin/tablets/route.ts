@@ -8,14 +8,21 @@ import { publicTablet } from "@/lib/browser-tablets";
 import QRCode from "qrcode";
 import { qrEnrollmentPath } from "@/lib/tablet-enrollment";
 import { qrColumns, readRecorderQueue, withOptionalColumns } from "@/lib/optional-schema";
-export async function GET() {
+export async function GET(request: Request) {
   const {account} = await getAccount();
   if (account?.role !== "admin" || !account.tenantId)
     return json({ error: "Admin sign-in required." }, 403);
+  const summary = new URL(request.url).searchParams.get("summary") === "1";
   const db = recorderDatabase(account.tenantId);
   const queue = (captureDetails: boolean, retrySchedule: boolean) => db.from("browser_recordings").select(
     `session_id,device_id,job_id,file_id,safe_error,last_error,last_seen_at,upload_state,uploaded_bytes,bytes,upload_queued_at,upload_updated_at,branding_state,branding_progress,branding_updated_at,client_created_at,duration_ms,retry_count,local_available,device_copy_saved_at,device_copy_bytes,${retrySchedule ? "upload_retry_at," : ""}recording_sessions(id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,configuration_snapshot,failure_stage,${captureDetails ? "capture_interruption_code,capture_inspection_required," : ""}recording_files(id,status,drive_file_id,storage_provider,storage_key,email_jobs(status,safe_error)))`,
   ).order("last_seen_at", { ascending: false }).limit(100);
+  if (summary) {
+    const devices = await db.from("browser_devices")
+      .select("id,name,court_id,enabled,kiosk_id,last_seen_at,tested_at,camera_name").order("created_at");
+    if (devices.error) return json({ error: "Recorder status is temporarily unavailable." }, 503);
+    return json({ devices: devices.data.map(publicTablet) });
+  }
   const [devices, courts, {result: recordings}, worker] = await Promise.all([
     db.from("browser_devices").select("*").order("created_at"),
     db.from("courts").select("id,name,active").order("created_at"),

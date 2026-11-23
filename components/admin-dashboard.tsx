@@ -252,7 +252,10 @@ function CourtForm({
   );
 }
 
-export default function AdminDashboard({ data, initialRecordingId = "" }: { data: AdminData; initialRecordingId?: string }) {
+export default function AdminDashboard({ data, initialRecordingId = "" }: {
+  data: Pick<AdminData, "courts" | "settings" | "sessions" | "captureReports">;
+  initialRecordingId?: string;
+}) {
   const [tab, setTab] = useState<Tab>(initialRecordingId ? "logs" : "overview");
   const [courtId, setCourtId] = useState<string | null>(null);
   const [newCourtVersion, setNewCourtVersion] = useState(0);
@@ -269,9 +272,13 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
     if (tab === "cameras" || tab === "settings") return;
     const lifetime = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let loadingDevices = false;
+    const schedule = (delay: number) => { clearTimeout(timer); timer = setTimeout(() => void load(), delay); };
     async function load() {
+      if (loadingDevices || lifetime.signal.aborted || document.hidden) return;
+      loadingDevices = true;
       try {
-        const response = await fetch("/api/admin/tablets", {
+        const response = await fetch("/api/admin/tablets?summary=1", {
           cache: "no-store",
           signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(12000)]),
         });
@@ -283,11 +290,14 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
       } catch {
         if (!lifetime.signal.aborted) setDeviceStatusError(true);
       } finally {
-        if (!lifetime.signal.aborted) timer = setTimeout(() => void load(), 10000);
+        loadingDevices = false;
+        if (!lifetime.signal.aborted && !document.hidden) schedule(30000);
       }
     }
+    const onVisible = () => { clearTimeout(timer); if (!document.hidden) void load(); };
     void load();
-    return () => { lifetime.abort(); clearTimeout(timer); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { lifetime.abort(); clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [tab]);
   const [search, setSearch] = useState(initialRecordingId);
   const [status, setStatus] = useState("");
@@ -295,14 +305,25 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
   const [logPage, setLogPage] = useState(1);
   const router = useRouter();
   useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") router.refresh();
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = (delay: number) => {
+      clearTimeout(timer);
+      timer = setTimeout(refreshWhenVisible, delay);
     };
-    const timer = setInterval(refreshWhenVisible, 3000);
+    const refreshWhenVisible = () => {
+      if (!active) return;
+      clearTimeout(timer);
+      if (document.hidden) return;
+      router.refresh();
+      schedule(30000);
+    };
+    schedule(30000);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     window.addEventListener("focus", refreshWhenVisible);
     return () => {
-      clearInterval(timer);
+      active = false;
+      clearTimeout(timer);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.removeEventListener("focus", refreshWhenVisible);
     };
@@ -395,8 +416,8 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: { data
         <div>
           <h1>Venue management</h1>
         </div>
-        <a className="sign-in" href="/">
-          View player page →
+        <a className="sign-in" href="/tenants">
+          Venue access
         </a>
       </div>
       <nav className="admin-tabs" aria-label="Admin sections">

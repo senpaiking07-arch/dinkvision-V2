@@ -9,7 +9,6 @@ import { uuid } from "@/lib/validation";
 import { sessionCaptureReport } from "@/lib/recording-status";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { captureColumns, withOptionalColumns } from "@/lib/optional-schema";
-import { usesR2 } from "@/lib/r2-server";
 
 const baseSessionFields = "id,court_id,status,recipient_email,created_at,started_at,stopped_at,duration_seconds,stop_reason,failure_stage,configuration_snapshot,capture_jobs(last_seen_at)";
 const sessionFields = `${baseSessionFields},capture_interruption_code,capture_interrupted_at` as const;
@@ -30,9 +29,7 @@ export default async function AdminPage({ searchParams }: {
         <section className="auth-card">
           <h1>Administrator access required.</h1>
           <p>Your player account does not have access to venue settings.</p>
-          <a href="/" className="primary">
-            Back to your courts
-          </a>
+          <AccountControls account={account} />
         </section>
       </main>
     );
@@ -41,27 +38,10 @@ export default async function AdminPage({ searchParams }: {
   try { focusedId = uuid((await searchParams).recording); } catch { }
   const [
     courts,
-    cameras,
-    recorders,
     settings,
     sessions,
-    events,
-    devices,
-    commands,
   ] = await Promise.all([
     db.from("courts").select("id,name,location,active").order("created_at"),
-    db
-      .from("cameras")
-      .select(
-        "id,name,recorder_id,court_id,source_type,device_reference,audio_source,is_primary,enabled,health,last_health_check_at",
-      )
-      .order("name"),
-    db
-      .from("recorders")
-      .select(
-        "id,name,last_seen_at,paired_at,agent_version,platform,ffmpeg_available",
-      )
-      .order("created_at"),
     db
       .from("venue_settings")
       .select("max_duration_seconds,retention_seconds,venue_time_zone")
@@ -72,22 +52,6 @@ export default async function AdminPage({ searchParams }: {
       () => db.from("recording_sessions").select(baseSessionFields).order("created_at", { ascending: false }).limit(100),
       captureColumns,
     ),
-    db
-      .from("audit_events")
-      .select("id,action,created_at")
-      .order("created_at", { ascending: false })
-      .limit(20),
-    db
-      .from("recorder_devices")
-      .select(
-        "id,recorder_id,device_reference,name,source_type,health,diagnostic,last_test_at,audio_sources",
-      )
-      .order("name"),
-    db
-      .from("recorder_commands")
-      .select("id,recorder_id,kind,status,created_at,result_code")
-      .order("created_at", { ascending: false })
-      .limit(30),
   ]);
   const sessionRows = sessions.data || [];
   const selected = focusedId && !sessionRows.some(session => session.id === focusedId)
@@ -115,13 +79,8 @@ export default async function AdminPage({ searchParams }: {
     : session);
   const queryErrors = [
     ["courts", courts.error],
-    ["cameras", cameras.error],
-    ["recorders", recorders.error],
     ["settings", settings.error],
     ["sessions", sessions.error],
-    ["events", events.error],
-    ["devices", devices.error],
-    ["commands", commands.error],
     ["selectedSession", selected.error],
     ["browserReports", browserReports.error],
   ].flatMap(([name, error]) => error ? [`${name}:${(error as any).code || "error"} ${(error as any).message || "unknown"}`] : []);
@@ -158,16 +117,10 @@ export default async function AdminPage({ searchParams }: {
           data={
             {
               courts: courts.data,
-              storageProvider: "r2",
-              cameras: cameras.data,
-              recorders: recorders.data,
               settings: settings.data,
               sessions: dashboardSessions,
               captureReports: dashboardSessions.map(sessionCaptureReport),
-              events: events.data,
-              devices: devices.data,
-              commands: commands.data,
-            } as AdminData
+            } as Pick<AdminData, "courts" | "settings" | "sessions" | "captureReports">
           }
         />
       )}

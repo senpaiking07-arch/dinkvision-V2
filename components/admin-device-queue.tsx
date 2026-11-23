@@ -41,10 +41,14 @@ export default function AdminDeviceQueue({ device, recordings, now, zone, busy, 
   const history = activeRows.filter(isLocalOnlyHistory);
   const active = activeRows.filter(row => !isLocalOnlyHistory(row));
   const { failed, uploading, waiting } = uploadCounts(active);
-  const uploadDate = (row: DeviceRecording) => Date.parse(row.upload_updated_at || row.client_created_at || "") || 0;
-  const recentUploads = recordings.filter(row => row.upload_state === "uploaded")
-    .sort((a, b) => uploadDate(b) - uploadDate(a))
-    .slice(0, 3);
+  const emailIssues = recordings.flatMap(item => {
+    if (item.upload_state !== "uploaded") return [];
+    const file = item.recording_sessions?.recording_files?.find(row =>
+      row.status === "ready" && row.storage_provider === "r2" && row.storage_key);
+    const job = Array.isArray(file?.email_jobs) ? file.email_jobs[0] : file?.email_jobs;
+    return file && (job?.status === "failed" || job?.status === "unknown")
+      ? [{ item, file, status: job.status }] : [];
+  });
 
   function uploadRow(item: DeviceRecording) {
     const label = recordingDisplayLabel(item.recording_sessions, item.client_created_at, zone);
@@ -105,16 +109,12 @@ export default function AdminDeviceQueue({ device, recordings, now, zone, busy, 
     </div>
     {active.length ? <ul className="recorder-upload-list">{active.map(uploadRow)}</ul>
       : <p className="recorder-empty-queue">No videos waiting to upload.</p>}
-    {!!recentUploads.length && <details className="recorder-disclosure">
-      <summary>Recent uploads ({recentUploads.length})</summary>
+    {!!emailIssues.length && <details className="recorder-disclosure">
+      <summary>Replay emails needing attention ({emailIssues.length})</summary>
       <ul className="recorder-upload-list">
-        {recentUploads.map(item => {
-          const file = item.recording_sessions?.recording_files?.find(row => row.status === "ready" && row.storage_provider === "r2" && row.storage_key);
-          const job = Array.isArray(file?.email_jobs) ? file.email_jobs[0] : file?.email_jobs;
+        {emailIssues.map(({ item, file, status }) => {
           const label = recordingDisplayLabel(item.recording_sessions, item.client_created_at, zone);
-          const emailLabel = job?.status === "sent" ? "Replay email accepted by mail server"
-            : job?.status === "failed" ? "Replay email failed" : job?.status === "unknown" ? "Replay email needs review"
-              : job ? "Replay email queued" : "No replay email status";
+          const failedEmail = status === "failed";
           return <li className="recorder-upload-row" key={item.session_id}>
             <div className="recorder-upload-title">
               <a href={`/admin?recording=${encodeURIComponent(item.session_id)}`} title={label.full}>
@@ -122,9 +122,9 @@ export default function AdminDeviceQueue({ device, recordings, now, zone, busy, 
               </a>
               <span>{label.date}</span>
             </div>
-            <span className="recorder-state is-success">Uploaded</span>
-            <div className="recorder-upload-meta"><span>{recordingSizeMb(item.bytes)}</span><span>{emailLabel}</span></div>
-            {job?.status === "failed" && file && <div className="recorder-upload-actions">
+            <span className={`recorder-state ${failedEmail ? "is-danger" : "is-warning"}`}>{failedEmail ? "Replay email failed" : "Replay email needs review"}</span>
+            <div className="recorder-upload-meta"><span>Video uploaded</span><span>{recordingSizeMb(item.bytes)}</span></div>
+            {failedEmail && <div className="recorder-upload-actions">
               <button className="secondary" type="button" disabled={busy} onClick={() => onRetryEmail(file.id)}>Retry replay email</button>
             </div>}
           </li>;

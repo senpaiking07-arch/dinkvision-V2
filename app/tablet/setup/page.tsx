@@ -1,5 +1,5 @@
-import BrowserTabletSetup from "@/components/browser-tablet-setup";
-import "../../admin.css";
+import { redirect } from "next/navigation";
+
 export default function Page() {
-  return <BrowserTabletSetup />;
+  redirect("/admin");
 }

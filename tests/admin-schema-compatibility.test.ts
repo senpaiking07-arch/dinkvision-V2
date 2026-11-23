@@ -66,7 +66,7 @@ test("Admin still reports other database failures", async () => {
   assert.ok(selections.every(fields=>fields.includes("capture_interruption_code")));
 });
 
-async function readQueue(route: "admin/tablets" | "tablet", missing: string[]) {
+async function readQueue(route: "admin/tablets" | "tablet", missing: string[], summary = false) {
   const path = new URL(`../app/api/${route}/route.ts`, import.meta.url);
   const compiled = ts.transpileModule(readFileSync(path, "utf8"), {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
@@ -77,6 +77,7 @@ async function readQueue(route: "admin/tablets" | "tablet", missing: string[]) {
     let projection = "";
     const result = () => {
       if (table === "browser_recordings") {
+        assert.equal(summary, false, "Overview must skip the upload queue");
         const absent = missing.find(column => projection.includes(column));
         if (absent) return {data: null, error: {code: "42703", message: `column ${absent} does not exist`}};
         return {data: [{session_id: recording, upload_state: "retrying",
@@ -106,10 +107,14 @@ async function readQueue(route: "admin/tablets" | "tablet", missing: string[]) {
       return {};
     },
   });
-  const response = await exports.GET!(new Request(`http://127.0.0.1:3000/api/${route}`));
+  const response = await exports.GET!(new Request(`http://127.0.0.1:3000/api/${route}${summary ? "?summary=1" : ""}`));
   assert.equal(response.status, 200);
   return response.json();
 }
+
+test("the Admin recorder summary omits recording and storage data", async () => {
+  assert.deepEqual(await readQueue("admin/tablets", [], true), { devices: [] });
+});
 
 test("Admin and the recorder retain independently available queue fields during migrations", async () => {
   for (const missing of [[], ["capture_interruption_code"], ["upload_retry_at"],

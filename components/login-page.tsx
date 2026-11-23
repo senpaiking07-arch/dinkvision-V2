@@ -15,7 +15,7 @@ export default async function LoginPage({
   if (account && (!admin || account.role === "admin"))
     redirect(account.role === "admin" ? next || "/admin" : "/");
   return <>
-    <WebsiteHeader back={{ href: "/", label: "Recording screen" }} />
+    <WebsiteHeader />
     <main className="shell website-main">
       <div className="website-sign-in">
         <section className="website-panel">
