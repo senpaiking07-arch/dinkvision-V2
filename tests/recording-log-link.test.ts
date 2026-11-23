@@ -13,6 +13,9 @@ const other = "332b40d0-0000-4000-8000-000000000002";
 const compiled = ts.transpileModule(readFileSync(new URL("../app/admin/page.tsx", import.meta.url), "utf8"), {
   compilerOptions: {module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
 }).outputText;
+const snapshotSource = ts.transpileModule(readFileSync(new URL("../lib/admin-dashboard-snapshot.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 async function openLog(recording: string, role = "admin", exists = true) {
   let lookups = 0;
@@ -20,8 +23,14 @@ async function openLog(recording: string, role = "admin", exists = true) {
   const Dashboard = () => null;
   const exports: {default?: (props: unknown) => Promise<unknown>} = {};
   runInNewContext(compiled, {
+    process: { env: {} },
     exports,
-    require(name: string) {
+    require: function requireMock(name: string) {
+      if (name === "@/lib/admin-dashboard-snapshot") {
+        const snapshot = {};
+        runInNewContext(snapshotSource, { exports: snapshot, require: requireMock });
+        return snapshot;
+      }
       if (name === "@/lib/r2-server") return {usesR2: () => false};
       if(name === "react/jsx-runtime") return jsx;
       if(name === "next/navigation") return {redirect: () => {throw Error("redirected");}};

@@ -1,4 +1,5 @@
 "use client";
+import { AdminModal } from "@/components/admin-modal";
 import {RecorderTimeline} from "@/components/recorder-timeline";
 import { EnrollmentInvitation, enrollmentQrFromResponse, reserveEnrollmentTab, showEnrollmentTab, type EnrollmentQr } from "@/components/admin-enrollment-qr";
 import { useEffect, useRef, useState } from "react";
@@ -525,155 +526,129 @@ export default function BrowserTabletsAdmin() {
         </ol>
       </details>
       {cancellingUpload && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !busy)
-              setCancellingUpload(null);
-          }}
+        <AdminModal
+          title={`Cancel upload for ${cancellingUpload.device.name}?`}
+          description="This releases the queue for the next video. The saved video stays on the original device and can rejoin the end of the queue through Recover upload."
+          icon={CloudUpload}
+          tone="danger"
+          busy={busy}
+          onDismiss={() => setCancellingUpload(null)}
         >
-          <section
-            className="confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="cancel-upload-title"
-            aria-describedby="cancel-upload-description"
-          >
-            <h2 id="cancel-upload-title">
-              Cancel upload for {cancellingUpload.device.name}?
-            </h2>
-            <p id="cancel-upload-description">
-              This releases the global upload queue so the next video can
-              upload. The video is not deleted: it stays on the original device
-              and can rejoin the end of the queue with Recover / retry upload.
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
             </p>
-            {error && (
-              <p className="form-error" role="alert">
-                {error}
-              </p>
-            )}
-            <div className="confirm-modal-actions">
-              <button
-                type="button"
-                className="sign-in"
-                disabled={busy}
-                onClick={() => setCancellingUpload(null)}
-              >
-                Keep in queue
-              </button>
-              <button
-                type="button"
-                className="remove-court-button-solid"
-                disabled={busy}
-                onClick={() => {
-                  void action({
-                    action: "cancel-upload",
-                    id: cancellingUpload.device.id,
-                    session_id: cancellingUpload.recording.session_id,
-                  }).then((cancelled) => {
-                    if (cancelled) setCancellingUpload(null);
-                  });
-                }}
-              >
-                {busy ? "Cancelling…" : "Cancel upload & release global queue"}
-              </button>
-            </div>
-          </section>
-        </div>
+          )}
+          <div className="admin-modal-actions">
+            <button
+              type="button"
+              className="sign-in"
+              disabled={busy}
+              onClick={() => setCancellingUpload(null)}
+            >
+              Keep in queue
+            </button>
+            <button
+              type="button"
+              className="remove-court-button-solid"
+              disabled={busy}
+              onClick={() => {
+                void action({
+                  action: "cancel-upload",
+                  id: cancellingUpload.device.id,
+                  session_id: cancellingUpload.recording.session_id,
+                }).then((cancelled) => {
+                  if (cancelled) setCancellingUpload(null);
+                });
+              }}
+            >
+              {busy ? "Cancelling…" : "Cancel upload"}
+            </button>
+          </div>
+        </AdminModal>
       )}
       {removing && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !busy) setRemoving(null);
-          }}
+        <AdminModal
+          title={`Delete ${removing.name}?`}
+          description="This permanently removes the device and its registration. Active recordings are marked failed and queued uploads are cancelled. Existing logs and uploaded videos stay available. Unsent footage may be unrecoverable."
+          icon={Trash2}
+          tone="danger"
+          busy={busy}
+          onDismiss={() => setRemoving(null)}
         >
-          <section
-            className="confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="remove-device-title"
-            aria-describedby="remove-device-description"
-          >
-            <div className="confirm-modal-icon" aria-hidden="true">
-              <Trash2 size={20} />
-            </div>
-            <h2 id="remove-device-title">Are you sure you want to delete {removing.name}?</h2>
-            <p id="remove-device-description">
-              This permanently deletes the device and disconnects its enrollment. Any active recording is stopped and marked failed, and any active or queued upload is cancelled so the next queued upload can begin. Existing recording logs and uploaded videos stay available, but unsent footage on the deleted device may no longer be recoverable.
-            </p>
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <div className="confirm-modal-actions">
-              <button
-                type="button"
-                className="sign-in"
-                disabled={busy}
-                onClick={() => setRemoving(null)}
-              >
-                Keep device
-              </button>
-              <button
-                type="button"
-                className="remove-court-button-solid"
-                disabled={busy}
-                onClick={() => {
-                  void action({ action: "remove", id: removing.id, confirm: true }).then(
-                    (removed) => {
-                      if (!removed) return;
-                      setRemoving(null);
-                      setSelectedId(null);
-                      setPanel("overview");
-                    },
-                  );
-                }}
-              >
-                {busy ? "Deleting…" : "Yes, delete permanently"}
-              </button>
-            </div>
-          </section>
-        </div>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <div className="admin-modal-actions">
+            <button
+              type="button"
+              className="sign-in"
+              disabled={busy}
+              onClick={() => setRemoving(null)}
+            >
+              Keep device
+            </button>
+            <button
+              type="button"
+              className="remove-court-button-solid"
+              disabled={busy}
+              onClick={() => {
+                void action({ action: "remove", id: removing.id, confirm: true }).then(
+                  (removed) => {
+                    if (!removed) return;
+                    setRemoving(null);
+                    setSelectedId(null);
+                    setPanel("overview");
+                  },
+                );
+              }}
+            >
+              {busy ? "Deleting…" : "Delete device"}
+            </button>
+          </div>
+        </AdminModal>
       )}
-      {replacingEnrollment && <div className="modal-backdrop" role="presentation"><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="replace-enrollment-title">
-        <h2 id="replace-enrollment-title">Replace the current registration?</h2>
-        <p>The current device disconnects when the replacement is verified. Each invitation can enroll one installation.</p>
-        <div className="confirm-modal-actions"><button type="button" className="sign-in" disabled={busy} onClick={()=>setReplacingEnrollment(null)}>Keep current registration</button>
-          <button type="button" className="primary" disabled={busy} onClick={()=>{const pending=replacingEnrollment;setReplacingEnrollment(null);void action({...pending,replace_enrollment:true});}}>Create replacement invitation</button></div>
-      </section></div>}
-      {qrEnrollment && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setQrEnrollment(null);
-          }}
+      {replacingEnrollment && (
+        <AdminModal
+          title="Replace the current registration?"
+          description="The current device disconnects when the replacement is verified. Each invitation can enroll one installation."
+          icon={QrCode}
+          busy={busy}
+          onDismiss={() => setReplacingEnrollment(null)}
         >
-          <section
-            className="confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="enroll-title"
-            aria-describedby="enroll-desc"
-          >
-            <h2 id="enroll-title">Enroll your device</h2>
-            <p id="enroll-desc">Check the status of this single-use invitation.</p>
-            <EnrollmentInvitation invitation={qrEnrollment}
-              instructions="Scan this QR in DinkVision or enter the pairing code below."
-              openTab={() => {
-                if (showEnrollmentTab(reserveEnrollmentTab(), qrEnrollment)) setQrEnrollment(null);
-              }} />
-            <div className="confirm-modal-actions">
-              <button
-                type="button"
-                className="primary"
-                onClick={() => setQrEnrollment(null)}
-              >
-                Done
-              </button>
-            </div>
-          </section>
-        </div>
+          <div className="admin-modal-actions">
+            <button type="button" className="sign-in" disabled={busy} onClick={() => setReplacingEnrollment(null)}>
+              Keep current registration
+            </button>
+            <button type="button" className="primary" disabled={busy} onClick={() => {
+              setReplacingEnrollment(null);
+              void action({ ...replacingEnrollment, replace_enrollment: true });
+            }}>
+              Create replacement invitation
+            </button>
+          </div>
+        </AdminModal>
+      )}
+      {qrEnrollment && (
+        <AdminModal
+          title="Enroll your device"
+          description="Check the status of this single-use invitation."
+          icon={QrCode}
+          onDismiss={() => setQrEnrollment(null)}
+        >
+          <EnrollmentInvitation invitation={qrEnrollment}
+            instructions="Scan this QR in DinkVision or enter the pairing code below."
+            openTab={() => {
+              if (showEnrollmentTab(reserveEnrollmentTab(), qrEnrollment)) setQrEnrollment(null);
+            }} />
+          <div className="admin-modal-actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setQrEnrollment(null)}
+            >
+              Done
+            </button>
+          </div>
+        </AdminModal>
       )}
     </section>
   );

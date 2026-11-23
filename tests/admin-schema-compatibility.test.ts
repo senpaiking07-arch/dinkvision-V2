@@ -12,6 +12,9 @@ import { uuid } from "../lib/validation";
 const source = ts.transpileModule(readFileSync(new URL("../app/admin/page.tsx", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
+const snapshotSource = ts.transpileModule(readFileSync(new URL("../lib/admin-dashboard-snapshot.ts", import.meta.url), "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
 const recording = "abcd1234-1234-4123-9123-123456789abc";
 
 async function dashboard(error: {code: string; message: string}) {
@@ -35,7 +38,12 @@ async function dashboard(error: {code: string; message: string}) {
     };
     return query;
   } };
-  runInNewContext(source, { exports, require(name: string) {
+  runInNewContext(source, { exports, process: { env: {} }, require: function requireMock(name: string) {
+      if (name === "@/lib/admin-dashboard-snapshot") {
+        const snapshot = {};
+        runInNewContext(snapshotSource, { exports: snapshot, require: requireMock });
+        return snapshot;
+      }
       if (name === "@/lib/r2-server") return {usesR2: () => false};
     if (name === "react/jsx-runtime") return jsxRuntime;
     if (name === "@/lib/auth") return { getAccount: async () => ({account:{role: 'admin', tenantId: '00000000-0000-4000-8000-000000000001'}}) };

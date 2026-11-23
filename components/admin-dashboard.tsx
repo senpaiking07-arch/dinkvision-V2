@@ -1,7 +1,9 @@
 "use client";
+import { useAdminRealtime, type RealtimeScope } from "./use-admin-realtime";
+import { AdminModal } from "./admin-modal";
 import BrowserTabletsAdmin from "./browser-tablets-admin";
 import StorageSmtpControls from "./storage-smtp-controls";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   Camera as CameraIcon,
@@ -198,65 +200,48 @@ function CourtForm({
         )}
       </SaveForm>
       {confirmingRemove && court && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !updating)
-              setConfirmingRemove(false);
-          }}
+        <AdminModal
+          title={`Remove ${court.name}?`}
+          description="This permanently deletes the court and removes it from assigned devices. Existing videos and recording logs are kept. This cannot be undone."
+          icon={Trash2}
+          tone="danger"
+          busy={updating}
+          onDismiss={() => setConfirmingRemove(false)}
         >
-          <section
-            className="confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="remove-court-title"
-            aria-describedby="remove-court-description"
-          >
-            <div className="confirm-modal-icon" aria-hidden="true">
-              <Trash2 size={20} />
-            </div>
-            <h2 id="remove-court-title">Remove {court.name}?</h2>
-            <p id="remove-court-description">
-              This permanently deletes the court and removes it from assigned
-              devices. Existing videos and recording logs are kept. This cannot
-              be undone.
+          {statusFailed && statusMessage && (
+            <p role="alert" className="form-error">
+              {statusMessage}
             </p>
-            {statusFailed && statusMessage && (
-              <p role="alert" className="form-error">
-                {statusMessage}
-              </p>
-            )}
-            <div className="confirm-modal-actions">
-              <button
-                type="button"
-                className="sign-in"
-                disabled={updating}
-                autoFocus
-                onClick={() => setConfirmingRemove(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="remove-court-button remove-court-button-solid"
-                disabled={updating}
-                onClick={() => void removeCourt()}
-              >
-                <Trash2 size={15} />
-                {updating ? "Removing…" : "Remove court"}
-              </button>
-            </div>
-          </section>
-        </div>
+          )}
+          <div className="admin-modal-actions">
+            <button
+              type="button"
+              className="sign-in"
+              disabled={updating}
+              onClick={() => setConfirmingRemove(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="remove-court-button remove-court-button-solid"
+              disabled={updating}
+              onClick={() => void removeCourt()}
+            >
+              <Trash2 size={15} />
+              {updating ? "Removing…" : "Remove court"}
+            </button>
+          </div>
+        </AdminModal>
       )}
     </>
   );
 }
 
-export default function AdminDashboard({ data, initialRecordingId = "" }: {
+export default function AdminDashboard({ data: initialData, initialRecordingId = "", realtimeScope }: {
   data: Pick<AdminData, "courts" | "settings" | "sessions" | "captureReports">;
   initialRecordingId?: string;
+  realtimeScope?: RealtimeScope;
 }) {
   const [tab, setTab] = useState<Tab>(initialRecordingId ? "logs" : "overview");
   const [courtId, setCourtId] = useState<string | null>(null);
@@ -306,7 +291,10 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
   const [date, setDate] = useState("");
   const [logPage, setLogPage] = useState(1);
   const router = useRouter();
+  const onAccessChanged = useCallback(() => router.refresh(), [router]);
+  const { data, stale, accessLost } = useAdminRealtime(initialData, realtimeScope, initialRecordingId, onAccessChanged);
   useEffect(() => {
+    if (realtimeScope) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const schedule = (delay: number) => {
@@ -329,7 +317,7 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.removeEventListener("focus", refreshWhenVisible);
     };
-  }, [router]);
+  }, [router, realtimeScope]);
   const zone = data.settings.venue_time_zone || "UTC";
   function timestamp(value: string) {
     return new Intl.DateTimeFormat("en", {
@@ -413,8 +401,11 @@ export default function AdminDashboard({ data, initialRecordingId = "" }: {
     { id: "settings", label: "Settings", icon: Settings2 },
     { id: "logs", label: "Recording logs", icon: List },
   ] as const;
+  if (accessLost) return <main className="shell admin-main"><p role="status">Rechecking administrator access…</p></main>;
+
   return (
     <main className="shell admin-main">
+      {stale && <p className="recorder-alert" role="status">Dashboard status could not refresh. Showing the last available report.</p>}
       <div className="admin-title">
         <div>
           <h1>Venue management</h1>

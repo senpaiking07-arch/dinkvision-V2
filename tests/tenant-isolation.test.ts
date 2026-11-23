@@ -1,4 +1,5 @@
 import test from "node:test";
+import { isNewRecordingTransition } from "../lib/recording-transition";
 import assert from "node:assert/strict";
 import {readFile,readdir} from "node:fs/promises";
 import {randomUUID} from "node:crypto";
@@ -204,5 +205,74 @@ test("tenant administration enforces last admin, quotas, locations and private c
     try {assert.equal((await db.query("update public.venue_settings set max_duration_seconds=120 returning id")).rows.length,0);}
     catch(error){assert.match(String(error),/row-level security|permission denied/);}
     assert.equal((await db.query<any>("select max_duration_seconds from public.venue_settings")).rows[0].max_duration_seconds,before);
+  } finally {await db.close();}
+});
+
+
+test("private recording hints enforce tenant read-only access and survive delivery failure",async()=>{
+  const db=await database();
+  try {
+    // Realtime transport and its join probes are represented by a table and a topic GUC.
+    // Tenant authorization, triggers, role switches and RLS execute in PostgreSQL.
+    await db.exec(`
+      alter table auth.users add column email_confirmed_at timestamptz;
+      create schema realtime;
+      create table realtime.messages(topic text,extension text,payload jsonb,event text,private boolean);
+      alter table realtime.messages enable row level security;
+      grant usage on schema realtime to anon,authenticated;
+      grant select,insert on realtime.messages to anon,authenticated;
+      create policy unrelated_read on realtime.messages for select using(true);
+      create policy unrelated_write on realtime.messages for insert with check(true);
+      create function realtime.topic() returns text language sql stable as
+        $$select current_setting('test.topic',true)$$;
+      create function realtime.send(jsonb,text,text,boolean) returns void language sql as
+        $$insert into realtime.messages values($3,'broadcast',$1,$2,$4)$$;
+    `);
+    await db.exec(await readFile("supabase/optional-migrations/20261124000100_private_recording_notifications.sql","utf8"));
+    const admin=randomUUID(), player=randomUUID();
+    await db.query("insert into auth.users(id,email,email_confirmed_at) values($1,'admin@example.test',now()),($2,'player@example.test',now())",[admin,player]);
+    const tenant=(await db.query<{id:string}>("select public.register_tenant($1,'Test venue','realtime-test') id",[admin])).rows[0].id;
+    await db.query("select set_config('request.headers',$1,false)",[JSON.stringify({[TENANT_HEADER]:tenant})]);
+    const court=(await db.query<{id:string}>("insert into courts(name) values('Court') returning id")).rows[0].id;
+    const session=(await db.query<{id:string}>("insert into recording_sessions(player_id,court_id,idempotency_key,configuration_snapshot,recipient_email) values($1,$2,$3,'{}','test@example.test') returning id",[admin,court,randomUUID()])).rows[0].id;
+    const topic=`tenant:${tenant}:admin-status`;
+    await db.query("update recording_sessions set status='starting' where id=$1",[session]);
+    const messages=await db.query<{payload:Record<string,unknown>;private:boolean;topic:string}>("select * from realtime.messages");
+    assert.equal(messages.rows.length,1);
+    const message=messages.rows[0];
+    assert.equal(message.private,true);
+    assert.equal(message.topic,topic);
+    assert.equal(message.payload.entityId,session);
+    assert.ok(isNewRecordingTransition(message.payload,tenant,0));
+    assert.equal(isNewRecordingTransition(message.payload,tenant,1),false);
+    assert.ok(!isNewRecordingTransition({...message.payload,extra:"private"},tenant,0));
+    assert.ok(!isNewRecordingTransition(message.payload,randomUUID(),0));
+    await db.exec("update dinkvision_realtime.venue_cursor set emitted_at=now()-interval '1 minute'");
+    await db.query("update recording_sessions set status=status where id=$1",[session]);
+    assert.equal((await db.query("select * from realtime.messages")).rows.length,1);
+    await db.exec("drop function realtime.send(jsonb,text,text,boolean)");
+    await db.query("update recording_sessions set status='failed' where id=$1",[session]);
+    assert.equal((await db.query<{status:string}>("select status from recording_sessions where id=$1",[session])).rows[0].status,"failed");
+    async function join(user:string,requested=topic) {
+      await db.exec("reset role");
+      await db.query("select set_config('test.topic',$1,false),set_config('request.jwt.claim.sub',$2,false)",[requested,user]);
+      await db.exec("set role authenticated");
+      return (await db.query("select * from realtime.messages")).rows.length;
+    }
+    assert.equal(await join(admin),1);
+    await assert.rejects(db.query("insert into realtime.messages(topic,extension) values($1,'broadcast')",[topic]),/row-level security/);
+    assert.equal(await join(player),0);
+    assert.equal(await join(""),0);
+    assert.equal(await join(randomUUID()),0);
+    await db.exec("reset role");
+    const other=(await db.query<{id:string}>("select public.register_tenant($1,'Other venue','other-test') id",[player])).rows[0].id;
+    assert.equal(await join(player),0);
+    assert.equal(await join(admin,`tenant:${other}:admin-status`),0);
+    await db.exec("reset role");
+    await db.query("update auth.users set email_confirmed_at=null where id=$1",[admin]);
+    assert.equal(await join(admin),0);
+    await db.exec("reset role; set role anon");
+    assert.equal((await db.query("select * from realtime.messages")).rows.length,0);
+    await assert.rejects(db.query("insert into realtime.messages(topic,extension) values($1,'broadcast')",[topic]),/row-level security/);
   } finally {await db.close();}
 });

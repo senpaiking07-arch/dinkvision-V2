@@ -462,54 +462,99 @@
 .remove-court-button-solid:hover:not(:disabled) {
   background: var(--color-danger-strong);
 }
-.modal-backdrop {
-  z-index: var(--z-modal);
-  background: var(--color-overlay);
-  -webkit-backdrop-filter: blur(var(--overlay-blur));
-  backdrop-filter: blur(var(--overlay-blur));
-  place-items: center;
-  padding: 24px;
-  display: grid;
+.admin-modal {
   position: fixed;
   inset: 0;
-}
-.confirm-modal {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xl);
+  margin: auto;
+  width: min(32rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  max-height: calc(100dvh - 2rem);
+  box-sizing: border-box;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--recorder-border, var(--line));
+  border-radius: 15px;
+  padding: clamp(1rem, 4vw, 1.75rem);
   background: var(--color-surface);
-  width: min(100%, 440px);
-  padding: 30px;
+  color: var(--recorder-ink, #12363c);
+  font: inherit;
   box-shadow: 0 24px 70px #0e2a2b3d;
 }
-.confirm-modal-icon {
-  background: var(--color-danger-bg);
-  width: 42px;
-  height: 42px;
-  color: var(--color-danger);
-  border-radius: 50%;
-  place-items: center;
-  margin-bottom: 18px;
+.admin-modal::backdrop {
+  background: var(--color-overlay);
+  backdrop-filter: blur(var(--overlay-blur));
+}
+html:has(.admin-modal[open]) { overflow: hidden; }
+.admin-modal-header {
   display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 0.625rem 1rem;
+  margin-bottom: 1.25rem;
 }
-.confirm-modal h2 {
-  margin: 0 0 10px;
-  font-size: 26px;
+.admin-modal-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #eaf3ed;
+  color: var(--recorder-accent, #105b61);
 }
-.confirm-modal > p {
-  color: #657064;
-  margin: 0 0 22px;
-  line-height: 1.6;
-}
-.confirm-modal .form-error {
+.admin-modal[data-tone="danger"] .admin-modal-icon {
+  background: var(--color-danger-bg);
   color: var(--color-danger);
 }
-.confirm-modal-actions {
-  justify-content: flex-end;
-  gap: 10px;
-  display: flex;
+.admin-modal .admin-modal-close {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--recorder-border, var(--line));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
 }
-.confirm-modal-actions .sign-in {
-  gap: 0;
+.admin-modal .admin-modal-close:hover:not(:disabled) { background: #eaf3ed; }
+.admin-modal-header :is(h2, p) {
+  grid-column: 1 / -1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.admin-modal-header h2 {
+  font: inherit;
+  font-size: clamp(1.25rem, 4vw, 1.625rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+.admin-modal-header p {
+  color: var(--recorder-muted, #4d6768);
+  line-height: 1.55;
+}
+.admin-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.625rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--recorder-border, var(--line));
+}
+.admin-modal-actions button {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  justify-content: center;
+}
+.admin-modal :is(button, a):focus-visible {
+  outline: 2px solid var(--recorder-accent, #105b61);
+  outline-offset: 2px;
+}
+@media (max-width: 520px) {
+  .admin-modal-actions { flex-direction: column; }
+  .admin-modal-actions button { width: 100%; }
 }
 .removed-courts {
   border-top: 1px solid #e3e7de;
@@ -524,18 +569,6 @@
 }
 .removed-court-items > button {
   opacity: 0.78;
-}
-@media (max-width: 520px) {
-  .confirm-modal {
-    padding: 24px;
-  }
-  .confirm-modal-actions {
-    flex-direction: column-reverse;
-  }
-  .confirm-modal-actions button {
-    justify-content: center;
-    width: 100%;
-  }
 }
 .admin-callout {
   border: 1px solid var(--color-border-green);
@@ -1975,11 +2008,6 @@ summary {
   border-radius: 8px;
 }
 .admin-enrollment-status { display: grid; }
-.admin-main .confirm-modal {
-  color: var(--recorder-ink, #12363c);
-  border-color: var(--recorder-border, #d9e4de);
-  border-radius: 15px;
-}
 @media (max-width: 615px) {
   .admin-site-header {
     align-items: center;

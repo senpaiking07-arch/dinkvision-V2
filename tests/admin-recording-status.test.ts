@@ -26,7 +26,8 @@ function dashboard(lastSeen: string | null, started = "2026-11-01T14:03:39Z", st
       if(name === "react")return {useState:(initial:any)=>{
         const index = stateIndex++;
         return [index === 0 && retentionSeconds !== undefined ? "settings" : index === 3 ? [] : initial, ()=>{}];
-      },useRef:()=>({current:null}),useEffect:()=>{}};
+      },useCallback:(fn:unknown)=>fn,useRef:()=>({current:null}),useEffect:()=>{}};
+      if(name === "./use-admin-realtime")return {useAdminRealtime:(initial:unknown)=>({data:initial, stale:false})};
       if(name === "next/navigation")return {useRouter:()=>({refresh(){}})};
       if(name === "@/lib/recording-status")return requireLocal("../lib/recording-status.ts");
       if(name === "@/lib/camera-health")return requireLocal("../lib/camera-health.ts");

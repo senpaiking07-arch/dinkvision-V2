@@ -3,8 +3,10 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
--keep class org.bytedeco.javacpp.Loader { *; }
--keep class org.bytedeco.javacpp.Pointer { *; }
+# JavaCPP's generated JNI looks up its runtime types and fields by exact name
+# and descriptor, including Pointer$NativeDeallocator.ownerAddress.
+-keep class org.bytedeco.javacpp.* { *; }
+-keep class org.bytedeco.javacpp.presets.javacpp { *; }
 -keep class org.bytedeco.javacpp.** extends org.bytedeco.javacpp.Pointer { *; }
 -keep @interface org.bytedeco.javacpp.annotation.**
 -keep class org.bytedeco.ffmpeg.** { *; }
