@@ -560,12 +560,12 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
       {tab === "settings" && (
         <section className="admin-card recorder-workspace" aria-labelledby="admin-settings-title">
           <header className="recorder-workspace-header">
-            <div><h2 id="admin-settings-title">Settings</h2><p>Manage recording defaults and check your replay services.</p></div>
+            <div><h2 id="admin-settings-title">Settings</h2></div>
           </header>
           <div className="admin-settings-grid">
             <section className="admin-work-panel admin-recording-settings">
               <header className="recorder-detail-section-heading">
-                <div><h3><Clock3 size={17} aria-hidden="true" /> Recording defaults</h3><p>Apply to future sessions at this venue.</p></div>
+                <div><h3><Clock3 size={17} aria-hidden="true" /> Recording defaults</h3><p>Changes apply to new recordings at this venue.</p></div>
               </header>
               <SaveForm
                 resource="settings"
@@ -577,19 +577,21 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
               >
                 <div className="form-columns">
                   <label>
-                    Maximum recording duration (minutes)
+                    <span>Maximum recording duration (minutes)</span>
                     <input
                       type="number"
                       name="duration_minutes"
                       min={1}
                       max={120}
                       step={1}
+                      aria-describedby="recording-duration-range"
                       defaultValue={data.settings.max_duration_seconds / 60}
                       required
                     />
+                    <span className="form-note" id="recording-duration-range">1 to 120 minutes per recording.</span>
                   </label>
                   <label>
-                    Video retention after upload (days)
+                    <span>Video retention after upload (days)</span>
                     <input
                       type="number"
                       name="retention_days"
@@ -600,7 +602,7 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
                       aria-describedby="video-retention-range"
                       required
                     />
-                    <span className="form-note" id="video-retention-range">1 hour to 30 days. For example, 0.5 is 12 hours.</span>
+                    <span className="form-note" id="video-retention-range">1 hour to 30 days from upload completion. Use 0.5 for 12 hours.</span>
                   </label>
                 </div>
                 <label>
@@ -609,7 +611,8 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
                     name="venue_time_zone"
                     defaultValue={data.settings.venue_time_zone || ""}
                     list="time-zones"
-                    placeholder="Choose your venue’s time zone"
+                    placeholder="Search or type a time zone"
+                    aria-describedby="venue-zone-help"
                     required
                   />
                   <datalist id="time-zones">
@@ -618,16 +621,10 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
                     <option value="Asia/Singapore" />
                     <option value="UTC" />
                   </datalist>
+                  <span id="venue-zone-help" className="form-note">Used for recording times and replay deadlines. For example, Asia/Manila.</span>
                 </label>
-                <div className="admin-callout">
-                  <p>
-                    New sessions use the updated duration and retention. Retention
-                    starts when the video finishes uploading.
-                  </p>
-                </div>
                 <label className="check-label">
-                  <input type="checkbox" required /> I confirm these settings for
-                  future recordings.
+                  <input type="checkbox" required /> Apply these settings to future recordings.
                 </label>
               </SaveForm>
             </section>

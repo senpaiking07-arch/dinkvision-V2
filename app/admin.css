@@ -2056,7 +2056,47 @@ summary {
 .admin-work-panel h3 svg, .admin-compact-link > svg { flex: none; color: var(--recorder-accent); }
 .admin-work-panel :is(dt, dd, p) { overflow-wrap: anywhere; }
 .admin-work-panel .stack-form { margin: 0; }
-.admin-recording-settings .admin-callout { padding: 12px; margin: 0; }
+.admin-recording-settings .recorder-detail-section-heading {
+  padding-block-end: 15px;
+  border-bottom: 1px solid var(--recorder-border);
+}
+.admin-recording-settings .stack-form label { font-size: 14px; color: var(--recorder-ink); }
+.admin-recording-settings .form-note { color: var(--recorder-muted); }
+.admin-recording-settings .form-columns > label {
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  align-items: start;
+  row-gap: 7px;
+}
+.admin-recording-settings .check-label {
+  border-top: 1px solid var(--recorder-border);
+  padding-top: 14px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.admin-settings-grid .admin-service-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.admin-settings-grid .recorder-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px 10px;
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--recorder-border);
+  border-radius: 0;
+  background: transparent;
+}
+.admin-settings-grid .recorder-facts:last-child { padding-bottom: 0; }
+.admin-settings-grid .recorder-facts p { grid-column: 1 / -1; margin: 0; }
+.admin-settings-grid .recorder-facts .recorder-state { margin: 0; }
+@media (max-width: 600px) {
+  .admin-recording-settings .form-columns { grid-template-columns: minmax(0, 1fr); }
+  .admin-recording-settings .form-columns > label { grid-row: auto; grid-template-rows: auto; }
+  .admin-recording-settings .save-row .primary { width: 100%; }
+}
+@media (max-width: 400px) {
+  .admin-settings-grid .recorder-facts { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+}
 .admin-work-panel .recorder-facts .recorder-state { margin-top: 9px; }
 .admin-services .recorder-detail-section-heading { align-items: flex-start; }
 .admin-services button, .admin-watch-link {
