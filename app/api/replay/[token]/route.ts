@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { guestReplay,privatePlayback } from "@/lib/replay-server";
+import { guestReplay,privatePlayback,ReplayObjectMissing } from "@/lib/replay-server";
 import { json } from "@/lib/http";
 export async function GET(request:Request,context:{params:Promise<{token:string}>}) {
   try {
@@ -11,5 +11,8 @@ export async function GET(request:Request,context:{params:Promise<{token:string}
     response.headers.set("Referrer-Policy","no-referrer");
     response.headers.set("X-Robots-Tag","noindex, nofollow");
     return response;
-  } catch {return json({error:"Replay is temporarily unavailable. Please retry."},503);}
+  } catch (error) {
+    if (error instanceof ReplayObjectMissing) return json({code:"recording_file_missing",error:"This recording is unavailable because its video file is missing."},404);
+    return json({error:"Replay is temporarily unavailable. Please retry."},503);
+  }
 }

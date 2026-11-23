@@ -1,4 +1,4 @@
-import { guestReplay } from "@/lib/replay-server";
+import { checkReplayStorage, guestReplay, ReplayObjectMissing } from "@/lib/replay-server";
 import { notFound } from "next/navigation";
 import { Clock3, Download, LockKeyhole } from "lucide-react";
 import ReplayVideo from "@/components/replay-video";
@@ -9,7 +9,23 @@ export const metadata={title:"DinkVision replay",robots:{index:false,follow:fals
 
 export default async function ReplayPage({params}:{params:Promise<{token:string}>}) {
   const {token}=await params;
-  const file=await guestReplay(token);
+  let file: Awaited<ReturnType<typeof guestReplay>>;
+  try {
+    file = await guestReplay(token);
+    if (file) await checkReplayStorage(file);
+  } catch (error) {
+    const missing = error instanceof ReplayObjectMissing;
+    return <>
+      <WebsiteHeader />
+      <main className="shell website-main replay-page">
+        <h1>{missing ? "Recording unavailable" : "Replay temporarily unavailable"}</h1>
+        <div className="website-notice" role="status">
+          {missing ? "The video file is missing from storage." : "Please try opening this replay again."}
+        </div>
+        {!missing && <a className="sign-in" href={`/replay/${encodeURIComponent(token)}`}>Retry replay</a>}
+      </main>
+    </>;
+  }
   if(!file) notFound();
   const media=`/api/replay/${encodeURIComponent(token)}`;
   const expires = new Intl.DateTimeFormat("en-PH", {

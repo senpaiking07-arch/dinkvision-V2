@@ -33,11 +33,25 @@ export async function guestReplay(token:string, download = false) {
   return result.data ? {...result.data,expires_at:new Date(Math.min(Date.parse(result.data.expires_at),claims.exp*1000)).toISOString()} : null;
 }
 
-export async function privatePlayback(file: RecordingFilenameMetadata & {storage_bucket:string;storage_key:string;expires_at:string},download=false) {
+type PlaybackFile = {storage_bucket:string;storage_key:string;expires_at:string};
+
+export class ReplayObjectMissing extends Error {}
+
+function replayObject(file: PlaybackFile) {
+  return {bucket:file.storage_bucket,object_key:file.storage_key,upload_id:null};
+}
+
+export async function checkReplayStorage(file: PlaybackFile) {
+  if (!await r2Store().head(replayObject(file))) throw new ReplayObjectMissing();
+}
+
+export async function privatePlayback(file: RecordingFilenameMetadata & PlaybackFile,download=false) {
+  if (Date.parse(file.expires_at) <= Date.now()) throw new Error("Replay expired.");
+  await checkReplayStorage(file);
   const lifetime=Math.min(300,Math.floor((Date.parse(file.expires_at)-Date.now())/1000));
   if(lifetime<1) throw new Error("Replay expired.");
   return r2Store().playback(
-    {bucket:file.storage_bucket,object_key:file.storage_key,upload_id:null},
+    replayObject(file),
     download, lifetime, download ? recordingDownloadFilename(file) : undefined,
   );
 }

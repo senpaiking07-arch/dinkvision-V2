@@ -93,6 +93,11 @@ test("guest and signed-in replay routes name downloads and keep inline playback 
     credentials: { accessKeyId: "fixture-access", secretAccessKey: "fixture-secret" },
   });
   const store = new R2Store(client, file.storage_bucket);
+  let storageError: Error | undefined;
+  const checkedStore = new R2Store({send: async () => {
+    if (storageError) throw storageError;
+    return { ContentLength: 1024 };
+  }} as unknown as S3Client, file.storage_bucket);
   let selectedFields = "";
   const database = (scope: string) => {
     assert.equal(scope, tenant);
@@ -131,7 +136,7 @@ test("guest and signed-in replay routes name downloads and keep inline playback 
     process.env.REPLAY_SIGNING_KEY = key;
     const replay = load("lib/replay-server.ts", {
       "./replay-token": { signReplay, verifyReplay },
-      "./r2-server": { r2Store: () => store },
+      "./r2-server": { r2Store: () => ({head: checkedStore.head.bind(checkedStore), playback: store.playback.bind(store)}) },
       "./recorder-server": { recorderDatabase: database },
       "./recording-filename": { recordingDownloadFilename },
     });
@@ -170,6 +175,26 @@ test("guest and signed-in replay routes name downloads and keep inline playback 
     assert.equal((await guest.GET(new Request("https://test.local/api/replay/expired?download=1"),
       { params: Promise.resolve({token:expired}) })).status,404);
     await assert.rejects(() => replay.privatePlayback({ ...file, expires_at: new Date(Date.now()-1000).toISOString() }, true), /Replay expired/);
+    const check = () => authorized.GET(new Request(`https://test.local/api/recordings/${session}/playback?check=1`),
+      { params: Promise.resolve({id:session}) });
+    const play = () => guest.GET(new Request("https://test.local/api/replay/token"),
+      { params: Promise.resolve({token}) });
+    assert.deepEqual(await (await check()).json(), {available:true});
+    storageError = Object.assign(new Error(), {name:"NotFound", $metadata:{httpStatusCode:404}});
+    for (const request of [check, play]) {
+      const response = await request();
+      assert.equal(response.status, 404);
+      assert.equal((await response.json()).code, "recording_file_missing");
+      assert.equal(response.headers.has("Location"), false);
+    }
+    for (const name of ["AccessDenied", "TimeoutError"]) {
+      storageError = Object.assign(new Error(), {name});
+      for (const request of [check, play]) {
+        const response = await request();
+        assert.equal(response.status, 503);
+        assert.equal((await response.json()).code, undefined);
+      }
+    }
   } finally {
     client.destroy();
     if (originalKey === undefined) delete process.env.REPLAY_SIGNING_KEY;
