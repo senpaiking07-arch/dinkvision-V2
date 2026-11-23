@@ -17,7 +17,9 @@ export function androidRelease(env: Record<string, string | undefined> = process
   }
   if (required && !downloadUrl)
     throw new Error("Publish and configure the approved APK before enabling ANDROID_REQUIRE_LATEST.");
-  return { ...release, required, downloadUrl };
+  // Installed Android clients require a three-part version label in policy responses.
+  const versionName = release.versionName.replace(/^(\d+\.\d+)$/, "$1.0");
+  return { ...release, versionName, required, downloadUrl };
 }
 
 export function androidUpdateRequired(request: Request, androidDevice = false, policy = androidRelease()) {

@@ -9,6 +9,8 @@ const env = {ANDROID_REQUIRE_LATEST:"true",ANDROID_APK_DOWNLOAD_URL:"https://din
 const policy = androidRelease(env);
 test("release version and Gradle share one manifest; enforcement starts only with an approved HTTPS download", () => {
   assert.equal(androidRelease({}).required, false);
+  // Installed recorders validate the policy label even when updates are optional.
+  assert.match(policy.versionName, /^\d+\.\d+\.\d+$/);
   assert.ok(Number.isInteger(policy.versionCode) && policy.versionCode > 0);
   assert.match(readFileSync("android/app/build.gradle","utf8"), /recorder-release.json/);
   for (const url of ["", "http://example.com/file.apk", "https://user:secret@example.com/file.apk", "https://example.com/file.apk#fragment"])
