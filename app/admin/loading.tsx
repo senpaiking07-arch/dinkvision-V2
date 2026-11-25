@@ -5,7 +5,7 @@ export default function LoadingAdmin() {
   return <>
     <AdminHeader />
     <main className="shell admin-main">
-      <div className="admin-title"><h1>Venue management</h1></div>
+      <h1 className="admin-sr-only">Venue management</h1>
       <AdminSkeleton label="Loading the admin dashboard">
         <div className="admin-loading-nav">
           {Array.from({ length: 5 }, (_, index) => <SkeletonBlock key={index} className="is-field" />)}

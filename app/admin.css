@@ -246,22 +246,6 @@
   letter-spacing: 0.06em;
   font-size: 9px;
 }
-.admin-title {
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-  display: flex;
-}
-.admin-title h1 {
-  letter-spacing: -1px;
-  margin: 14px 0;
-  font-size: 43px;
-}
-.admin-title p {
-  color: #78836d;
-  margin: 0;
-  font-size: 13px;
-}
 .admin-tabs {
   border-bottom: 1px solid var(--line);
   gap: 7px;
@@ -650,13 +634,6 @@ summary {
   }
   .admin-main {
     padding-top: 28px;
-  }
-  .admin-title {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .admin-title h1 {
-    font-size: 35px;
   }
   .admin-tabs {
     margin: 22px 0;
@@ -2021,7 +1998,6 @@ summary {
   .admin-site-header .brand > span { font-size: clamp(13px, 3.7vw, 17px); letter-spacing: .045em; }
   .admin-site-header .admin-header-actions { justify-content: flex-start; }
 }
-.admin-main .admin-title h1 { margin: 0; font-size: clamp(29px, 4.6vw, 43px); }
 .admin-main .admin-tabs { margin-block: 22px; }
 .admin-main .admin-tabs button:focus-visible,
 .admin-main .recorder-workspace :is(button, summary, a, input, select):focus-visible {

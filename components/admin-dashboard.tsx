@@ -406,11 +406,7 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
   return (
     <main className="shell admin-main">
       {stale && <p className="recorder-alert" role="status">Dashboard status could not refresh. Showing the last available report.</p>}
-      <div className="admin-title">
-        <div>
-          <h1>Venue management</h1>
-        </div>
-      </div>
+      <h1 className="admin-sr-only">Venue management</h1>
       <nav className="admin-tabs" aria-label="Admin sections">
         {nav.map((item) => (
           <button
