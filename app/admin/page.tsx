@@ -32,7 +32,7 @@ export default async function AdminPage({ searchParams }: {
   const needsDatabaseUpdate = failures.some(({ error }) =>
     ["42703", "42P01", "PGRST204", "PGRST205"].includes(error?.code || ""));
   return (
-    <>
+    <div className="admin-dashboard-page">
       <AdminHeader account={account} />
       {failures.length > 0 ? (
         <main className="shell admin-main">
@@ -62,6 +62,6 @@ export default async function AdminPage({ searchParams }: {
         />
       )}
       <AppVersionFooter />
-    </>
+    </div>
   );
 }

@@ -226,6 +226,14 @@
 .admin-main {
   padding: 40px 0 60px;
 }
+.admin-dashboard-page {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100dvh;
+}
+.admin-dashboard-page > .admin-main {
+  margin-block: 0;
+}
 .app-version-footer {
   border-top: 1px solid var(--line);
   color: #78836e;
@@ -233,7 +241,7 @@
   justify-items: center;
   gap: 6px;
   margin: 0 auto;
-  padding: 24px 0 36px;
+  padding: 24px 0 16px;
   display: grid;
 }
 .app-version-footer strong {

@@ -1,8 +1,9 @@
 import { AdminSkeleton, SkeletonBlock, SkeletonRows } from "@/components/admin-skeleton";
 import AdminHeader from "@/components/admin-header";
+import AppVersionFooter from "@/components/app-version-footer";
 
 export default function LoadingAdmin() {
-  return <>
+  return <div className="admin-dashboard-page">
     <AdminHeader />
     <main className="shell admin-main admin-dashboard-main">
       <h1 className="admin-sr-only">Venue management</h1>
@@ -19,5 +20,6 @@ export default function LoadingAdmin() {
         </section>
       </AdminSkeleton>
     </main>
-  </>;
+    <AppVersionFooter />
+  </div>;
 }
