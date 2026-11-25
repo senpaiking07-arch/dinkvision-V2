@@ -1995,7 +1995,7 @@ summary {
   .admin-site-header .brand > span { font-size: clamp(13px, 3.7vw, 17px); letter-spacing: .045em; }
   .admin-site-header .admin-header-actions { justify-content: flex-start; }
 }
-.admin-dashboard-main { padding-block-start: 16px; }
+.admin-dashboard-main { padding-block: 16px 24px; }
 .admin-dashboard-main > .recorder-alert { margin-bottom: 12px; }
 .admin-main .admin-tabs button:focus-visible,
 .admin-main .recorder-workspace :is(button, summary, a, input, select):focus-visible {
