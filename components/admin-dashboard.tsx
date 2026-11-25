@@ -404,7 +404,7 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
   if (accessLost) return <main className="shell admin-main"><p role="status">Rechecking administrator access…</p></main>;
 
   return (
-    <main className="shell admin-main">
+    <main className="shell admin-main admin-dashboard-main">
       {stale && <p className="recorder-alert" role="status">Dashboard status could not refresh. Showing the last available report.</p>}
       <h1 className="admin-sr-only">Venue management</h1>
       <nav className="admin-tabs" aria-label="Admin sections">

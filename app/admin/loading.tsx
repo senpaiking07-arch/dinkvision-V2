@@ -4,7 +4,7 @@ import AdminHeader from "@/components/admin-header";
 export default function LoadingAdmin() {
   return <>
     <AdminHeader />
-    <main className="shell admin-main">
+    <main className="shell admin-main admin-dashboard-main">
       <h1 className="admin-sr-only">Venue management</h1>
       <AdminSkeleton label="Loading the admin dashboard">
         <div className="admin-loading-nav">
