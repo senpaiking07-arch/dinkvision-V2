@@ -23,7 +23,7 @@ public final class RecorderService extends Service {
     PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     Notification.Builder builder = new Notification.Builder(this, "recording").setSmallIcon(R.drawable.ic_camera)
-        .setColor(0xff008578).setContentTitle("DinkVision Recorder").setContentText(attempt.isEmpty() ? "Checking the camera" : "Recording your match")
+        .setColor(0xff008578).setContentTitle(getText(R.string.app_name)).setContentText(attempt.isEmpty() ? "Checking the camera" : "Recording your match")
         .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(true);
     if (!attempt.isEmpty()) {
       PendingIntent stop = PendingIntent.getService(this, 1,
