@@ -238,26 +238,6 @@ public final class MainActivity extends androidx.activity.ComponentActivity {
     }
 
     @JavascriptInterface
-    public String emailHistory(String prefix) {
-      if (prefix == null || prefix.length() > 254 || !canUseEmailHistory()) return "{}";
-      try { return engine.emailHistory.find(prefix.trim()).toString(); }
-      catch (Exception unavailable) { return "{}"; }
-    }
-
-    @JavascriptInterface
-    public boolean removeSavedEmail(String email) {
-      if (email == null || email.length() > 254 || !canUseEmailHistory()) return false;
-      try {
-        engine.emailHistory.remove(email);
-        return true;
-      } catch (Exception unavailable) { return false; }
-    }
-
-    private boolean canUseEmailHistory() {
-      return !engine.busy && engine.server.optBoolean("enabled") && !engine.updateBlocksPlayer();
-    }
-
-    @JavascriptInterface
     public void action(String action, String value) {
       long receivedNanos = System.nanoTime();
       if ("retry-connection".equals(action)) { engine.retryConnection(); return; }

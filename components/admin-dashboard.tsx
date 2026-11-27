@@ -3,6 +3,7 @@ import { useAdminRealtime, type RealtimeScope } from "./use-admin-realtime";
 import { AdminModal } from "./admin-modal";
 import BrowserTabletsAdmin from "./browser-tablets-admin";
 import StorageSmtpControls from "./storage-smtp-controls";
+import CourtRecordingLogo from "./court-recording-logo";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -545,6 +546,7 @@ export default function AdminDashboard({ data: initialData, initialRecordingId =
                   onSaved={id => { if (id) { setCourtId(id); setCourtSearch(""); } }}
                   onRemoved={() => setCourtId(null)}
                 />
+                {currentCourt && <CourtRecordingLogo key={currentCourt.id} courtId={currentCourt.id} />}
               </div>
             </section>
           </div>

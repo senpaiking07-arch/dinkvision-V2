@@ -222,7 +222,8 @@ final class UvcCameraRecorder {
       VideoCapture.setSurfaceProcessorFactory((surface, width, height) -> {
         LiveLogoProcessor processor = new LiveLogoProcessor(context, surface, width, height, 0, true,
             listener.validateSavedMediaInBackground(), error ->
-                failure.compareAndSet(null, new Exception("Live watermark renderer failed. Saved footage was preserved.", error)));
+                failure.compareAndSet(null, new Exception("Live watermark renderer failed. Saved footage was preserved.", error)),
+            listener.courtLogo());
         watermark.set(processor);
         encoderPrepared.countDown();
         return processor;

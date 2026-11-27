@@ -85,6 +85,7 @@ final class CameraCapture {
     void frame(int seconds);
 
     default void preparation(String stage) {}
+    default byte[] courtLogo() { return null; }
     default void camera(String label) {}
 
     default void audio(String label) {}

@@ -39,9 +39,10 @@ export function recordingStageLabel(item: LocalVideoReport & {branding_progress?
     return local === 'Adding logo' && progress !== null ? `Adding logo ${progress}%` : local;
   }
   if (item.upload_state === 'failed' || item.upload_state === 'retrying') {
-    if (item.upload_state === 'retrying' && item.upload_retry_at !== undefined
-        && !(Date.parse(item.upload_retry_at || '') > now))
-      return nativeRecorder && item.branding_state !== 'complete' ? 'Waiting to add logo' : 'Waiting to upload';
+    if (item.upload_state === 'retrying' && item.branding_state !== 'failed') {
+      if (!item.upload_retry_at) return 'Retrying automatically';
+      return Date.parse(item.upload_retry_at) > now ? 'Upload retry scheduled' : 'Retry due · check recorder';
+    }
     const stage = item.branding_state === 'failed' ? 'Logo processing' : 'Upload';
     return item.upload_state === 'retrying' ? `${stage} retry scheduled` : `${stage} failed`;
   }

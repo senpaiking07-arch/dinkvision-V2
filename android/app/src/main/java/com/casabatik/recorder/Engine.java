@@ -45,7 +45,6 @@ final class Engine {
   final Vault vault;
   final Api api;
   final BackgroundTransfers backgroundTransfers;
-  final EmailHistory emailHistory;
   final RecorderDiagnostics diagnostics;
   private final LiveRecordingValidation liveRecordingValidation = new LiveRecordingValidation();
   final ExecutorService work = Executors.newSingleThreadExecutor();
@@ -107,7 +106,10 @@ final class Engine {
     context = c.getApplicationContext();
     vault = new Vault(context);
     backgroundTransfers = new BackgroundTransfers(context);
-    emailHistory = new EmailHistory(vault, System::currentTimeMillis);
+    if (!vault.get("recipient-history").isEmpty()) {
+      try { vault.put("recipient-history", ""); }
+      catch (Exception unavailable) { Log.w("DinkVision", "Could not clear legacy email suggestions."); }
+    }
     LocalVideoExporter.cleanupInterruptedGalleryCopy(context, vault.get("export-pending-uri"));
     try { vault.put("export-pending-uri", ""); } catch (Exception ignored) { }
     api = connections == null ? new Api(vault) : new Api(vault, connections);
@@ -233,12 +235,17 @@ final class Engine {
         } else if (backgroundTransfers.isPaused() && "uploading".equals(item.optString("status"))) {
           pauseUploadItem(item);
         } else if ("uploading".equals(item.optString("status"))) {
-          int retries = item.optInt("retryCount", 0) + 1;
-          item
-              .put("status", retries >= 8 ? "failed" : "retrying")
+          int retries = Math.min(100, item.optInt("retryCount", 0) + 1);
+          long now = System.currentTimeMillis();
+          long since = item.optLong("firstNetworkFailureAt", now);
+          boolean expired = now - since >= TimeUnit.DAYS.toMillis(3);
+          item.put("firstNetworkFailureAt", since)
+              .put("failureCode", "connection")
+              .put("failureReportId", UUID.randomUUID().toString())
+              .put("status", expired ? "failed" : "retrying")
               .put("retryCount", retries)
               .put("lastError", "Upload was interrupted when the app stopped.")
-              .put("nextRetryAt", retries >= 8 ? 0 : System.currentTimeMillis() + 5_000L)
+              .put("nextRetryAt", expired ? 0 : now + 5_000L)
               .put("bytes", file.length())
               .put("failureReportPending", true)
               .put("serverRetryRequired", true);
@@ -284,6 +291,8 @@ final class Engine {
         File file = new File(new File(context.getFilesDir(), "recordings"), sid + ".mp4");
         // The branding worker may be swapping files. Startup repairs its backups before this scan.
         if (file.isFile() && file.length() > 0) continue;
+        if ("recording".equals(item.optString("status")) && !item.has("captureInterruptionCode"))
+          item.put("captureInterruptionCode", CameraCapture.InterruptionCode.APP_INTERRUPTED.value);
         item.put("localAvailable", false).put("status", "failed").put("brandingState", "failed")
             .put("lastError", MISSING_LOCAL_VIDEO).put("nextRetryAt", 0)
             .put("validationPending", false).put("validationFailed", true).put("presenceReportPending", true);
@@ -384,11 +393,13 @@ final class Engine {
     JSONArray result = new JSONArray(), current = queue();
     for (int index = 0; index < current.length(); index++) {
       JSONObject item = current.optJSONObject(index);
-      if (item == null || !item.optBoolean("localAvailable", true)
+      if (item == null || item.optLong("localRemovedAt") > 0
           || !belongsToCurrentDevice(item) || "recording".equals(item.optString("status"))) continue;
       try { UUID.fromString(item.optString("id")); } catch (Exception invalid) { continue; }
       File file = new File(new File(context.getFilesDir(), "recordings"), item.optString("id") + ".mp4");
-      if (!file.isFile() || file.length() < 1) continue;
+      boolean available = item.optBoolean("localAvailable", true) && file.isFile() && file.length() > 0;
+      if (!available && !("failed".equals(item.optString("status"))
+          && (item.has("captureInterruptionCode") || item.optBoolean("localCaptureAttempt")))) continue;
       result.put(
           new JSONObject()
               .put("id", item.optString("id"))
@@ -406,7 +417,7 @@ final class Engine {
               .put("captureInterruptionCode", item.optString("captureInterruptionCode"))
               .put("captureInterruptedAt", item.optLong("captureInterruptedAt"))
               .put("captureReleased", item.optBoolean("captureReleased", false))
-              .put("localAvailable", true)
+              .put("localAvailable", available)
               .put("brandingState", item.optString("brandingState"))
               .put("brandingProgress", item.optInt("brandingProgress", -1))
               .put("exportReportPending",item.optBoolean("exportReportPending"))
@@ -432,6 +443,7 @@ final class Engine {
             .put("created_at", item.optLong("createdAt"))
             .put("bytes", item.optLong("bytes"))
             .put("uploaded_bytes", "uploaded".equals(item.optString("status")) ? item.optLong("bytes") : 0);
+    if (item.optBoolean("waitingForUploadTurn")) report.put("waiting_for_turn", true);
     if (item.has("brandingState"))
       report.put("branding_state", item.optString("brandingState"));
     JSONObject capabilities = server.optJSONObject("capabilities");
@@ -463,7 +475,11 @@ final class Engine {
       if (item == null || !belongsToCurrentDevice(item) || !waitingForWorker(item)) continue;
       File file = new File(new File(context.getFilesDir(), "recordings"), item.getString("id") + ".mp4");
       if (file.isFile() && file.length() > 0) {
-        try { api.tablet("queue-presence", new JSONObject().put("id", item.getString("id"))); }
+        try {
+          if (item.optBoolean("waitingForUploadTurn") && "pending".equals(item.optString("status")))
+            reportQueueItem(item);
+          else api.tablet("queue-presence", new JSONObject().put("id", item.getString("id")));
+        }
         catch (Exception ignored) { /* One rejected item must not starve other waiting files. */ }
       }
     }
@@ -824,6 +840,7 @@ final class Engine {
         local
             .put("status", "pending")
             .put("retryCount", 0)
+            .put("firstNetworkFailureAt", System.currentTimeMillis())
             .put("serverRetryRequired", true)
             .put("failureReportPending", false)
             .put("lastError", "")
@@ -852,12 +869,14 @@ final class Engine {
             .put("validation_failed", item.optBoolean("validationFailed"))
             .put("local_available", item.optBoolean("localAvailable", true))
             .put("branding_state", item.optString("brandingState"));
+    if (item.has("failureCode")) report.put("failure_code", item.getString("failureCode"));
     if (supportsUploadBackoff() && "retrying".equals(item.optString("status")))
       report.put("retry_delay_ms", Math.max(0, Math.min(900_000L, item.optLong("nextRetryAt") - System.currentTimeMillis())));
     JSONObject response = api.tablet("upload-failed", report);
     synchronized (vault) {
       JSONObject current = queueItem(item.getString("id"));
       if (!current.optBoolean("failureReportPending")
+          || !current.optString("failureReportId").equals(item.optString("failureReportId"))
           || current.optInt("retryCount") != item.optInt("retryCount")
           || !current.optString("status").equals(item.optString("status"))) return;
       current.put("failureReportPending", false);
@@ -953,6 +972,7 @@ final class Engine {
               .put("updateRequired", updateRequired())
               .put("updateError", releaseError)
               .put("updateLoading", releaseCheckQueued.get())
+              .put("cameraTestStage", cameraTestStage)
               .put("elapsed", Math.max(0, currentElapsed))
               .put("elapsedMs", Math.max(0L, currentElapsedMillis))
               .put("uploadPercent", uploadPercent)
@@ -965,6 +985,7 @@ final class Engine {
                   && previousLocal.optBoolean("captureReleased") && !"recording".equals(previousLocal.optString("status")))
               .put("recoveryKind", recovery.length() == 0 ? "" :
                   recovery.has("durationMs") ? "upload" : "partial")
+              .put("latestSavedSession", latestSavedSession)
               .put("savedVideos", publicQueue())
               .put("localDeviceKnown", !currentDeviceId().isEmpty())
               .put("exportingSession", exportingSession)
@@ -1297,8 +1318,6 @@ final class Engine {
     }
   }
   private void finishEnrollment() throws Exception {
-    try { emailHistory.remove(""); }
-    catch (Exception ignored) { /* The new credential already isolates the previous history. */ }
     vault.put("device-id", "");
     server = new JSONObject();
     clearCameraCache();
@@ -1393,6 +1412,8 @@ final class Engine {
         && vault.get("camera-revision").equals(d.optString("tested_revision"));
   }
 
+  private volatile String cameraTestStage = "";
+
   void syncCamera() {
     requireCameraCheck();
     if (!usesDeviceCamera()) {
@@ -1415,6 +1436,8 @@ final class Engine {
       error = "Open the app and retry the camera test.";
       return;
     }
+    cameraTestStage = "preparing";
+    elapsed = 0;
     phase = "testing";
     message = "Testing this Android device’s USB or built-in camera…";
     work.execute(
@@ -1449,6 +1472,9 @@ final class Engine {
               double bestRate=0;
               for (int attempt = 0; attempt < ("auto".equals(selectedModeKey)?2:1); attempt++) {
                 try {
+                elapsed = 0;
+                cameraTestStage = "preparing";
+                message = attempt == 0 ? "Preparing camera…" : "Checking another camera mode…";
                 capturedMillis = captureCamera(
                     camera,
                     test,
@@ -1459,7 +1485,7 @@ final class Engine {
 
                       public void countdown(int value) {}
 
-                      public void started() {}
+                      public void started() { cameraTestStage = "capturing"; message = "Recording test clip…"; }
 
                       public void camera(String label) {}
                       public void modes(java.util.List<RecordingProfile> modes) throws Exception { reportRecordingModes(modes); }
@@ -1479,6 +1505,8 @@ final class Engine {
                   if(bestMode!=null&&unavailable.getMessage()!=null&&unavailable.getMessage().startsWith("No compatible recording mode"))break;
                   throw unavailable;
                 }
+                cameraTestStage = "checking";
+                message = "Checking clip…";
                 cameraMeasuredFps = RecordedVideo.measuredFrameRate(test);
                 Log.i("DinkVisionCamera", "Measured camera fps=" + cameraMeasuredFps + " target=" + recordingFps);
                 long playableMillis=RecordedVideo.validate(test,capturedMillis,expectsAudio(camera));
@@ -1703,12 +1731,10 @@ final class Engine {
       return;
     }
     final JSONArray recipients;
-    final JSONArray consent;
     final int webDelayMs;
     try {
       JSONObject request = recipientJson.startsWith("{") ? new JSONObject(recipientJson) : null;
       recipients = recipientEmails(request == null ? new JSONArray(recipientJson) : request.getJSONArray("emails"));
-      consent = request == null ? null : request.optJSONArray("remember");
       webDelayMs = request == null ? 0 : request.optInt("tapDelayMs", 0);
     } catch (Exception e) {
       phase = "error";
@@ -1778,7 +1804,6 @@ final class Engine {
               attempt =
                   new JSONObject().put("email", email).put("emails", recipients).put("key", UUID.randomUUID().toString());
             vault.put("start-request", attempt.toString());
-            String historyEnrollment = consent == null ? "" : emailHistory.enrollment();
             trace.stage("reserve");
             sid =
                 api.tablet(
@@ -1800,6 +1825,7 @@ final class Engine {
                     .put("court", device.optString("court_id"))
                     .put("recipients", recipients)
                     .put("audioExpected", expectsAudio(camera))
+                    .put("localCaptureAttempt", true)
                     .put("createdAt", System.currentTimeMillis())
                     .put("status", "recording")
                     .put("liveLogoRequired", true)
@@ -1809,9 +1835,15 @@ final class Engine {
             activeSession = sid;
             uploadPercent = -1;
             vault.put("start-request", "");
-            try { emailHistory.remember(historyEnrollment, recipients, consent); }
-            catch (Exception ignored) { /* Optional local history must never block recording. */ }
             final String id = sid;
+            byte[] optionalLogo = null;
+            if (!stop) {
+              try { optionalLogo = api.recordingLogo(id); }
+              catch (Exception unavailable) {
+                Log.w("DinkVisionVideo", "Court logo unavailable. Recording with the DinkVision watermark.");
+              }
+            }
+            final byte[] courtLogo = optionalLogo;
             message = "Preparing camera…";
             trace.stage("camera_prepare");
             long capturedMillis;
@@ -1825,6 +1857,8 @@ final class Engine {
                   seconds,
                   3,
                   new CameraCapture.Listener() {
+                    @Override public byte[] courtLogo() { return courtLogo; }
+
                     public void ready() {
                       trace.stage("countdown");
                     }
@@ -1887,7 +1921,7 @@ final class Engine {
                       } catch (Exception ignored) { }
                       trace.stage("finalize");
                       phase = "finalizing";
-                      message = "Finalizing the complete video… Keep this app open.";
+                      message = "Finishing the video… Keep this app open.";
                     }
 
                     public void interrupted(CameraCapture.Interruption interruption) {
@@ -1925,7 +1959,7 @@ final class Engine {
               }
             }
             phase = "finalizing";
-            message = "Saving the complete video…";
+            message = "Saving captured footage…";
             JSONObject queued = saveFinalizedCapture(sid, file, capturedMillis);
             trace.finish(null);
             latestSavedSession = sid;
@@ -1954,7 +1988,7 @@ final class Engine {
             if (!sid.isEmpty())
               try {
                 JSONObject failed = queueItem(sid);
-                if (failed.length() > 0) {
+                if (sid.equals(activeSession) && failed.length() > 0) {
                   failed
                       .put("status", "failed")
                       .put("lastError", error)
@@ -1964,6 +1998,7 @@ final class Engine {
                     failed.put("validationFailed", true).put("validationPending", false)
                         .put("failureReportPending", true);
                   saveQueueItem(failed);
+                  latestSavedSession = sid;
                   failureJournaled = true;
                 }
               } catch (Exception ignored) {
@@ -2109,6 +2144,7 @@ final class Engine {
         localPlaybackFile(sid);
         item
             .put("status", "pending")
+            .put("firstNetworkFailureAt", System.currentTimeMillis())
             .put("retryCount", "failed".equals(previousStatus) ? 0 : item.optInt("retryCount"))
             .put("serverRetryRequired", true)
             .put("waitingForUploadTurn", false)
@@ -2502,6 +2538,7 @@ final class Engine {
   }
 
   private void deferUploadTurn(JSONObject item, long delayMs) throws Exception {
+    boolean firstWait = !item.optBoolean("waitingForUploadTurn");
     item.put("status", "pending")
         .put("waitingForUploadTurn", true)
         .put("nextQueueCheckAt", System.currentTimeMillis() + delayMs)
@@ -2509,6 +2546,12 @@ final class Engine {
         .put("serverRetryRequired", false)
         .put("lastError", "");
     saveQueueItem(item);
+    if (firstWait) heartbeat.execute(() -> {
+      JSONObject latest = queueItem(item.optString("id"));
+      if (latest.optBoolean("waitingForUploadTurn") && belongsToCurrentDevice(latest)) {
+        try { reportQueueItem(latest); } catch (Exception ignored) { /* Periodic presence retries. */ }
+      }
+    });
     uploadPercent = -1;
     TransferService.updateUploadProgress(-1);
   }
@@ -2679,7 +2722,7 @@ final class Engine {
         trace.stage("transfer");
         UploadTransfer.send(
             file.length(),
-            ticket.guard(api.uploadTransport(sid, file)),
+            ticket.guard(api.uploadTransport(sid, file, item.optInt("timeoutCount") >= 2)),
             new UploadTransfer.Progress() {
               public void update(long percent) {
                 try {
@@ -2744,7 +2787,7 @@ final class Engine {
         return;
       }
       try {
-        int retries = item.optInt("retryCount", 0) + 1;
+        int retries = Math.min(100, item.optInt("retryCount", 0) + 1);
         String failureMessage =
             failure.getMessage() == null ? "Upload temporarily unavailable." : failure.getMessage();
         boolean validationFailed =
@@ -2752,13 +2795,27 @@ final class Engine {
                 || failureMessage.contains("missing or incomplete")
                 || failureMessage.contains("not playable");
         if (!file.isFile() || file.length() == 0) item.put("localAvailable", false);
+        String code = RecorderDiagnostics.code(failure);
+        item.put("failureCode", code).put("failureReportId", UUID.randomUUID().toString());
+        if ("timeout".equals(code)) item.put("timeoutCount", Math.min(2, item.optInt("timeoutCount") + 1));
+        long now = System.currentTimeMillis();
+        boolean network = java.util.Arrays.asList("timeout","dns","tls","connection","http_server").contains(code);
+        int http = failure instanceof Api.RequestFailure ? ((Api.RequestFailure)failure).httpStatus : 0;
+        if (http == 408 || http == 429) network = true;
+        boolean conflict = http == 409; // Recheck lease or confirmed progress on a bounded retry.
+        long since = item.optLong("firstNetworkFailureAt", now);
+        if (network) item.put("firstNetworkFailureAt", since);
         boolean permanent =
             validationFailed
-                || retries >= 8
+                || !item.optBoolean("localAvailable", true)
+                || (http >= 400 && http < 500 && !network && !conflict)
+                || (network ? now - since >= TimeUnit.DAYS.toMillis(3) : retries >= 8)
                 || failure instanceof UploadTransfer.CancelledException
                 || failureMessage.contains("missing or incomplete")
                 || failureMessage.contains("does not belong");
-        long delay = Math.min(15 * 60_000L, 5_000L * (1L << Math.min(7, retries - 1)));
+        if (permanent)
+          failureMessage = failureMessage.replace("Retrying automatically;", "Retry from Saved videos;");
+        long delay = Math.min(15 * 60_000L, 5_000L * (1L << Math.min(8, retries - 1)));
         item
             .put("status", permanent ? "failed" : "retrying")
             .put("retryCount", retries)
@@ -2768,7 +2825,7 @@ final class Engine {
             .put("nextQueueCheckAt", 0)
             .put("validationFailed", validationFailed)
             .put("lastError", failureMessage)
-            .put("nextRetryAt", permanent ? 0 : System.currentTimeMillis() + delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L)));
+            .put("nextRetryAt", permanent ? 0 : now + Math.min(900_000L, delay + ThreadLocalRandom.current().nextLong(Math.max(1_000L, delay / 4L))));
         if (!item.optBoolean("branded", false) && item.has("brandingState") && !item.optBoolean("liveLogoRequired"))
           item.put("brandingState", "failed");
         if (validationFailed) item.put("validationPending", false);

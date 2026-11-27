@@ -56,7 +56,25 @@ public class R2UploadTest {
         public OutputStream getOutputStream(){return bytes;}public int getResponseCode(){return fixtureStatus[0];}
       });
       String address="https://42c7c9ce788292c080caf0ad3e8daded.r2.cloudflarestorage.com/bucket/key?uploadId=id&partNumber=1&X-Amz-Signature=fixture";
+      for (int status : new int[] {200, 400, 403}) {
+        fixtureStatus[0] = status;
+        api.checkStorageHost(address);
+        assertEquals("HEAD", connection[0].getRequestMethod());
+        assertEquals("/", connection[0].getURL().getFile());
+        assertNull(connection[0].getRequestProperty("Cookie"));
+        assertFalse(connection[0].getInstanceFollowRedirects());
+      }
+      Api offline = new Api(vault, url -> { throw new java.net.UnknownHostException("private detail"); });
+      Api.RequestFailure probe = assertThrows(Api.RequestFailure.class, () -> offline.checkStorageHost(address));
+      assertEquals("dns", probe.code);
+      assertTrue(probe.getMessage().contains("unreachable from this network"));
+      assertFalse(probe.getMessage().contains("Signature"));
+      assertFalse(probe.getMessage().contains("private detail"));
+      assertEquals(60000, Api.readTimeout("/api/tablet", new JSONObject().put("action","upload-parts")));
+      assertEquals(30000, Api.readTimeout("/api/tablet", new JSONObject().put("action","heartbeat")));
+      fixtureStatus[0] = 200;
       assertTrue(api.uploadR2Part(address,file,2,3).getBoolean("accepted"));
+      assertEquals(180000, connection[0].getReadTimeout());
       assertArrayEquals(new byte[]{3,4,5},bytes.toByteArray());
       assertNull(connection[0].getRequestProperty("Cookie"));
       assertNull(connection[0].getRequestProperty("Authorization"));

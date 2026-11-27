@@ -191,7 +191,7 @@ final class DeviceCameraRecorder {
       encoderSurface = recorder.getSurface();
       logo = new LiveLogoProcessor(context, encoderSurface, profile.width, profile.height,
           orientation == null ? 0 : orientation, false, listener.validateSavedMediaInBackground(),
-          error -> failure.compareAndSet(null, error));
+          error -> failure.compareAndSet(null, error), listener.courtLogo());
       android.view.Surface surface = logo.input();
       CaptureRequest.Builder request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
       request.addTarget(surface);

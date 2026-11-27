@@ -116,8 +116,8 @@ test("Android player backgrounds match their public artwork and player shell sta
   assert.match(css, /#email-form\{[^}]*flex-direction:column[^}]*width:min\(100%,620px\)/);
   assert.match(css, /\.record\{[^}]*align-self:center[^}]*border-radius:14px/);
   assert.doesNotMatch(css, /\.record\{[^}]*border-radius:50%/);
-  assert.match(app, /\$\('welcome'\)\.addEventListener\('click'/);
-  assert.match(app, /!event\.composedPath\(\)\.includes\(\$\('modal'\)\)/);
+  assert.match(app, /\$\('begin'\)\.onclick = beginFromWelcome/);
+  assert.doesNotMatch(app, /\$\('welcome'\)\.addEventListener\('click'/);
   assert.match(app, /window\.handlePlayerBack = handlePlayerBack/);
   assert.match(app, /event\.stopPropagation\(\)/);
   assert.doesNotMatch(app, /document\.body\.addEventListener\('click'/);

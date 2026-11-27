@@ -24,7 +24,7 @@ test("deferred work appears after eligible FIFO work and changes label when its 
   assert.equal(recordingStageLabel(retry, now), "Upload retry scheduled");
   assert.equal(recordingStageLabel(waiting, now), "Waiting to upload");
   assert.deepEqual(deviceQueueOrder([retry, waiting], now + 300_001).map(row => row.session_id), ["retry", "wait"]);
-  assert.equal(recordingStageLabel(retry, now + 300_001), "Waiting to upload");
+  assert.equal(recordingStageLabel(retry, now + 300_001), "Retry due · check recorder");
 });
 test('Admin shows current processing first, FIFO waiting work next, then retry and history',()=>{
  const rows=[{session_id:'new',upload_state:'saved_locally',client_created_at:'2026-11-02T02:00:00Z'},

@@ -37,7 +37,7 @@ test('stages distinguish waiting, measured processing, transfer and each failure
  assert.equal(recordingStageLabel({upload_state:'uploading',bytes:100,uploaded_bytes:0},now),'Uploading 0%');
  assert.equal(recordingStageLabel({upload_state:'uploading',bytes:100,uploaded_bytes:100},now),'Verifying upload');
  assert.equal(recordingStageLabel({upload_state:'retrying',branding_state:'failed'},now),'Logo processing retry scheduled');
- assert.equal(recordingStageLabel({upload_state:'retrying',branding_state:'complete'},now),'Upload retry scheduled');
+ assert.equal(recordingStageLabel({upload_state:'retrying',branding_state:'complete'},now),'Retrying automatically');
  assert.equal(recordingStageLabel({upload_state:'pending'},now,false),'Waiting to upload');
 });
 test('fresh waiting presence cannot resurrect stale processing progress after restart',()=>{

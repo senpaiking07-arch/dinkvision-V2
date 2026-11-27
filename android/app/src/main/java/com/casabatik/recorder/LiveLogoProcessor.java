@@ -28,6 +28,7 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
   private SurfaceTexture texture;
   private Surface input;
   private int cameraTexture, logoTexture, cameraProgram, logoProgram, logoWidth, logoHeight;
+  private int courtLogoTexture, courtLogoWidth, courtLogoHeight, courtLogoLeft, courtLogoBottom;
   private volatile boolean stopped;
   private volatile Exception failure;
   private volatile long frames;
@@ -60,6 +61,12 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
   LiveLogoProcessor(Context context, Surface encoder, int width, int height, int rotation,
       boolean encoding, boolean validateSavedMediaInBackground,
       java.util.function.Consumer<Exception> onFailure) throws Exception {
+    this(context, encoder, width, height, rotation, encoding, validateSavedMediaInBackground, onFailure, null);
+  }
+
+  LiveLogoProcessor(Context context, Surface encoder, int width, int height, int rotation,
+      boolean encoding, boolean validateSavedMediaInBackground,
+      java.util.function.Consumer<Exception> onFailure, byte[] courtLogo) throws Exception {
     usingMediaRecorder = !encoding;
     this.width = width; this.height = height; this.rotation = rotation; this.encoding = encoding;
     this.validateSavedMediaInBackground = validateSavedMediaInBackground;
@@ -72,11 +79,11 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
     }
     this.onFailure = onFailure;
     thread.start(); handler = new Handler(thread.getLooper());
-    try { onGl(() -> initialize(context, encoder)); status = "Live watermark active"; }
+    try { onGl(() -> initialize(context, encoder, courtLogo)); status = "Live watermark active"; }
     catch (Exception e) { status = "Live watermark unavailable · camera check required"; close(); throw e; }
   }
 
-  private void initialize(Context context, Surface encoder) throws Exception {
+  private void initialize(Context context, Surface encoder, byte[] courtLogo) throws Exception {
     display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
     int[] version = new int[2];
     require(EGL14.eglInitialize(display, version, 0, version, 1), "EGL initialize");
@@ -109,7 +116,44 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
       } finally { bitmap.recycle(); }
     }
     checkGl();
+    if (courtLogo != null) initializeCourtLogo(courtLogo);
     texture.setOnFrameAvailableListener(ignored -> render(), handler);
+  }
+
+  private void initializeCourtLogo(byte[] png) {
+    Bitmap bitmap = null;
+    int candidate = 0;
+    try {
+      var bounds = new BitmapFactory.Options();
+      bounds.inJustDecodeBounds = true;
+      BitmapFactory.decodeByteArray(png, 0, png.length, bounds);
+      if (!"image/png".equals(bounds.outMimeType) || bounds.outWidth < 1 || bounds.outWidth > 512
+          || bounds.outHeight < 1 || bounds.outHeight > 512) throw new Exception("Invalid court logo.");
+      bitmap = BitmapFactory.decodeByteArray(png, 0, png.length);
+      if (bitmap == null) throw new Exception("Could not decode court logo.");
+      boolean portrait = rotation == 90 || rotation == 270;
+      double scale = Math.min((double)(portrait ? logoHeight : logoWidth) / bitmap.getWidth(),
+          (double)(portrait ? logoWidth : logoHeight) / bitmap.getHeight());
+      int visualWidth = Math.max(1, (int)Math.round(bitmap.getWidth() * scale));
+      int visualHeight = Math.max(1, (int)Math.round(bitmap.getHeight() * scale));
+      courtLogoWidth = portrait ? visualHeight : visualWidth;
+      courtLogoHeight = portrait ? visualWidth : visualHeight;
+      int margin = Math.max(12, Math.round(Math.min(width, height) * .02f));
+      courtLogoLeft = rotation == 90 || rotation == 180 ? width - courtLogoWidth - margin : margin;
+      courtLogoBottom = rotation == 180 || rotation == 270 ? height - courtLogoHeight - margin : margin;
+      candidate = texture(GLES20.GL_TEXTURE_2D);
+      GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0);
+      checkGl();
+      courtLogoTexture = candidate;
+    } catch (Exception invalid) {
+      if (candidate != 0) GLES20.glDeleteTextures(1, new int[]{candidate}, 0);
+      for (int i = 0; i < 8 && GLES20.glGetError() != GLES20.GL_NO_ERROR; i++) {
+        // Clear optional texture errors before rendering the primary watermark.
+      }
+      android.util.Log.w("DinkVisionVideo", "Court logo could not be rendered. Using the DinkVision watermark.");
+    } finally {
+      if (bitmap != null) bitmap.recycle();
+    }
   }
 
   private void render() {
@@ -130,6 +174,15 @@ final class LiveLogoProcessor implements VideoCapture.SurfaceProcessor {
       GLES20.glBlendFunc(GLES20.GL_ONE,GLES20.GL_ONE_MINUS_SRC_ALPHA);
       draw(logoProgram,logoTexture,GLES20.GL_TEXTURE_2D,logoUv,IDENTITY);
       checkGl();
+      if (courtLogoTexture != 0) {
+        GLES20.glViewport(courtLogoLeft, courtLogoBottom, courtLogoWidth, courtLogoHeight);
+        draw(logoProgram, courtLogoTexture, GLES20.GL_TEXTURE_2D, logoUv, IDENTITY);
+        if (GLES20.glGetError() != GLES20.GL_NO_ERROR) {
+          GLES20.glDeleteTextures(1, new int[]{courtLogoTexture}, 0);
+          courtLogoTexture = 0;
+          android.util.Log.w("DinkVisionVideo", "Court logo rendering stopped. Using the DinkVision watermark.");
+        }
+      }
       // Camera2 sensor timestamps can include deep sleep. MediaRecorder audio uses
       // monotonic time. Anchor once and retain the camera cadence for the whole clip.
       long presentationTime = timestamp;

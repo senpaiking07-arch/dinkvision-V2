@@ -56,14 +56,32 @@ public final class TransferService extends Service {
     PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
         PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     return new Notification.Builder(this, "transfers")
+        .setColor("Upload retry scheduled".equals(detail) ? 0xffab7000 : 0xff008578)
         .setSmallIcon(R.drawable.ic_camera).setContentTitle("DinkVision saved videos")
         .setContentText(detail + (percent >= 0 ? " · " + percent + "%" : ""))
         .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(true)
         .setProgress(100, Math.max(0, percent), percent < 0).build();
   }
 
+  private android.net.ConnectivityManager uploadNetwork;
+  private final android.net.ConnectivityManager.NetworkCallback uploadConnectivity =
+      new android.net.ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(android.net.Network network) {
+          Engine.get(TransferService.this).kickUploads();
+        }
+      };
+
   @Override public void onCreate() {
     super.onCreate();
+    android.net.ConnectivityManager manager = getSystemService(android.net.ConnectivityManager.class);
+    try {
+      if (manager != null) {
+        manager.registerDefaultNetworkCallback(uploadConnectivity);
+        uploadNetwork = manager;
+      }
+    } catch (RuntimeException unavailable) {
+      android.util.Log.w("DinkVision", "Connectivity callback unavailable; scheduled retries remain active.");
+    }
     running = this;
     getSystemService(NotificationManager.class).createNotificationChannel(
         new NotificationChannel("transfers", "Saved video transfers", NotificationManager.IMPORTANCE_LOW));
@@ -118,6 +136,7 @@ public final class TransferService extends Service {
   @Override public IBinder onBind(Intent intent) { return null; }
 
   @Override public void onDestroy() {
+    if (uploadNetwork != null) uploadNetwork.unregisterNetworkCallback(uploadConnectivity);
     ready = false;
     if (running == this) running = null;
     Engine engine = Engine.get(this);

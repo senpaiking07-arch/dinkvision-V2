@@ -15,6 +15,13 @@
     <header>
       <div class="brand"><img src="dink-vision-logo.png" alt="DinkVision"></div>
       <div class="header-status" aria-live="polite"><span id="camera-status" class="camera-status">Checking camera</span><span id="header-court" hidden></span></div>
+      <div class="device-tools" hidden>
+        <button id="settings-toggle" aria-label="Device settings" aria-expanded="false" aria-controls="settings-actions" type="button">⚙</button>
+        <div id="settings-actions" hidden>
+          <button id="saved-open" class="reenroll" type="button">Saved videos</button>
+          <button id="reenroll" class="reenroll" type="button">Re-enroll device</button>
+        </div>
+      </div>
       <div id="connection-notice" hidden><span id="connection-text" role="status"></span><button id="connection-retry" type="button" hidden>Retry connection</button></div>
     </header>
     <main>
@@ -40,17 +47,12 @@
             <h1>Record your match</h1>
             <p class="subtitle">Add up to four email addresses for this replay.</p>
           </div>
-          <button id="email-history" class="player-back" type="button" aria-label="Clear saved email history" hidden>
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"></path></svg>
-          </button>
         </div>
         <form id="email-form" novalidate>
-          <label>Your court<div class="field" id="court">Assigned by your administrator</div></label>
           <div class="email-entry">
-            <label for="player-email">Player email</label>
-            <div class="email-add-row"><input id="player-email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="254" placeholder="Player email address" aria-describedby="email-count"><button id="add-email" class="email-add" type="button">Add email</button></div>
+            <label for="player-email">Player emails</label>
+            <div class="email-add-row"><input id="player-email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" multiple placeholder="Player email address" aria-describedby="email-count"><button id="add-email" class="email-add" type="button">Add email</button></div>
             <p class="email-hint" id="email-count" role="status">0 of 4 emails added</p>
-            <div id="email-suggestions" aria-label="Saved email suggestions" hidden></div>
             <div id="email-list" class="email-list" aria-label="Added email addresses"></div>
           </div>
           <button class="record" type="submit">Review emails</button>
@@ -68,6 +70,7 @@
         <p class="eyebrow" id="session-eyebrow">YOUR MATCH</p>
         <h1 id="session-title">Your match</h1>
         <p class="subtitle" id="progress"></p>
+        <progress id="test-progress" aria-label="Camera test progress" max="3" hidden></progress>
         <div id="loading" class="loading" hidden><span></span><b>Working…</b></div>
         <div id="timer" role="timer" aria-label="Elapsed recording time">00:00</div>
         <div class="actions"><button id="stop" class="primary" type="button" hidden>■ Stop recording</button><button id="reset" class="primary" type="button" hidden>Done · Next player</button></div>
@@ -121,10 +124,6 @@
       <div id="error" role="alert" hidden><p id="error-message"></p><button id="recover" class="recover" type="button" hidden>Saved videos</button></div>
       <p id="notice" role="status" hidden></p>
     </div>
-    <div class="device-tools">
-      <button id="reenroll" class="reenroll" type="button" hidden>Re-enroll device</button>
-      <button id="saved-open" class="reenroll" type="button" hidden>Saved videos</button>
-    </div>
     <footer><span id="app-version">Android recorder</span></footer>
     <div id="modal" class="modal" hidden aria-modal="true" role="dialog" aria-labelledby="modal-title" aria-describedby="modal-copy">
       <div class="modal-card">
@@ -144,6 +143,7 @@
         <p id="update-error" role="alert" hidden></p>
         <div class="modal-actions">
           <button id="update-install" class="primary" type="button" hidden>Download update</button>
+          <button id="update-saved" class="quiet" type="button" hidden>View saved videos</button>
           <button id="update-check" class="quiet" type="button">Check again</button>
         </div>
       </div>

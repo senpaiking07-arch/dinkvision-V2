@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 let view = 'welcome', state = {}, emails = [], formError = '', enrollmentPrompted = false, lastTestToken = '';
-const rememberEmails = new Set();
+
 const interruptionReasons = {
   camera_disconnected: 'The camera disconnected.',
   camera_failure: 'The camera stopped delivering usable video.',
@@ -9,12 +9,11 @@ const interruptionReasons = {
   unknown: 'The recording ended unexpectedly.',
 };
 let recordingClock = null, timerAnimation = 0;
-let savedSelection = '', lastSavedToken = '';
+let savedSelection = '', lastSavedToken = '', reviewingOffline = false;
 let startRequested = false, startAccepted = false;
 let stopRequestedAttempt = '';
 let qrEnrollmentSubmit = null;
 let modalOpener = null;
-let lastErrorNotice = '', errorNoticeExpiresAt = 0;
 let lastStatusNotice = '', statusNoticeExpiresAt = 0;
 const native = window.CasaNative;
 const call = (action, value = '') => {
@@ -69,6 +68,8 @@ function showNativeModal(raw) {
   let data;
   try { data = typeof raw === 'string' ? JSON.parse(raw) : raw; }
   catch { return; }
+  if (['camera-ready', 'camera-ready-device'].includes(data.kind) &&
+      (state.phase === 'testing' || state.testReady)) return;
   const modal = $('modal'), content = $('modal-content'), actions = $('modal-actions');
   if (modal.hidden) modalOpener = document.activeElement;
   qrEnrollmentSubmit = null;
@@ -102,20 +103,9 @@ function showNativeModal(raw) {
   };
   const cancel = label => modalButton(label || 'Cancel', hideModal);
 
-  if (data.kind === 'clear-email-history') {
-    title('SAVED EMAILS', 'Clear email history?', 'This removes saved email suggestions from this tablet.');
-    modalButton('Clear history', () => {
-      if (!native.removeSavedEmail('')) {
-        window.setNativeModalError('Email history could not be cleared. Try again.');
-        return;
-      }
-      hideModal();
-      refreshEmailSuggestions();
-    }, true);
-    cancel();
-  } else if (data.kind === 'saved-video-error') {
+  if (data.kind === 'saved-video-error') {
     title('SAVED VIDEO', 'Recording details', String(data.error || 'No detailed error was recorded.').slice(0, 300));
-    if (data.id) modalButton('Save another copy', () => { hideModal(); call('save-local-video', data.id); });
+    if (data.id && !state.updateChecking && data.localAvailable !== false) modalButton('Save another copy', () => { hideModal(); call('save-local-video', data.id); });
     modalButton('Close', hideModal, true);
   } else if (data.kind === 'remove-saved-video') {
     title('SAVED VIDEO', 'Remove the app copy?', 'This removes only the copy inside DinkVision. Your exported Gallery / Files copy and any uploaded cloud copy stay in place. This app cannot retry an upload after its copy is removed.');
@@ -211,12 +201,12 @@ function showNativeModal(raw) {
     cancel('Close');
   } else if (data.kind === 'camera-ready' || data.kind === 'camera-ready-device') {
     title('CAMERA SETUP', 'USB / built-in camera',
-      'The tablet uses an attached compatible USB camera such as EMEET when available, otherwise its rear camera.');
+      'The tablet uses a compatible USB camera when one is connected. Otherwise, it uses the built-in rear camera.');
     const qualityLabel = node('label', 'modal-field wide', 'VIDEO QUALITY');
     const quality = node('select'); quality.value = state.selectedRecordingMode || 'auto';
     recordingModeOptions(quality);
     qualityLabel.append(quality); content.append(qualityLabel);
-    modalButton('Record a 3-second test', () => { const mode = quality.value; hideModal(); call('sync-camera', mode); }, true);
+    modalButton('Record a 3-second test', () => { const mode = quality.value; hideModal(); call('sync-camera', mode); tick(); }, true);
     modalButton('Reconnect camera', () => { hideModal(); call('choose-device'); });
     cancel('Close');
   } else if (data.kind === 'permission') {
@@ -277,18 +267,19 @@ const keepKioskAnchored = () => {
 };
 window.addEventListener('scroll', keepKioskAnchored, {passive: true});
 window.visualViewport?.addEventListener('scroll', keepKioskAnchored, {passive: true});
-let recipientKeyboardInset = 0;
+let recipientKeyboardInset = 0, keyboardInsetReported = false;
 function layoutRecipientEntry() {
   const viewport = window.visualViewport;
   const viewportInset = viewport && document.activeElement === $('player-email')
     ? Math.max(0, innerHeight - viewport.height) : 0;
-  const inset = Math.max(recipientKeyboardInset, viewportInset);
+  const inset = keyboardInsetReported ? recipientKeyboardInset : viewportInset;
   const editing = view === 'form' && $('modal').hidden && inset > 40;
   document.body.classList.toggle('recipient-ime', editing);
   document.body.classList.toggle('recipient-ime-short', editing && innerHeight - inset < 160);
   if (editing) document.body.style.setProperty('--recipient-ime-bottom', `${inset}px`);
 }
 window.setRecipientKeyboardInset = pixels => {
+  keyboardInsetReported = true;
   recipientKeyboardInset = pixels / window.devicePixelRatio;
   layoutRecipientEntry();
 };
@@ -303,6 +294,7 @@ document.addEventListener('focusin', () => {
 function show(name) {
   const enteringForm = view !== 'form' && name === 'form';
   if (view === 'saved-videos' && name !== view) {
+    reviewingOffline = false;
     $('saved-player').pause(); $('saved-player').removeAttribute('src'); $('saved-player').load();
     lastSavedToken = '';
   }
@@ -316,7 +308,7 @@ function show(name) {
   for (const section of ['welcome', 'form', 'confirm', 'session', 'camera-test', 'saved-videos'])
     $(section).hidden = section !== name;
   layoutRecipientEntry();
-  if (enteringForm) refreshEmailSuggestions();
+  if (enteringForm) $('player-email').focus();
   syncReenrollVisibility();
 }
 const syncReenrollVisibility = () => {
@@ -324,10 +316,21 @@ const syncReenrollVisibility = () => {
   $('saved-open').hidden = view !== 'welcome' || !!state.busy ||
     !(state.enrolled || state.savedVideos?.length);
   $('saved-open').textContent = state.savedVideos?.length ? `Saved videos (${state.savedVideos.length})` : 'Saved videos';
-  document.body.classList.toggle('has-tools', !$('reenroll').hidden || !$('saved-open').hidden);
+  const tools = document.querySelector('.device-tools');
+  tools.hidden = $('reenroll').hidden && $('saved-open').hidden;
+  if (tools.hidden) closeSettings();
+};
+function closeSettings() {
+  $('settings-actions').hidden = true;
+  $('settings-toggle').setAttribute('aria-expanded', 'false');
+}
+$('settings-toggle').onclick = () => {
+  const open = $('settings-actions').hidden;
+  $('settings-actions').hidden = !open;
+  $('settings-toggle').setAttribute('aria-expanded', String(open));
 };
 const beginFromWelcome = () => {
-  if (state.busy || state.testReady) return;
+  if (state.busy || state.testReady || !$('modal').hidden || !$('required-update').hidden) return;
   if (unfinishedSession() && (!emails.length || state.recoverable || state.savedVideos?.some(item => item.id === state.session.id))) {
     showNativeModal({kind: 'session-recovery', id: state.session.id});
     return;
@@ -338,16 +341,19 @@ const beginFromWelcome = () => {
   }
   show('form');
 };
-$('welcome').addEventListener('click', event => {
-  if ($('modal').hidden && !event.composedPath().includes($('modal'))) beginFromWelcome();
-});
+$('begin').onclick = beginFromWelcome;
 document.addEventListener('click', event => {
-  if (view === 'welcome' && !state.busy && $('modal').hidden &&
-      !event.composedPath().includes($('welcome')) &&
-      !event.target.closest('button,a,input,video,#modal,.device-tools,#error,#connection-notice')) beginFromWelcome();
+  const target = event.target;
+  if (target.closest('.device-tools')) return;
+  if (!$('settings-actions').hidden) { closeSettings(); return; }
+  if (view !== 'welcome' || target.closest('button, a, input, header, #notifications, #modal, #required-update')) return;
+  const belowHeader = event.clientY >= document.querySelector('header').getBoundingClientRect().bottom;
+  if (target.closest('#welcome, footer') || target.matches('main') || (belowHeader && target.matches('body, .backdrop')))
+    beginFromWelcome();
 });
 function handlePlayerBack() {
   if (!$('modal').hidden) { hideModal(); return true; }
+  if (!$('settings-actions').hidden) { closeSettings(); $('settings-toggle').focus(); return true; }
   if (view === 'confirm') { show('form'); return true; }
   if (view === 'saved-videos') { show('welcome'); return true; }
   if (view === 'form') {
@@ -367,6 +373,7 @@ $('back').addEventListener('click', event => {
 $('reenroll').addEventListener('click', event => {
   event.preventDefault();
   event.stopPropagation();
+  closeSettings();
   call('setup-reenroll');
 });
 $('saved-open').onclick = event => { event.stopPropagation(); show('saved-videos'); renderSavedVideos(); };
@@ -374,7 +381,9 @@ $('saved-back').onclick = () => handlePlayerBack();
 $('recover').addEventListener('click', event => {
   event.preventDefault();
   event.stopPropagation();
-  if (state.recoverable && !state.busy) { show('saved-videos'); renderSavedVideos(); }
+  if (state.savedVideos?.length && !state.busy) {
+    savedSelection = $('recover').dataset.id || '';
+    show('saved-videos'); renderSavedVideos(); }
 });
 
 function savedItems() {
@@ -398,7 +407,7 @@ $('saved-details').onclick = () => {
   const item = savedItems().find(row => row.id === savedSelection);
   const reason = interruptionReasons[item?.captureInterruptionCode];
   const detail = [`Recording ID: ${item?.id || ''}`, reason, item?.lastError].filter(Boolean).join('\n');
-  showNativeModal({kind: 'saved-video-error', id:item?.id, error: detail});
+  showNativeModal({kind: 'saved-video-error', id:item?.id, localAvailable:item?.localAvailable, error: detail});
 };
 $('saved-player').onerror = () => { if (view === 'saved-videos') $('saved-preview-warning').hidden = false; };
 function renderSavedVideos() {
@@ -424,27 +433,32 @@ function renderSavedVideos() {
   const compact = first.length > 36 ? `${first.slice(0, 21)}…${first.slice(-12)}` : first;
   $('saved-video-name').textContent = `${date || 'Date unavailable'} · ${compact}${recipients.length > 1 ? ` +${recipients.length - 1} more` : ''}`;
   $('saved-video-name').title = recipients.join(', ');
-  const duration = item.durationMs ? `${Math.round(item.durationMs / 1000)} seconds` : 'Duration not verified';
+  const duration = item.durationMs > 0 ? `${Math.round(item.durationMs / 1000)} seconds` : 'Duration not verified';
   const sizeMb = (Number(item.bytes || 0) / 1048576).toFixed(1);
   const transferredMb = (Number(item.uploadedBytes || 0) / 1048576).toFixed(1);
   const size = item.status === 'uploading' ? `${transferredMb} / ${sizeMb} MB uploaded` : `${sizeMb} MB`;
   $('saved-video-meta').textContent = `${date ? date + ' · ' : ''}${duration} · ${size}`;
   const waiting = item.brandingState === 'complete' ? 'Waiting to upload' : 'Waiting to add logo';
-  const statuses = {pending: waiting, saved_locally: waiting, retrying: `${item.brandingState === 'failed' ? 'Logo processing' : 'Upload'} retry scheduled · ${item.retryCount || 0}/8 attempts`, uploading: item.verifyingUpload ? 'Verifying upload' : `Uploading ${Math.min(99, item.progress || 0)}%`, uploaded: item.localAvailable === false ? 'Uploaded' : 'Uploaded · app copy cleanup pending', local_only: 'Local only · under one minute'};
+  const statuses = {pending: waiting, saved_locally: waiting, retrying: `${item.brandingState === 'failed' ? 'Logo processing' : 'Upload'} retry scheduled · ${item.retryCount || 0} retries`, uploading: item.verifyingUpload ? 'Verifying upload' : `Uploading ${Math.min(99, item.progress || 0)}%`, uploaded: item.localAvailable === false ? 'Uploaded' : 'Uploaded · app copy cleanup pending', local_only: 'Local only · under one minute'};
   const interrupted = !!item.captureInterruptionCode;
   const needsInspection = !!item.validationFailed;
-  const status = item.status === 'failed'
+  const missing = item.localAvailable === false;
+  const status = missing ? 'No footage available'
+    : item.status === 'failed'
     ? item.validationFailed ? 'Video needs inspection. Save the original for review.'
       : item.brandingState === 'failed' ? 'Logo processing failed. The original is still saved.'
         : `Upload paused · ${item.retryCount || 0} failed attempts. You can retry.`
     : item.validationPending ? 'Checking saved video'
       : item.brandingState === 'processing' ? 'Adding the DinkVision logo' : statuses[item.status] || 'Saved in this app';
   $('saved-video-status').textContent = interrupted ? `Interrupted recording · ${status}` : status;
+  if (interrupted && item.durationMs > 0 && !item.validationPending && !needsInspection && !missing)
+    $('saved-video-status').textContent = 'Partial recording saved · ' + duration + ' · ' + status;
+  $('saved-save').hidden = missing;
   $('saved-details').hidden = false;
-  $('saved-retry').hidden = (interrupted && needsInspection) || !['failed','retrying'].includes(item.status);
+  $('saved-retry').hidden = missing || (interrupted && needsInspection) || !['failed','retrying'].includes(item.status);
   $('saved-retry').textContent = item.status === 'retrying' ? 'Retry now' : item.validationFailed || item.brandingState === 'failed' ? 'Retry processing' : 'Retry upload';
-  $('saved-retry').disabled = !!state.busy;
-  $('saved-save').disabled = !!state.exportingSession || (item.exported && !item.canRemove);
+  $('saved-retry').disabled = !!state.updateChecking || !!state.busy;
+  $('saved-save').disabled = !!state.updateChecking || !!state.exportingSession || (item.exported && !item.canRemove);
   $('saved-save').textContent = state.exportingSession === item.id ? `Saving · ${state.exportPercent || 0}%`
     : item.exported ? 'Remove from app' : 'Save to device';
   $('saved-save').classList.toggle('remove-copy',!!item.exported);
@@ -463,10 +477,10 @@ function renderSavedVideos() {
   else $('saved-processing-progress').value = brandingPercent;
   if (processing && brandingPercent !== null) $('saved-video-status').textContent = $('saved-processing-label').textContent;
   $('saved-processing').hidden = !(processing || (item.validationPending && item.status !== 'failed'));
-  $('saved-player').hidden = needsInspection || processing || !!item.validationPending;
-  if (needsInspection || processing || item.validationPending) {
+  $('saved-player').hidden = missing || needsInspection || processing || !!item.validationPending;
+  if (missing || needsInspection || processing || item.validationPending) {
     lastSavedToken = '';
-    $('saved-preview-warning').hidden = !needsInspection;
+    $('saved-preview-warning').hidden = missing || !needsInspection;
     const preview = $('saved-player');
     if (preview.hasAttribute('src')) { preview.pause(); preview.removeAttribute('src'); preview.load(); }
   } else if (lastSavedToken !== `${item.id}:${item.brandingState}:${item.bytes}`) {
@@ -479,39 +493,6 @@ function renderSavedVideos() {
   }
 }
 $('edit').onclick = () => show('form');
-function refreshEmailSuggestions() {
-  const panel = $('email-suggestions');
-  const input = $('player-email');
-  const prefix = input.value.trim();
-  const history = typeof native?.emailHistory === 'function'
-    ? JSON.parse(native.emailHistory(prefix.length >= 3 ? prefix : '')) : {};
-  $('email-history').hidden = !history.hasEntries;
-  const suggestions = emails.length < 4 && prefix.length >= 3 && Array.isArray(history.suggestions)
-    ? history.suggestions.filter(email => !emails.includes(email)) : [];
-  panel.replaceChildren(...suggestions.map(email => {
-    const row = node('div', 'email-suggestion');
-    const select = node('button', 'quiet', email);
-    select.type = 'button';
-    select.title = email;
-    select.setAttribute('aria-label', `Add saved email ${email}`);
-    select.onclick = () => { input.value = email; addEmail(); };
-    const remove = node('button', 'quiet', '×');
-    remove.type = 'button';
-    remove.setAttribute('aria-label', `Forget saved email ${email}`);
-    remove.onclick = () => {
-      if (!native.removeSavedEmail(email)) {
-        formError = 'Could not forget this email. Try again.';
-        renderEmailFeedback();
-      } else refreshEmailSuggestions();
-    };
-    for (const button of [select, remove])
-      button.onpointerdown = event => { if (document.activeElement === input) event.preventDefault(); };
-    row.append(select, remove);
-    return row;
-  }));
-  panel.hidden = !suggestions.length;
-}
-$('email-history').onclick = () => showNativeModal({kind: 'clear-email-history'});
 function renderEmailFeedback() {
   const input = $('player-email');
   const feedback = $('email-count');
@@ -524,25 +505,33 @@ function renderEmails() {
   renderEmailFeedback();
   $('email-list').replaceChildren(...emails.map(address => {
     const chip = node('div');
-    const label = node('span', '', address);
+    const label = node('button', 'edit-address', address);
+    label.type = 'button';
+    label.setAttribute('aria-label', 'Edit ' + address);
+    label.onclick = () => {
+      const input = $('player-email');
+      if (input.value.trim() && !addEmail()) return;
+      emails = emails.filter(value => value !== address);
+      input.value = address;
+      formError = '';
+      renderEmails();
+      input.focus();
+    };
     label.title = address;
     const remove = node('button', '', '×');
     remove.type = 'button';
     remove.setAttribute('aria-label', `Remove ${address}`);
     remove.onclick = () => {
       emails = emails.filter(value => value !== address);
-      rememberEmails.delete(address);
       formError = '';
       renderEmails();
     };
     chip.append(label, remove);
     return chip;
   }));
-  if (view === 'form') refreshEmailSuggestions();
 }
 function clearRecipientDraft() {
   emails = [];
-  rememberEmails.clear();
   $('player-email').value = '';
   formError = '';
   renderEmails();
@@ -552,13 +541,15 @@ function unfinishedSession() {
 }
 function addEmail() {
   const input = $('player-email');
-  const value = input.value.trim().toLowerCase();
-  if (emails.length >= 4) formError = 'Remove an email to add another.';
-  else if (value.length > 254 || !input.validity.valid || !/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(value) ||
-      /@example\.(com|net|org)$/.test(value)) formError = 'Enter a valid email address.';
-  else if (emails.includes(value)) formError = 'Email already added.';
+  const values = input.value.toLowerCase().split(/[,;\r\n]+/).map(value => value.trim()).filter(Boolean);
+  const invalid = values.find(value => value.length > 254 || !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(value)
+    || /@example\.(com|net|org)$/.test(value));
+  if (!values.length || invalid) formError = 'Check the email address and try again.';
+  else if (new Set([...emails, ...values]).size !== emails.length + values.length)
+    formError = 'This address is already on the list.';
+  else if (emails.length + values.length > 4) formError = 'Choose up to four addresses for this replay.';
   else {
-    emails.push(value);
+    emails.push(...values);
     input.value = '';
     formError = '';
     renderEmails();
@@ -571,10 +562,15 @@ function addEmail() {
 $('player-email').oninput = () => {
   formError = '';
   renderEmailFeedback();
-  refreshEmailSuggestions();
+};
+$('player-email').onpaste = event => {
+  const pasted = event.clipboardData?.getData('text');
+  if (!pasted || !/[,;\r\n]/.test(pasted)) return;
+  event.preventDefault();
+  document.execCommand('insertText', false, pasted.replace(/[;\r\n]+/g, ','));
 };
 $('player-email').onkeydown = event => {
-  if (event.key === 'Enter' && !event.isComposing) {
+  if (['Enter', ',', ';'].includes(event.key) && !event.isComposing) {
     event.preventDefault();
     if ($('player-email').value.trim()) addEmail();
   }
@@ -599,19 +595,6 @@ $('email-form').onsubmit = event => {
   $('confirmation-recipients').replaceChildren(...emails.map(email => {
     const row = node('div', 'recipient-review-row');
     row.append(node('span', '', email));
-    if (typeof native?.emailHistory === 'function') {
-      const label = node('label', 'remember-email');
-      const checkbox = node('input');
-      checkbox.type = 'checkbox';
-      checkbox.checked = rememberEmails.has(email);
-      checkbox.setAttribute('aria-label', `Remember ${email} on this tablet`);
-      checkbox.onchange = () => {
-        if (checkbox.checked) rememberEmails.add(email);
-        else rememberEmails.delete(email);
-      };
-      label.append(checkbox, 'Remember on this tablet');
-      row.append(label);
-    }
     return row;
   }));
   $('capture-note').textContent = state.audio
@@ -635,7 +618,6 @@ $('record').onclick = event => {
   if (!state.enabled || !state.tested || !state.cameraMode || state.busy) { show('welcome'); call('setup'); return; }
   if (native) { startRequested = true; $('record').disabled = true; }
   const request = {emails, tapDelayMs: Math.max(0, Math.min(5000, Math.round(performance.now() - event.timeStamp)))};
-  if (rememberEmails.size) request.remember = emails.map(email => rememberEmails.has(email));
   call('start', JSON.stringify(request));
   if (native) {
     try {
@@ -705,6 +687,11 @@ function syncRecordingTimer() {
   if (!timerAnimation) timerAnimation = requestAnimationFrame(drawRecordingTimer);
 }
 $('update-install').onclick = () => call('install-update');
+$('update-saved').onclick = () => {
+  reviewingOffline = true;
+  show('saved-videos');
+  tick();
+};
 $('update-check').onclick = () => { $('update-check').disabled = true; call('check-update'); };
 $('connection-retry').onclick = event => { event.stopPropagation(); call('retry-connection'); };
 function tick() {
@@ -712,11 +699,16 @@ function tick() {
   try { state = native ? JSON.parse(native.state()) : {enabled: true, enrolled: true, initialized: true, tested: true, cameraMode: 'device', court: 'Court 1', maxSeconds: 900}; }
   catch { return; }
   $('connection-notice').hidden = !state.connectionNotice;
+  $('connection-notice').dataset.tone = state.registrationInactive ? 'action'
+    : state.enrollmentChecking || !state.initialized && !state.connectionRetry ? 'info' : 'waiting';
   $('connection-retry').hidden = !state.connectionRetry;
   $('connection-retry').textContent = state.enrollmentPending ? 'Check enrollment' : 'Retry connection';
   if ($('connection-text').textContent !== (state.connectionNotice || ''))
     $('connection-text').textContent = state.connectionNotice || '';
-  const updateBlocked = !!(state.updateRequired || state.updateChecking) && !state.busy;
+  const offlineLibrary = state.updateChecking && !state.updateRequired && state.localDeviceKnown && !!state.savedVideos?.length;
+  $('update-saved').hidden = !offlineLibrary;
+  const updateBlocked = (state.updateRequired || state.updateChecking) && !state.busy &&
+    !(offlineLibrary && reviewingOffline && view === 'saved-videos');
   $('required-update').hidden = !updateBlocked;
   document.querySelector('main').inert = updateBlocked;
   document.querySelector('.device-tools').inert = updateBlocked;
@@ -765,7 +757,7 @@ function tick() {
     startAccepted = false;
   }
   if (!state.busy && state.phase === 'error' && view === 'session') show('welcome');
-  $('court').textContent = state.court || 'Not assigned';
+
   const cameraStatus = $('camera-status');
   const ready = !!(state.enabled && state.tested && state.cameraMode);
   cameraStatus.classList.toggle('ready', ready && !state.busy);
@@ -787,27 +779,33 @@ function tick() {
   $('record').disabled = !!state.busy || startRequested;
   if (stopRequestedAttempt !== state.captureAttempt) stopRequestedAttempt = '';
   $('stop').disabled = !!stopRequestedAttempt;
-  if (['form', 'confirm'].includes(view) && (!state.enabled || !state.tested || !state.cameraMode)) show('welcome');
+  if (['form', 'confirm'].includes(view) && (!state.enabled || !state.tested || !state.cameraMode)) {
+    clearRecipientDraft();
+    show('welcome');
+  }
   recordingModeOptions($('camera-quality'));
   $('camera-quality').disabled = !!state.busy;
   $('camera-test-confirm').disabled = !cameraConfirmationAllowed(state, $('camera-quality').value, playableTestToken);
   $('camera-test-retry').disabled = !!state.busy;
-  const recoverable = view === 'welcome' && !!state.recoverable && !state.busy;
-  const savedNotice = recoverable && (!state.error || state.startHasRecoverableFootage || /logo|upload|footage|saved video|saved recording/i.test(state.error));
-  const recoveryMessage = 'Your recording is in Saved videos. Open it to check its status, save a device copy, or retry.';
+  const interruptedItem = state.savedVideos?.find(item => (item.captureInterruptionCode || item.localAvailable === false) &&
+    (item.id === state.latestSavedSession || item.id === state.session?.id));
+  const recoverable = view === 'welcome' && (!!state.recoverable || !!interruptedItem) && !state.busy;
+  const savedNotice = recoverable && (!!interruptedItem || !state.error || state.startHasRecoverableFootage || /logo|upload|footage|saved video|saved recording/i.test(state.error));
+  const recoveryMessage = interruptedItem?.localAvailable === false ? 'Recording interrupted. No footage available. View details in Saved videos.'
+    : interruptedItem?.validationPending ? 'Recording interrupted. Checking available footage…'
+    : 'Your recording is in Saved videos. Open it to check its status, save a device copy, or retry.';
   const currentError = savedNotice ? recoveryMessage : (state.error || '');
-  if (currentError !== lastErrorNotice) {
-    lastErrorNotice = currentError;
-    errorNoticeExpiresAt = currentError ? performance.now() + 30_000 : 0;
-  }
-  $('error').hidden = !currentError || view === 'saved-videos' || performance.now() >= errorNoticeExpiresAt;
+  $('error').hidden = !currentError || view === 'saved-videos';
+  $('error').dataset.tone = savedNotice && !interruptedItem?.validationFailed ? 'waiting' : 'action';
   $('error-message').textContent = currentError;
   $('recover').textContent = 'Saved videos';
+  $('recover').dataset.id = interruptedItem?.id || '';
   $('recover').hidden = !savedNotice;
   const count = state.countdown || 0;
   $('count-in').hidden = count < 1;
   $('count-number').textContent = String(count || 3);
   const recordingFlow = state.busy && ['connecting', 'countdown', 'recording', 'finalizing', 'testing'].includes(state.phase);
+  if ((state.phase === 'testing' || state.testReady) && ['camera-ready','camera-ready-device'].includes($('modal').dataset.kind)) hideModal();
   if (state.testReady) {
     show('camera-test');
     if (lastTestToken !== state.testToken) {
@@ -830,6 +828,8 @@ function tick() {
     if (!state.testConfirmable || $('camera-quality').value !== (state.selectedRecordingMode || 'auto'))
       $('camera-test-help').textContent = 'Record another test with the selected settings before confirming.';
     if (state.logoPipeline) $('camera-test-help').textContent += ` ${state.logoPipeline}.`;
+    if ($('camera-test-video').error)
+      $('camera-test-help').textContent = 'The test clip could not play. Record another test to check this camera.';
     $('camera-test-confirm').textContent = state.testHasAudio ? 'I can see and hear the test' : 'The video looks clear';
   } else if (recordingFlow) {
     show('session');
@@ -841,7 +841,11 @@ function tick() {
       ? (stopRequestedAttempt ? 'Stop requested…' : `Recording limit: ${limitMinutes} minutes`)
       : state.message || 'Preparing your match…';
     const loading = ['connecting', 'testing', 'finalizing'].includes(state.phase);
-    $('loading').hidden = !loading;
+    const testing = state.phase === 'testing';
+    $('test-progress').hidden = !testing;
+    if (testing && state.cameraTestStage === 'capturing') $('test-progress').value = Math.min(3, state.elapsed || 0);
+    else $('test-progress').removeAttribute('value');
+    $('loading').hidden = !loading || testing;
     const loadingLabel = $('loading').querySelector('b');
     loadingLabel.hidden = state.phase === 'connecting';
     loadingLabel.textContent = state.phase === 'testing' ? 'Checking camera…' : 'Preparing saved video…';
@@ -868,6 +872,7 @@ function tick() {
     lastStatusNotice = statusNotice;
     statusNoticeExpiresAt = statusNotice ? performance.now() + 30_000 : 0;
   }
+  $('notice').dataset.tone = interruptedItem || unfinishedSession() ? 'waiting' : completion ? 'success' : 'info';
   $('notice').textContent = statusNotice;
   syncReenrollVisibility();
   renderSavedVideos();

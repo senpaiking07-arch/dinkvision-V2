@@ -24,6 +24,33 @@ test("R2 completion is atomic, tenant-bound, idempotent and cannot undo cancella
   await db.query("insert into courts(id,name) values($1,'R2 test court')",[court]);
   await db.query("insert into kiosk_devices(id,token_hash,created_by) values($1,'r2-fixture',$2)",[kiosk,admin]);
   await db.query("insert into browser_devices(id,name,court_id,kiosk_id) values($1,'R2 test device',$2,$3)",[device,court,kiosk]);
+  await db.query("update browser_devices set tested_at=now() where id=$1",[device]);
+  const firstLogo=randomUUID(), secondLogo=randomUUID(), startKey=randomUUID();
+  await db.query("insert into court_recording_logos(court_id,version,png) values($1,$2,decode('89504e470d0a1a0a','hex'))",[court,firstLogo]);
+  async function reserve(key: string) {
+   await db.exec("begin; set local role service_role; set local request.jwt.claim.role='service_role';");
+   try {
+    await db.query("select set_config('request.headers',$1,true)",[JSON.stringify({"x-dinkvision-tenant-id":DEFAULT_TENANT_ID})]);
+    return (await db.query<{id:string}>("select browser_start($1,'fixture@recording.invalid',$2) id",[kiosk,key])).rows[0].id;
+   } finally { await db.exec("commit"); }
+  }
+  const savedVersion=async (session:string)=>(await db.query<{version:string|null}>(
+    "select configuration_snapshot->>'court_logo_version' as version from recording_sessions where id=$1",[session])).rows[0].version;
+  const firstLogoSession=await reserve(startKey);
+  assert.equal(await savedVersion(firstLogoSession),firstLogo);
+  await db.query("update court_recording_logos set version=$1 where court_id=$2",[secondLogo,court]);
+  assert.equal(await reserve(startKey),firstLogoSession);
+  assert.equal(await savedVersion(firstLogoSession),firstLogo);
+  await db.query("update recording_sessions set status='failed' where id=$1",[firstLogoSession]);
+  const newLogoSession=await reserve(randomUUID());
+  assert.equal(await savedVersion(newLogoSession),secondLogo);
+  await db.query("update recording_sessions set status='failed' where id=$1",[newLogoSession]);
+  await db.query("delete from court_recording_logos where court_id=$1",[court]);
+  const noLogoSession=await reserve(randomUUID());
+  assert.equal(await savedVersion(noLogoSession),null);
+  await db.query("update recording_sessions set status='failed' where id=$1",[noLogoSession]);
+  assert.equal((await db.query<{allowed:boolean}>(
+    "select has_table_privilege('authenticated','public.court_recording_logos','select') allowed")).rows[0].allowed,false);
   const largeSession=randomUUID();
   await db.query(`insert into recording_sessions(id,kiosk_id,court_id,idempotency_key,status,configuration_snapshot,recipient_email)
    values($1,$2,$3,gen_random_uuid(),'uploading','{}','fixture@example.invalid')`,[largeSession,kiosk,court]);

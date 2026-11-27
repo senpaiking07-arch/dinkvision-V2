@@ -134,6 +134,11 @@ public class SavedVideosUiTest {
         if (!"true".equals(ready)) Thread.sleep(100);
       }
       assertEquals("Player JavaScript did not load: " + evaluate(web, "document.readyState"), "true", ready);
+      assertEquals("Welcome background opens email entry; header and dismissing settings stay on welcome", "true", evaluate(web,
+          "(()=>{tick();show('welcome');$('header-court').click();if(view!=='welcome')return false;"
+          + "$('settings-toggle').click();$('welcome').click();if(view!=='welcome'||!$('settings-actions').hidden)return false;"
+          + "for(const el of [$('welcome').querySelector('h1'),$('welcome'),document.querySelector('footer')]){"
+          + "el.click();if(view!=='form')return false;handlePlayerBack();}return true;})()"));
       assertEquals("The welcome screen opens re-enrollment on a registered tablet", "true", evaluate(web,
           "tick();show('welcome');$('reenroll').click();!$('reenroll').hidden"));
       assertTrue(bridge.actions.contains("setup-reenroll:"));
@@ -170,7 +175,7 @@ public class SavedVideosUiTest {
         });
         assertTrue(laidOut.await(3, TimeUnit.SECONDS));
         String result = evaluate(web,
-            "window.dismissNativeModal();show('welcome');tick();document.getElementById('saved-open').click();renderSavedVideos();"
+            "window.dismissNativeModal();show('welcome');tick();document.getElementById('settings-toggle').click();document.getElementById('saved-open').click();renderSavedVideos();"
             + "(()=>{const ids=['saved-save','saved-retry','saved-previous','saved-next','saved-back','saved-details'];const panel=document.getElementById('saved-panel').getBoundingClientRect();"
             + "const bad=ids.filter(id=>{const r=document.getElementById(id).getBoundingClientRect();return r.width<44||r.height<44||r.left<0||r.top<0||r.right>innerWidth+1||r.bottom>innerHeight+1||(id!=='saved-back'&&(r.bottom>panel.bottom-4||r.top<panel.top));}).map(id=>({id,...document.getElementById(id).getBoundingClientRect().toJSON()}));"
             + "return JSON.stringify({bad,w:innerWidth,h:innerHeight,panelRect:panel.toJSON(),info:document.querySelector('.saved-info').getBoundingClientRect().toJSON(),header:document.querySelector('header').getBoundingClientRect().toJSON(),main:document.querySelector('main').getBoundingClientRect().toJSON(),heading:document.querySelector('.saved-heading').getBoundingClientRect().toJSON(),rows:getComputedStyle(document.querySelector('.saved-info')).gridTemplateRows,body:document.body.className,scroll:document.documentElement.scrollHeight>innerHeight+1||document.documentElement.scrollWidth>innerWidth+1,panel:panel.bottom>innerHeight+1});})()");
@@ -252,7 +257,7 @@ public class SavedVideosUiTest {
             "(()=>{show('form');clearRecipientDraft();const input=$('player-email');input.value='sav';input.dispatchEvent(new Event('input'));const backdrop=document.querySelector('.backdrop');"
             + "const original=backdrop.getBoundingClientRect().toJSON();const keyboard=Math.round(innerHeight*.63);"
             + "setRecipientKeyboardInset(keyboard*devicePixelRatio);"
-            + "const bad=[$('player-email'),$('add-email'),document.querySelector('#email-form .record'),...$('email-suggestions').querySelectorAll('button')].flatMap(el=>{const r=el.getBoundingClientRect();"
+            + "const bad=[$('player-email'),$('add-email'),document.querySelector('#email-form .record')].flatMap(el=>{const r=el.getBoundingClientRect();"
             + "return r.width>=44&&r.height>=44&&r.top>=0&&r.bottom<=innerHeight-keyboard+1?[]:[{text:el.textContent,r:r.toJSON()}];});"
             + "const anchored=JSON.stringify(original)===JSON.stringify(backdrop.getBoundingClientRect().toJSON());"
             + "setRecipientKeyboardInset(0);clearRecipientDraft();return JSON.stringify({bad,anchored,restored:!document.body.classList.contains('recipient-ime')});})()");
@@ -291,15 +296,19 @@ public class SavedVideosUiTest {
         web.postDelayed(restored::countDown, 300);
       });
       assertTrue(restored.await(3, TimeUnit.SECONDS));
-      assertEquals("History requires typing and explicit selection; forgetting and clearing affect suggestions", "true", evaluate(web,
-          "(()=>{tick();show('form');clearRecipientDraft();const input=$('player-email'),panel=$('email-suggestions');"
-          + "const type=value=>{input.value=value;input.dispatchEvent(new Event('input'));};"
-          + "type('sa');const hidden=panel.hidden&&emails.length===0;type('sav');"
-          + "const matched=!panel.hidden&&emails.length===0;panel.querySelector('button').click();"
-          + "const selected=emails[0]==='saved.player@gmail.com';clearRecipientDraft();type('sav');"
-          + "panel.querySelector('button:last-child').click();const forgotten=panel.hidden;"
-          + "$('email-history').click();document.querySelector('#modal-actions .primary').click();"
-          + "return hidden&&matched&&selected&&forgotten&&$('email-history').hidden&&emails.length===0;})()"));
+      JSONObject unavailable = new JSONObject().put("id", UUID.randomUUID().toString()).put("localAvailable",false)
+          .put("status","failed").put("captureInterruptionCode","app_interrupted").put("validationFailed",true);
+      JSONArray originalItems = snapshot.getJSONArray("savedVideos");
+      snapshot.put("savedVideos", new JSONArray().put(unavailable)).put("localDeviceKnown",true).put("updateChecking",true);
+      bridge.snapshot=snapshot.toString();
+      assertEquals("Offline interrupted attempt stays visible without media actions", "true", evaluate(web,
+          "tick();$('update-saved').click();view==='saved-videos'&&$('saved-video-status').textContent.includes('No footage available')"
+          + "&&$('saved-player').hidden&&$('saved-save').hidden&&$('saved-retry').hidden"));
+      evaluate(web,"handlePlayerBack();true");
+      snapshot.remove("updateChecking");snapshot.put("savedVideos",originalItems);bridge.snapshot=snapshot.toString();
+      assertEquals("Four recipients can be reviewed together without saved suggestions", "true", evaluate(web,
+          "tick();show('welcome');$('begin').click();clearRecipientDraft();$('player-email').value='one@court.ph,two@court.ph,three@court.ph,four@court.ph';"
+          + "document.querySelector('#email-form .record').click();view==='confirm'&&emails.length===4&&!$('email-history')"));
       assertEquals("Validation and editing stay in the recipient flow", "true", evaluate(web,
           "(()=>{tick();show('welcome');$('begin').click();clearRecipientDraft();const input=$('player-email');"
           + "const review=()=>document.querySelector('#email-form .record').click();"
@@ -308,8 +317,8 @@ public class SavedVideosUiTest {
           + "input.value='manual.player@gmail.com';addEmail();input.value='MANUAL.PLAYER@gmail.com';"
           + "const duplicate=!addEmail()&&emails.length===1;"
           + "input.value='';review();const opt=$('confirmation-recipients').querySelector('input');"
-          + "const reviewed=view==='confirm'&&$('confirmation-recipients').querySelector('span').textContent==='manual.player@gmail.com'&&!opt.checked;"
-          + "opt.click();"
+          + "const reviewed=view==='confirm'&&$('confirmation-recipients').querySelector('span').textContent==='manual.player@gmail.com'&&!opt;"
+
           + "$('edit').click();const retained=view==='form'&&emails.length===1;review();"
           + "return empty&&invalid&&duplicate&&reviewed&&retained&&view==='confirm';})()"));
       long startsBefore=bridge.actions.stream().filter(action->action.startsWith("start:")).count();
@@ -319,7 +328,7 @@ public class SavedVideosUiTest {
       String startAction = bridge.actions.stream().filter(action -> action.startsWith("start:")).reduce((a,b) -> b).orElseThrow();
       JSONObject startPayload = new JSONObject(startAction.substring("start:".length()));
       assertEquals("manual.player@gmail.com", startPayload.getJSONArray("emails").getString(0));
-      assertTrue(startPayload.getJSONArray("remember").getBoolean(0));
+      assertFalse(startPayload.has("remember"));
       assertTrue(startPayload.getInt("tapDelayMs") >= 0);
       snapshot.put("phase","connecting").put("busy",true);bridge.snapshot=snapshot.toString();
       assertEquals("Addresses remain available while connecting", "true",evaluate(web,"tick();view==='session'&&emails.length===1"));
@@ -338,11 +347,8 @@ public class SavedVideosUiTest {
       assertEquals("A stale server state must not trap local capture recovery", "true",evaluate(web,"tick();view==='welcome'&&!document.getElementById('recover').hidden"));
       assertEquals("Local footage errors direct players to Saved videos without exposing a raw failure","true",evaluate(web,
           "document.getElementById('error-message').textContent.includes('Your recording is in Saved videos')&&!document.getElementById('error-message').textContent.includes('Controlled start failure')"));
-      assertEquals("Only one notification is shown at a time with a 30-second lifetime","true",evaluate(web,
-          "errorNoticeExpiresAt-performance.now()>29000&&errorNoticeExpiresAt-performance.now()<=30000&&document.getElementById('notice').hidden"));
-      evaluate(web, "errorNoticeExpiresAt = statusNoticeExpiresAt = performance.now() - 1;true");
-      assertEquals("Polling must not revive expired error or success notices","true",evaluate(web,
-          "tick();tick();document.getElementById('error').hidden&&document.getElementById('notice').hidden"));
+      assertEquals("Actionable recovery stays visible across polls", "true", evaluate(web,
+          "tick();tick();!$('error').hidden&&$('notice').hidden&&!$('recover').hidden"));
       snapshot.put("startHasRecoverableFootage",false).put("error","Camera connection changed. Record another test.");bridge.snapshot=snapshot.toString();
       assertEquals("A different new error remains visible after the previous notice expired","true",evaluate(web,
           "tick();!document.getElementById('error').hidden&&document.getElementById('error-message').textContent.includes('Camera connection changed')"));

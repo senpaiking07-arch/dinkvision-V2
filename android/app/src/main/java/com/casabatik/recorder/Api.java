@@ -4,11 +4,14 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 
 final class Api {
   static final String ORIGIN = BuildConfig.APP_ORIGIN;
   private final Vault vault;
+  private volatile String reachableAttempt = "";
   volatile Boolean serverReachable;
 
   interface Connections {
@@ -45,6 +48,14 @@ final class Api {
     return new RequestFailure("Connection interrupted. Please retry; saved videos remain on this device.",code);
   }
 
+  private static final Set<String> UPLOAD_ACTIONS = Set.of("upload", "retry-upload", "restart-upload", "upload-status", "upload-part", "upload-parts", "finish");
+  private static final Set<String> PREPARE_ACTIONS = Set.of("upload", "retry-upload", "restart-upload");
+
+  static int readTimeout(String path, JSONObject body) {
+    if ("/api/tablet/diagnostics".equals(path)) return 5000;
+    return "/api/tablet".equals(path) && body != null && UPLOAD_ACTIONS.contains(body.optString("action")) ? 60000 : 30000;
+  }
+
   Api(Vault v) {
     this(v, url -> (HttpURLConnection) url.openConnection());
   }
@@ -63,6 +74,49 @@ final class Api {
     return request(path, body);
   }
 
+  byte[] recordingLogo(String sessionId) throws Exception {
+    UUID.fromString(sessionId);
+    String credential = vault.object("cookies").optString("cb-kiosk");
+    FutureTask<byte[]> fetch = new FutureTask<>(() -> fetchRecordingLogo(sessionId, credential));
+    Thread worker = new Thread(fetch, "DinkVisionCourtLogo");
+    worker.setDaemon(true);
+    worker.start();
+    try {
+      return fetch.get(2, TimeUnit.SECONDS);
+    } finally {
+      fetch.cancel(true);
+    }
+  }
+
+  private byte[] fetchRecordingLogo(String sessionId, String credential) throws Exception {
+    final int limit = 512 * 1024;
+    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    HttpURLConnection connection = connections.open(new URL(ORIGIN + "/api/tablet/recording-logo/" + sessionId));
+    try {
+      connection.setConnectTimeout(1500);
+      connection.setReadTimeout(1500);
+      connection.setInstanceFollowRedirects(false);
+      connection.setRequestProperty("Cookie", "cb-kiosk=" + credential);
+      connection.setRequestProperty("Accept", "image/png");
+      int status = connection.getResponseCode();
+      if (status == 204) return null;
+      if (status != 200 || !"image/png".equals(connection.getContentType()) || connection.getContentLength() > limit)
+        throw new IOException("Court logo is unavailable.");
+      try (InputStream input = connection.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+        byte[] buffer = new byte[8192];
+        while (!Thread.currentThread().isInterrupted() && System.nanoTime() < deadline) {
+          int count = input.read(buffer);
+          if (count == -1) return output.toByteArray();
+          if (output.size() + count > limit) throw new IOException("Court logo exceeds the size limit.");
+          output.write(buffer, 0, count);
+        }
+        throw new SocketTimeoutException("Court logo download timed out.");
+      }
+    } finally {
+      connection.disconnect();
+    }
+  }
+
   private JSONObject request(String path, JSONObject body) throws Exception {
     if (!path.startsWith("/api/")) throw new Exception("Invalid application request.");
     boolean diagnostics = "/api/tablet/diagnostics".equals(path);
@@ -70,7 +124,7 @@ final class Api {
     try { c = connections.open(new URL(ORIGIN + path)); }
     catch (IOException failure) { if (!diagnostics) serverReachable = false; throw networkFailure(failure); }
     c.setConnectTimeout(diagnostics?5000:15000);
-    c.setReadTimeout(diagnostics?5000:30000);
+    c.setReadTimeout(readTimeout(path, body));
     c.setInstanceFollowRedirects(false);
     c.setRequestProperty("Accept", "application/json");
     c.setRequestProperty("Origin", ORIGIN);
@@ -100,6 +154,7 @@ final class Api {
       try {
         result = new Response(text);
       } catch (Exception e) {
+        if (status >= 500) throw new RequestFailure("The app server is temporarily unavailable.", "http_server", status);
         throw new Exception("Hosted app unavailable. Check the deployment and try again.");
       }
       if (status == 426 && result.optJSONObject("release") != null)
@@ -171,6 +226,10 @@ final class Api {
   }
 
   UploadTransfer.Transport uploadTransport(String session, File file) {
+    return uploadTransport(session, file, false);
+  }
+
+  UploadTransfer.Transport uploadTransport(String session, File file, boolean singlePartAtATime) {
     UUID.fromString(session);
     return new UploadTransfer.Transport() {
       private String attemptId = "";
@@ -179,9 +238,11 @@ final class Api {
       public JSONObject action(String action) throws Exception {
         if (!Set.of("upload", "retry-upload", "restart-upload", "upload-status", "finish").contains(action))
           throw new Exception("Invalid upload action.");
-        JSONObject result = tablet(action, new JSONObject().put("id", session).put("direct_upload", true)
-            .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId).put("large_parts", true));
-        if (Set.of("upload", "retry-upload", "restart-upload").contains(action)) {
+        JSONObject body = new JSONObject().put("id", session).put("direct_upload", true)
+            .put("upload_protocol", "r2-multipart-v1").put("attempt_id", attemptId).put("large_parts", true);
+        if (PREPARE_ACTIONS.contains(action)) body.put("part_size", 8 * 1024 * 1024);
+        JSONObject result = tablet(action, body);
+        if (PREPARE_ACTIONS.contains(action)) {
           attemptId = "";
           attemptPartSize = 8 * 1024 * 1024;
           if (!result.optBoolean("ready") && !result.optBoolean("queued")) {
@@ -196,6 +257,7 @@ final class Api {
               throw new Exception("The upload does not match this saved video.");
             attemptId = UUID.fromString(multipart.getString("attemptId")).toString();
             attemptPartSize = ps;
+            if (singlePartAtATime) multipart.put("parallelism", 1);
           }
         }
         return result;
@@ -249,6 +311,10 @@ final class Api {
         } else {
           out.add(parseGrant(grant, offset, (int) Math.min(partSize, totalBytes - offset)));
         }
+        if (!out.isEmpty() && out.get(0).partNumber > 0 && !reachableAttempt.equals(attemptId)) {
+          checkStorageHost(out.get(0).url);
+          reachableAttempt = attemptId;
+        }
         return out;
       }
 
@@ -283,6 +349,25 @@ final class Api {
     } catch (Exception invalid) { throw new Exception("Invalid private storage address. The local video is retained."); }
   }
 
+  void checkStorageHost(String signedUrl) throws Exception {
+    URL address = r2Address(signedUrl);
+    HttpURLConnection probe = null;
+    try {
+      probe = connections.open(new URL("https", address.getHost(), "/"));
+      probe.setInstanceFollowRedirects(false);
+      probe.setUseCaches(false);
+      probe.setConnectTimeout(2500);
+      probe.setReadTimeout(2500);
+      probe.setRequestMethod("HEAD");
+      if (probe.getResponseCode() < 100) throw new IOException();
+    } catch (IOException failure) {
+      throw new RequestFailure("Cloud storage is unreachable from this network. Ask the venue network admin to allow "
+          + address.getHost() + "; the video remains saved on this device.", networkFailure(failure).code);
+    } finally {
+      if (probe != null) probe.disconnect();
+    }
+  }
+
   JSONObject uploadR2Part(String address, File file, long offset, int length) throws Exception {
     if (offset < 0 || length < 1 || length > UploadTransfer.MAX_PART_BYTES || offset + length > file.length())
       throw new Exception("Invalid upload part.");
@@ -292,7 +377,7 @@ final class Api {
       c.setInstanceFollowRedirects(false);
       c.setUseCaches(false);
       c.setConnectTimeout(15000);
-      c.setReadTimeout(90000);
+      c.setReadTimeout(180000);
       c.setRequestMethod("PUT");
       c.setDoOutput(true);
       c.setFixedLengthStreamingMode(length);
@@ -303,8 +388,10 @@ final class Api {
         int remaining = length;
         while (remaining > 0) {
           if (Thread.currentThread().isInterrupted()) throw new java.io.InterruptedIOException("Upload paused.");
-          int count = f.read(buffer, 0, Math.min(buffer.length, remaining));
-          if (count < 0) throw new IOException("Video incomplete.");
+          int count;
+          try { count = f.read(buffer, 0, Math.min(buffer.length, remaining)); }
+          catch (IOException local) { throw new RequestFailure("Could not read the saved video on this device.", "device_or_storage"); }
+          if (count < 0) throw new RecordingAccuracy.Failure("Saved video is missing or incomplete.");
           out.write(buffer, 0, count);
           remaining -= count;
         }
@@ -314,7 +401,18 @@ final class Api {
       if (status >= 200 && status < 300) return new JSONObject().put("accepted", true);
       throw new RequestFailure("Private storage upload paused (HTTP " + status + "). The video remains saved locally.",
           status >= 500 ? "http_server" : "http_client", status);
-    } catch (IOException interrupted) { throw networkFailure(interrupted); }
+    } catch (FileNotFoundException missing) {
+      throw new RequestFailure("Saved video could not be opened on this device.", "device_or_storage");
+    } catch (IOException failure) {
+      String code = networkFailure(failure).code;
+      String detail = switch (code) {
+        case "timeout" -> "Cloud storage upload timed out. Retrying automatically";
+        case "dns" -> "Cloud storage address could not be resolved. Check the venue network";
+        case "tls" -> "Secure connection to cloud storage failed. Check the device date and time";
+        default -> "Cloud storage connection was interrupted. Retrying automatically";
+      };
+      throw new RequestFailure(detail + "; saved videos remain on this device.", code);
+    }
     finally { if (c != null) c.disconnect(); }
   }
 }

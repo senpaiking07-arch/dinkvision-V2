@@ -35,8 +35,16 @@ public class LiveLogoProcessorTest {
   }
 
   @Test public void gpuLogoIsInSaved1080pVideoAndCompletedBytesSkipSoftwareBranding() throws Exception {
+    verifySavedWatermarks(true);
+  }
+
+  @Test public void invalidCourtLogoStillSavesVideoWithPrimaryWatermark() throws Exception {
+    verifySavedWatermarks(false);
+  }
+
+  private void verifySavedWatermarks(boolean validCourtLogo) throws Exception {
     var context = InstrumentationRegistry.getInstrumentation().getTargetContext();
-    File file = new File(context.getCacheDir(),"live-logo-synthetic.mp4");
+    File file = new File(context.getCacheDir(),validCourtLogo ? "live-logo-synthetic.mp4" : "live-logo-fallback.mp4");
     MediaCodec encoder = MediaCodec.createEncoderByType("video/avc");
     MediaFormat format = MediaFormat.createVideoFormat("video/avc",1920,1080);
     format.setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
@@ -44,7 +52,14 @@ public class LiveLogoProcessorTest {
     format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,1);
     encoder.configure(format,null,null,MediaCodec.CONFIGURE_FLAG_ENCODE);
     Surface surface = encoder.createInputSurface();
-    LiveLogoProcessor processor = new LiveLogoProcessor(context,surface,1920,1080);
+    var court = android.graphics.Bitmap.createBitmap(60, 40, android.graphics.Bitmap.Config.ARGB_8888);
+    court.eraseColor(Color.RED);
+    for (int y=10; y<30; y++) for (int x=20; x<40; x++) court.setPixel(x,y,Color.TRANSPARENT);
+    var png = new ByteArrayOutputStream();
+    court.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, png);
+    court.recycle();
+    LiveLogoProcessor processor = new LiveLogoProcessor(context,surface,1920,1080,0,true,false,
+        ignored -> {}, validCourtLogo ? png.toByteArray() : new byte[]{1, 2, 3});
     MediaMuxer muxer = new MediaMuxer(file.toString(),MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
     ExecutorService drain = Executors.newSingleThreadExecutor();
     encoder.start();
@@ -95,6 +110,14 @@ public class LiveLogoProcessorTest {
         }
         assertTrue("Logo must be embedded in saved pixels: changed="+changed+" size="+bitmap.getWidth()+"x"+bitmap.getHeight(),changed>100);
         int center=bitmap.getPixel(960,540);assertTrue(Color.green(center)>180&&Color.red(center)<60);
+        int red=bitmap.getPixel(65,985);
+        if (validCourtLogo) {
+          assertTrue("Court logo must be in the bottom left", Color.red(red)>170&&Color.green(red)<90);
+          int hole=bitmap.getPixel(153,970);
+          assertTrue("The video must show through the court logo", Color.green(hole)>150&&Color.red(hole)<90);
+        } else {
+          assertTrue("Invalid logo must leave the bottom left clear", Color.green(red)>150&&Color.red(red)<90);
+        }
         bitmap.recycle();
       } finally { retriever.release(); }
       byte[] before=java.nio.file.Files.readAllBytes(file.toPath());

@@ -1,3 +1,4 @@
+import { codes } from "../lib/recorder-events";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -65,6 +66,7 @@ async function report(body: Record<string, unknown>, backoff = false, owned = tr
           return query;
         },
       }) };
+      if (name === "@/lib/recorder-events") return { codes };
       if (name === "@/lib/validation") return { uuid: (id: string) => id, InputError: class extends Error {} };
       if (name === "@/lib/capture-interruption") return { isCaptureInterruption };
       if (name === "@/lib/optional-schema") return optionalSchema;
@@ -94,6 +96,34 @@ test("validation failures keep a precise recovery message and acknowledge the se
   assert.equal(failurePatch?.safe_error, "Video validation failed. Check the saved video on the original device.");
   assert.equal(failurePatch?.upload_state, undefined, "validation must not schedule a connection retry");
   assert.equal(failurePatch?.local_available, false, "a missing-file report must reach Admin");
+});
+
+test("a delayed FIFO waiting report clears stale errors only on a still-waiting row", async () => {
+  const {response, patches, stateFilters} = await report({
+    action: "queue-report", status: "pending", waiting_for_turn: true, retry_count: 8, uploaded_bytes: 0,
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(stateFilters, [["pending", "queued"]]);
+  const patch = patches.find(row => row.safe_error === null);
+  assert.ok(patch);
+  assert.equal(patch.last_error, null);
+  assert.deepEqual(Object.keys(patch).sort(), ["last_error", "last_seen_at", "safe_error"]);
+});
+
+test("unknown failure codes cannot update the queue", async () => {
+  for (const code of ["constructor", "none", "unexpected", 1]) {
+    const {response, operations} = await report({action: "upload-failed", failure_code: code});
+    assert.equal(response.status, 400);
+    assert.deepEqual(operations, []);
+  }
+});
+
+test("DNS failures retain the storage-specific device report and a safe cause", async () => {
+  const detail = "Cloud storage address could not be resolved.";
+  const {patches} = await report({action:"upload-failed", retrying:true, failure_code:"dns", last_error:detail});
+  const patch = patches.find(row => row.safe_error);
+  assert.equal(patch?.last_error, detail);
+  assert.match(String(patch?.safe_error), /address could not be resolved/i);
 });
 
 test("automatic retry reports use a bounded server-relative cooldown only when enabled", async () => {

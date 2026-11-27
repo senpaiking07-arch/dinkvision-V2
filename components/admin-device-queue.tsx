@@ -3,7 +3,7 @@ import { captureInterruptionLabel } from "@/lib/capture-interruption";
 import { deviceQueueOrder, isLocalOnlyHistory, isQueuedWork, visibleDeviceQueueItem } from "@/lib/device-queue-order";
 import { localProcessingLabel, recordingStageLabel, reportedBrandingProgress } from "@/lib/local-video-status";
 import { recordingDisplayLabel } from "@/lib/recording-label";
-import { recordingReportText } from "@/lib/recording-diagnostics";
+import { reportedFailure } from "@/lib/recording-diagnostics";
 import { recordingSizeMb, uploadPercent, uploadSizeMb } from "@/lib/recording-size";
 import { videoRetryLabel } from "@/lib/upload-recovery";
 import type { AdminDevice, DeviceRecording } from "./admin-device-types";
@@ -86,7 +86,7 @@ export default function AdminDeviceQueue({ device, recordings, now, zone, busy, 
       {item.recording_sessions?.capture_inspection_required && item.local_available !== false
         ? <p className="recorder-upload-note">Open Saved videos on the recorder and save an original copy for inspection.</p>
         : (isFailed || item.upload_state === "retrying") && (item.last_error || item.safe_error) &&
-          <p className="recorder-upload-note">{recordingReportText(item.last_error || item.safe_error)}</p>}
+          <p className="recorder-upload-note">{reportedFailure(item.last_error, item.safe_error)}</p>}
       {(retry || cancellable) && <div className="recorder-upload-actions">
         {retry && <button className="secondary" type="button" disabled={busy} onClick={() => onRetry(item.session_id)}
           aria-label={`${retry} for ${label.full}`}><RotateCcw size={14} aria-hidden="true" />{retry}</button>}

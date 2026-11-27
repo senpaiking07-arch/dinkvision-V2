@@ -14,8 +14,8 @@ import org.json.JSONObject;
 
 /** Sends bytes through its transport and resumes only from storage-confirmed offsets. */
 final class UploadTransfer {
-  static final int DEFAULT_PARALLELISM = 4;
-  static final int MAX_PARALLELISM = 4;
+  static final int DEFAULT_PARALLELISM = 2;
+  static final int MAX_PARALLELISM = 2;
   static final int BATCH_SIZE = 4;
   static final int MAX_PART_BYTES = 524 * 1024 * 1024;
 

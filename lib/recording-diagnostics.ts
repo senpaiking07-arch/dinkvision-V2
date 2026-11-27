@@ -10,10 +10,14 @@ export function recordingReportText(value?: string | null) {
  }
  return message;
 }
+export function reportedFailure(last?:string|null, safe?:string|null) {
+ const generic = last?.startsWith('Connection interrupted. Please retry;');
+ return recordingReportText(generic && safe && !safe.startsWith('Connection interrupted.') ? safe : last || safe);
+}
 export function recordingDiagnostics(session:Pick<Session,'status'|'stop_reason'|'failure_stage'|'browser_recordings'|'capture_interruption_code'>){
  const report=Array.isArray(session.browser_recordings)?session.browser_recordings[0]:session.browser_recordings;
  const interruption=captureInterruptionLabel(session.capture_interruption_code);
- const detail=recordingReportText(report?.last_error||report?.safe_error);
+ const detail=reportedFailure(report?.last_error,report?.safe_error);
  const useful=detail&&!/^Adding (?:the )?Dink ?Vision logo\.?$/i.test(detail)?detail:'';
  const active=['requested','starting','recording','finalizing'].includes(session.status);
  const removed=session.failure_stage==='device_removed';

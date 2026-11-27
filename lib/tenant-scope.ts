@@ -7,7 +7,7 @@ export const tenantTables = new Set([
   "recorder_devices", "recorder_commands", "capture_jobs",   "email_jobs",
   "cleanup_jobs", "kiosk_devices", "browser_devices", "browser_recordings",
   "locations", "tenant_memberships",
-  "r2_upload_attempts", ]);
+  "r2_upload_attempts", "court_recording_logos", ]);
 
 export function tenantId(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))

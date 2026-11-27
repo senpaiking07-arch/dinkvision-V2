@@ -38,13 +38,28 @@ public class QueueRecoveryTest {
         queue.put(new JSONObject().put("id", id).put("device", device).put("status", "recording")
             .put("liveLogoRequired", true).put("captureEndedNormally", index == 2));
       }
+      String missingId = UUID.randomUUID().toString();
+      queue.put(new JSONObject().put("id", missingId).put("device", device).put("status", "recording"));
       Vault vault = new Vault(context);
+      vault.put("recipient-history", "{\"entries\":[{\"email\":\"legacy@court.test\"}]}");
+      queue.getJSONObject(0).put("recipients", new JSONArray().put("delivery@court.test"));
       vault.put("device-id", device);
       vault.put("upload-queue", queue.toString());
       engine = new Engine(context, url -> { throw new IOException("Isolated capture restart"); });
       engine.heartbeat.shutdownNow();
       JSONArray restored = engine.vault.array("upload-queue");
+      for (int pass = 0; pass < 2; pass++) {
+        engine.reconcileMissingLocalFiles();
+        JSONArray visible = new JSONObject(engine.snapshot()).getJSONArray("savedVideos");
+        assertEquals(4, visible.length());
+        JSONObject missing = visible.getJSONObject(3);
+        assertEquals(missingId, missing.getString("id"));
+        assertEquals("app_interrupted", missing.getString("captureInterruptionCode"));
+        assertFalse(missing.getBoolean("localAvailable"));
+      }
+      assertEquals("", engine.vault.get("recipient-history"));
       JSONObject sealed = restored.getJSONObject(0);
+      assertEquals("delivery@court.test", sealed.getJSONArray("recipients").getString(0));
       assertEquals("app_interrupted", sealed.getString("captureInterruptionCode"));
       assertFalse(sealed.has("captureInterruptedAt"));
       assertEquals("pending", sealed.getString("status"));
@@ -296,7 +311,7 @@ public class QueueRecoveryTest {
       for (int i = 0; i < states.length; i++) {
         assertEquals(2048, files[i].length());
         assertEquals(i == 0 ? 8 : 7, restored.getJSONObject(i).getInt("retryCount"));
-        assertEquals(i == 0 ? "failed" : i == 1 ? "pending" : states[i], restored.getJSONObject(i).getString("status"));
+        assertEquals(i == 0 ? "retrying" : i == 1 ? "pending" : states[i], restored.getJSONObject(i).getString("status"));
       }
       // Simulate the restored head backing off: another eligible item wins.
       restored.getJSONObject(0).put("status", "retrying").put("nextRetryAt", System.currentTimeMillis()+60000);

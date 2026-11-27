@@ -1,3 +1,4 @@
+import { codes } from "@/lib/recorder-events";
 import { browserTablet, canSetup, publicTablet } from "@/lib/browser-tablets";
 import { recorderDatabase } from "@/lib/recorder-server";
 import { json, readBody, sameOrigin } from "@/lib/http";
@@ -385,6 +386,15 @@ export async function POST(request: Request) {
       const progress = Number(b.progress || 0), retries = Number(b.retry_count || 0);
       if (!Number.isInteger(progress) || progress < 0 || progress > 100 || !Number.isInteger(retries) || retries < 0 || retries > 100)
         throw new InputError("Invalid local queue report.");
+      if (status === "pending" && b.waiting_for_turn === true) {
+        // The queue owns state, confirmed bytes, retry count and FIFO position.
+        const waiting = await db.from("browser_recordings")
+          .update({last_error: null, safe_error: null, last_seen_at: new Date().toISOString()})
+          .eq("session_id", id).eq("device_id", t.device.id)
+          .in("upload_state", ["pending", "queued"]);
+        if (waiting.error) throw waiting.error;
+        return json({ok: true});
+      }
       const brandingState =
         b.branding_state === undefined
           ? undefined
@@ -441,6 +451,23 @@ export async function POST(request: Request) {
       const retries = Number(b.retry_count || 0);
       if (!Number.isInteger(retries) || retries < 0 || retries > 100)
         throw new InputError("Invalid upload retry count.");
+      const code = b.failure_code;
+      if (code !== undefined && (typeof code !== "string" || !Object.hasOwn(codes, code) || code === "none"))
+        throw new InputError("Invalid upload failure code.");
+      const storage = /^(Cloud storage|Secure connection to cloud storage|Private storage upload)/.test(String(b.last_error || ""));
+      const target = storage ? "Cloud storage" : "App server";
+      const causes: Partial<Record<keyof typeof codes, string>> = {
+        timeout: target + " request timed out.",
+        dns: target + " address could not be resolved. Check the venue network.",
+        tls: "Secure connection to " + target.toLowerCase() + " failed. Check the device date and time.",
+        connection: target + " connection was interrupted.",
+        http_server: target + " was temporarily unavailable.",
+        http_client: target + " rejected the upload request.",
+        validation: "Saved video validation failed. Check the saved video on the recorder.",
+        device_or_storage: "The recorder could not access or process the saved video.",
+        unknown: "The recorder could not identify the upload failure.",
+      };
+      const cause = code === undefined ? undefined : causes[code as keyof typeof codes];
       const retrying = b.retrying === true && b.validation_failed !== true;
       let scheduled = uploadBackoffEnabled();
       const delay = b.retry_delay_ms ?? 0;
@@ -487,6 +514,7 @@ export async function POST(request: Request) {
           ? "Video validation failed. Check the saved video on the original device."
           : b.branding_state === "failed"
           ? "Logo processing failed. The original video remains on the device."
+          : cause ? cause + (retrying ? " Automatic retry scheduled." : " Check the recorder.")
           : b.retrying === true
           ? "Connection interrupted. Automatic retry scheduled."
           : "Upload paused on this device.",
