@@ -305,10 +305,10 @@ function show(name) {
     $('notice').hidden = true;
     $('error').hidden = true;
   }
-  for (const section of ['welcome', 'form', 'confirm', 'session', 'camera-test', 'saved-videos'])
+  for (const section of ['welcome', 'form', 'session', 'camera-test', 'saved-videos'])
     $(section).hidden = section !== name;
+  if (enteringForm) $('form').scrollTop = 0;
   layoutRecipientEntry();
-  if (enteringForm) $('player-email').focus();
   syncReenrollVisibility();
 }
 const syncReenrollVisibility = () => {
@@ -354,7 +354,6 @@ document.addEventListener('click', event => {
 function handlePlayerBack() {
   if (!$('modal').hidden) { hideModal(); return true; }
   if (!$('settings-actions').hidden) { closeSettings(); $('settings-toggle').focus(); return true; }
-  if (view === 'confirm') { show('form'); return true; }
   if (view === 'saved-videos') { show('welcome'); return true; }
   if (view === 'form') {
     $('player-email').blur();
@@ -492,14 +491,21 @@ function renderSavedVideos() {
     preview.load();
   }
 }
-$('edit').onclick = () => show('form');
 function renderEmailFeedback() {
   const input = $('player-email');
   const feedback = $('email-count');
-  feedback.textContent = formError || `${emails.length} of 4 emails added`;
-  feedback.classList.toggle('invalid', !!formError);
+  const count = `${emails.length} of 4 emails added (Max 4)`;
+  if (feedback.textContent !== count) feedback.textContent = count;
+  if ($('email-error').textContent !== formError) $('email-error').textContent = formError;
+  $('email-error').hidden = !formError;
   input.setAttribute('aria-invalid', String(!!formError));
   $('add-email').disabled = emails.length >= 4 || !input.value.trim();
+  $('record').disabled = !emails.length || !!state.busy || startRequested;
+  $('record').classList.toggle('ready', !!emails.length && !state.busy && !startRequested);
+  const help = emails.length
+    ? 'Check the emails above, then tap START RECORDING.'
+    : 'Add at least 1 email above to unlock recording.';
+  if ($('start-help').textContent !== help) $('start-help').textContent = help;
 }
 function renderEmails() {
   renderEmailFeedback();
@@ -581,8 +587,14 @@ $('add-email').onpointerdown = event => {
 $('add-email').onclick = addEmail;
 $('email-form').onsubmit = event => {
   event.preventDefault();
+  if (startRequested) { call('repeat-start'); return; }
   if (!state.enabled || !state.tested || !state.cameraMode || state.busy) { show('welcome'); call('setup'); return; }
-  if ($('player-email').value.trim() && !addEmail()) return;
+  if ($('player-email').value.trim()) {
+    formError = 'Tap ADD EMAIL to add this address before recording.';
+    renderEmailFeedback();
+    $('player-email').focus();
+    return;
+  }
   if (!emails.length) {
     formError = 'Add at least one email address.';
     renderEmailFeedback();
@@ -591,31 +603,6 @@ $('email-form').onsubmit = event => {
   formError = '';
   renderEmailFeedback();
   $('player-email').blur();
-  $('confirmation').textContent = state.court || 'Your court';
-  $('confirmation-recipients').replaceChildren(...emails.map(email => {
-    const row = node('div', 'recipient-review-row');
-    row.append(node('span', '', email));
-    return row;
-  }));
-  $('capture-note').textContent = state.audio
-    ? 'We’ll record video and available audio, then email the replay to these addresses.'
-    : 'We’ll record video, then email the replay to these addresses.';
-  show('confirm');
-};
-function watchRepeatedPress(id, action, argument) {
-  const button = $(id);
-  button.parentElement.addEventListener('pointerdown', event => {
-    if (!button.disabled || button.hidden || !event.isPrimary || event.button !== 0) return;
-    const bounds = button.getBoundingClientRect();
-    if (bounds.width > 0 && bounds.height > 0 && event.clientX >= bounds.left && event.clientX < bounds.right &&
-        event.clientY >= bounds.top && event.clientY < bounds.bottom) call(action, argument());
-  });
-}
-watchRepeatedPress('record', 'repeat-start', () => '');
-watchRepeatedPress('stop', 'repeat-stop', () => state.captureAttempt || '');
-$('record').onclick = event => {
-  if (startRequested) { call('repeat-start'); return; }
-  if (!state.enabled || !state.tested || !state.cameraMode || state.busy) { show('welcome'); call('setup'); return; }
   if (native) { startRequested = true; $('record').disabled = true; }
   const request = {emails, tapDelayMs: Math.max(0, Math.min(5000, Math.round(performance.now() - event.timeStamp)))};
   call('start', JSON.stringify(request));
@@ -628,6 +615,25 @@ $('record').onclick = event => {
     tick();
   }
 };
+function watchRepeatedPress(id, action, argument) {
+  const button = $(id);
+  button.parentElement.addEventListener('pointerdown', event => {
+    if (!button.disabled || button.hidden || !event.isPrimary || event.button !== 0) return;
+    const bounds = button.getBoundingClientRect();
+    if (bounds.width > 0 && bounds.height > 0 && event.clientX >= bounds.left && event.clientX < bounds.right &&
+        event.clientY >= bounds.top && event.clientY < bounds.bottom) call(action, argument());
+  });
+}
+// A disabled Start button means either no recipients or an in-flight start.
+// Only the latter can be an idempotent retry.
+$('record').parentElement.addEventListener('pointerdown', event => {
+  const button = $('record');
+  if (!startRequested || !button.disabled || !event.isPrimary || event.button !== 0) return;
+  const bounds = button.getBoundingClientRect();
+  if (event.clientX >= bounds.left && event.clientX < bounds.right &&
+      event.clientY >= bounds.top && event.clientY < bounds.bottom) call('repeat-start');
+});
+watchRepeatedPress('stop', 'repeat-stop', () => state.captureAttempt || '');
 $('stop').onclick = () => {
   const attempt = state.captureAttempt;
   if (!attempt || stopRequestedAttempt === attempt || state.phase !== 'recording') return;
@@ -694,6 +700,14 @@ $('update-saved').onclick = () => {
 };
 $('update-check').onclick = () => { $('update-check').disabled = true; call('check-update'); };
 $('connection-retry').onclick = event => { event.stopPropagation(); call('retry-connection'); };
+function positionNotifications() {
+  const headerBottom = document.querySelector('header').getBoundingClientRect().bottom;
+  const connection = $('connection-notice');
+  const connectionBottom = connection.hidden ? 0 : connection.getBoundingClientRect().bottom;
+  // Leave room for the slide-down entrance without crossing the header.
+  $('notifications').style.top = `${Math.ceil(Math.max(headerBottom, connectionBottom) + 16)}px`;
+}
+window.addEventListener('resize', positionNotifications, {passive: true});
 function tick() {
   const wasConfirmingEnrollment = !!state.enrollmentPending;
   try { state = native ? JSON.parse(native.state()) : {enabled: true, enrolled: true, initialized: true, tested: true, cameraMode: 'device', court: 'Court 1', maxSeconds: 900}; }
@@ -705,6 +719,7 @@ function tick() {
   $('connection-retry').textContent = state.enrollmentPending ? 'Check enrollment' : 'Retry connection';
   if ($('connection-text').textContent !== (state.connectionNotice || ''))
     $('connection-text').textContent = state.connectionNotice || '';
+  positionNotifications();
   const offlineLibrary = state.updateChecking && !state.updateRequired && state.localDeviceKnown && !!state.savedVideos?.length;
   $('update-saved').hidden = !offlineLibrary;
   const updateBlocked = (state.updateRequired || state.updateChecking) && !state.busy &&
@@ -751,7 +766,7 @@ function tick() {
     startAccepted = false;
     // Retain the same group for an idempotent retry if its start response was
     // lost. A locally recoverable capture must be inspected before another start.
-    show(state.startHasRecoverableFootage ? 'welcome' : 'confirm');
+    show(state.startHasRecoverableFootage ? 'welcome' : 'form');
   } else if (startRequested && !state.busy && ['idle', 'review'].includes(state.phase)) {
     startRequested = false;
     startAccepted = false;
@@ -775,11 +790,11 @@ function tick() {
   $('header-court').textContent = state.court || '';
   $('app-version').textContent = `Powered by WrenLabs${state.version ? ` · v${state.version}` : ''}`;
   const limitMinutes = Math.max(1, Math.round(Number(state.maxSeconds || 900) / 60));
-  $('limit').textContent = `Recording limit: ${limitMinutes} minutes`;
-  $('record').disabled = !!state.busy || startRequested;
+  $('record-label').textContent = `START RECORDING (${limitMinutes} MIN)`;
+  renderEmailFeedback();
   if (stopRequestedAttempt !== state.captureAttempt) stopRequestedAttempt = '';
   $('stop').disabled = !!stopRequestedAttempt;
-  if (['form', 'confirm'].includes(view) && (!state.enabled || !state.tested || !state.cameraMode)) {
+  if (view === 'form' && (!state.enabled || !state.tested || !state.cameraMode)) {
     clearRecipientDraft();
     show('welcome');
   }
@@ -868,12 +883,15 @@ function tick() {
     : state.testReady ? 'Review the clip and confirm the camera test.'
     : !state.tested ? 'Camera test is required.'
     : view === 'welcome' ? (state.message || '') : '';
-  if (statusNotice !== lastStatusNotice) {
-    lastStatusNotice = statusNotice;
-    statusNoticeExpiresAt = statusNotice ? performance.now() + 30_000 : 0;
+  const uploadComplete = completion && statusNotice === 'Upload complete. The replay email is being sent.';
+  const noticeKey = `${state.latestSavedSession || ''}:${statusNotice}`;
+  if (noticeKey !== lastStatusNotice) {
+    lastStatusNotice = noticeKey;
+    statusNoticeExpiresAt = statusNotice ? performance.now() + (uploadComplete ? 4_800 : 30_000) : 0;
   }
   $('notice').dataset.tone = interruptedItem || unfinishedSession() ? 'waiting' : completion ? 'success' : 'info';
-  $('notice').textContent = statusNotice;
+  $('notice').classList.toggle('upload-complete', uploadComplete);
+  if ($('notice').textContent !== statusNotice) $('notice').textContent = statusNotice;
   syncReenrollVisibility();
   renderSavedVideos();
   $('notice').hidden = !statusNotice || view === 'saved-videos' || !$('error').hidden || performance.now() >= statusNoticeExpiresAt;

@@ -45,26 +45,25 @@
           </button>
           <div class="form-heading-copy">
             <h1>Record your match</h1>
-            <p class="subtitle">Add up to four email addresses for this replay.</p>
+            <p class="subtitle">Enter your email below so we can send you the video replay after you play.</p>
           </div>
         </div>
         <form id="email-form" novalidate>
+          <div class="record-steps" aria-label="How to start recording">
+            <span><b>1</b> Type your email and tap ADD</span>
+            <span><b>2</b> Check your email below</span>
+            <span><b>3</b> Tap START RECORDING</span>
+          </div>
           <div class="email-entry">
             <label for="player-email">Player emails</label>
-            <div class="email-add-row"><input id="player-email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" multiple placeholder="Player email address" aria-describedby="email-count"><button id="add-email" class="email-add" type="button">Add email</button></div>
-            <p class="email-hint" id="email-count" role="status">0 of 4 emails added</p>
+            <div class="email-add-row"><input id="player-email" type="email" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" multiple placeholder="Enter player email address..." aria-describedby="email-count email-error"><button id="add-email" class="email-add" type="button">ADD EMAIL</button></div>
+            <p class="email-hint" id="email-count" role="status">0 of 4 emails added (Max 4)</p>
+            <p class="email-error" id="email-error" role="alert" hidden></p>
             <div id="email-list" class="email-list" aria-label="Added email addresses"></div>
           </div>
-          <button class="record" type="submit">Review emails</button>
-          <p class="note" id="limit">Recording limit: 15 minutes</p>
+          <button id="record" class="record" type="submit" disabled><span class="record-icon" aria-hidden="true"></span><span id="record-label">START RECORDING (15 MIN)</span></button>
+          <p class="start-help" id="start-help">Add at least 1 email above to unlock recording.</p>
         </form>
-      </section>
-      <section id="confirm" hidden>
-        <h1>Review emails</h1>
-        <p class="subtitle" id="confirmation"></p>
-        <div id="confirmation-recipients" class="confirmation-recipients"></div>
-        <p class="note" id="capture-note"></p>
-        <div class="actions"><button id="edit" class="quiet" type="button">Edit emails</button><button id="record" class="primary" type="button"><span class="record-icon" aria-hidden="true"></span> Start recording</button></div>
       </section>
       <section id="session" hidden>
         <p class="eyebrow" id="session-eyebrow">YOUR MATCH</p>

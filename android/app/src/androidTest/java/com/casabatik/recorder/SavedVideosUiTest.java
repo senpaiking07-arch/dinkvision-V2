@@ -192,6 +192,9 @@ public class SavedVideosUiTest {
             +"const moved=ids.filter((id,i)=>{const b=document.getElementById(id).getBoundingClientRect();return Math.abs(b.top-before[i].top)>.5||Math.abs(b.height-before[i].height)>.5;});"
             +"const after=document.querySelector('.hero h1').getBoundingClientRect();if(Math.abs(after.top-heading.top)>.5||Math.abs(after.height-heading.height)>.5)moved.push('headline');"
             +"const top=after.top,header=document.querySelector('header').getBoundingClientRect().bottom;"
+            +"positionNotifications();if(getComputedStyle($('notifications')).pointerEvents!=='none'||getComputedStyle(n).pointerEvents!=='none'||getComputedStyle(r).pointerEvents!=='auto'||n.getBoundingClientRect().top<header+7)moved.push('notification blocks touches or header');"
+            +"const nr=n.getBoundingClientRect(),hit=document.elementFromPoint(nr.left+nr.width/2,nr.top+nr.height/2);if(hit?.closest('#notifications'))moved.push('notification intercepts welcome touch');"
+            +"const rr=r.getBoundingClientRect();if(document.elementFromPoint(rr.left+rr.width/2,rr.top+rr.height/2)!==r)moved.push('recovery action not tappable');"
             +"if(top<header-1)moved.push({issue:'heading behind header',top,header,main:document.querySelector('main').getBoundingClientRect().toJSON(),hero:document.querySelector('.hero').getBoundingClientRect().toJSON(),welcome:document.getElementById('welcome').getBoundingClientRect().toJSON(),font:getComputedStyle(document.querySelector('.hero h1')).fontSize,body:getComputedStyle(document.body).gridTemplateRows});for(const id of ['error','notice']){const b=document.getElementById(id).getBoundingClientRect();if(b.top<0||b.bottom>innerHeight||b.left<0||b.right>innerWidth)moved.push(id+' outside viewport');}"
             +"return JSON.stringify(moved);}finally{e.hidden=old.e;n.hidden=old.n;r.hidden=old.r;n.textContent=old.text;}})()");
         assertEquals(Arrays.toString(size)+" notifications must float without moving or clipping the welcome screen "+notifications,"[]",new JSONTokener(notifications).nextValue().toString());
@@ -206,14 +209,13 @@ public class SavedVideosUiTest {
         snapshot.remove("updateRequired");snapshot.remove("update");bridge.snapshot=snapshot.toString();
         evaluate(web,"tick();true");
         String journeys = evaluate(web,
-            "(()=>{const bad=[];const check=(screen,ids)=>{show(screen);for(const id of ids){const e=document.getElementById(id),r=e.getBoundingClientRect();"
+            "(()=>{const bad=[];const check=(screen,ids)=>{show(screen);for(const id of ids){const e=document.getElementById(id);if(screen==='form')e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();"
             + "if(r.width<44||r.height<44||r.left<0||r.top<0||r.right>innerWidth+1||r.bottom>innerHeight+1)bad.push({screen,id,r:r.toJSON()});}};"
             + "check('welcome',['begin']);const bg=getComputedStyle(document.querySelector('.backdrop')).backgroundImage;"
             + "const expected=innerWidth<=700&&innerHeight>innerWidth?'Kiosk-Background-Phone.png':'Kiosk-Background-Tablet.png';if(!bg.includes(expected))bad.push({background:bg,expected});"
             + "emails=['one.player@gmail.com','two.player@gmail.com','three.player@gmail.com','four.player@gmail.com'];renderEmails();"
-            + "check('form',['back','player-email','add-email']);const submit=document.querySelector('#email-form .record').getBoundingClientRect();"
-            + "const form=document.getElementById('form').getBoundingClientRect();if(submit.bottom>form.bottom+1)bad.push({screen:'form',submit:submit.toJSON(),form:form.toJSON()});"
-            + "document.getElementById('email-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));check('confirm',['edit','record']);"
+            + "check('form',['back','player-email','add-email']);$('record').scrollIntoView({block:'nearest'});check('form',['record']);"
+            + "if($('record').getBoundingClientRect().height<80||$('player-email').getBoundingClientRect().height<64||$('add-email').getBoundingClientRect().height<64||document.querySelectorAll('.record-steps span').length!==3)bad.push({screen:'form',issue:'missing large one-step controls'});"
             + "document.getElementById('stop').hidden=false;check('session',['stop']);check('camera-test',['camera-test-confirm','camera-test-retry']);"
             + "show('saved-videos');renderSavedVideos();return JSON.stringify(bad);})()");
         assertEquals(Arrays.toString(size) + " " + journeys, "[]", new JSONTokener(journeys).nextValue().toString());
@@ -237,7 +239,7 @@ public class SavedVideosUiTest {
               const titleBounds = bounds($('welcome'));
               const clipped = [...words.getClientRects()].some(rect =>
                 rect.left < titleBounds.left || rect.right > titleBounds.right);
-              const mismatched = ['form', 'confirm', 'session', 'camera-test', 'saved-videos'].filter(screen => {
+              const mismatched = ['form', 'session', 'camera-test', 'saved-videos'].filter(screen => {
                 show(screen);
                 return layout() !== expected;
               });
@@ -257,7 +259,7 @@ public class SavedVideosUiTest {
             "(()=>{show('form');clearRecipientDraft();const input=$('player-email');input.value='sav';input.dispatchEvent(new Event('input'));const backdrop=document.querySelector('.backdrop');"
             + "const original=backdrop.getBoundingClientRect().toJSON();const keyboard=Math.round(innerHeight*.63);"
             + "setRecipientKeyboardInset(keyboard*devicePixelRatio);"
-            + "const bad=[$('player-email'),$('add-email'),document.querySelector('#email-form .record')].flatMap(el=>{const r=el.getBoundingClientRect();"
+            + "const bad=[$('player-email'),$('add-email')].flatMap(el=>{const r=el.getBoundingClientRect();"
             + "return r.width>=44&&r.height>=44&&r.top>=0&&r.bottom<=innerHeight-keyboard+1?[]:[{text:el.textContent,r:r.toJSON()}];});"
             + "const anchored=JSON.stringify(original)===JSON.stringify(backdrop.getBoundingClientRect().toJSON());"
             + "setRecipientKeyboardInset(0);clearRecipientDraft();return JSON.stringify({bad,anchored,restored:!document.body.classList.contains('recipient-ime')});})()");
@@ -296,6 +298,20 @@ public class SavedVideosUiTest {
         web.postDelayed(restored::countDown, 300);
       });
       assertTrue(restored.await(3, TimeUnit.SECONDS));
+      snapshot.put("phase","complete").put("latestSavedSession","toast-test")
+          .put("message","Upload complete. The replay email is being sent.");
+      bridge.snapshot=snapshot.toString();
+      String toastState = evaluate(web,
+          "show('welcome');tick();(()=>{const n=$('notice'),r=n.getBoundingClientRect(),h=document.querySelector('header').getBoundingClientRect();"
+          + "const font=parseFloat(getComputedStyle(n).fontSize),duration=getComputedStyle(n,'::after').animationDuration,remaining=statusNoticeExpiresAt-performance.now();"
+          + "return JSON.stringify({hidden:n.hidden,complete:n.classList.contains('upload-complete'),top:r.top,header:h.bottom,height:r.height,font,duration,remaining,"
+          + "valid:!n.hidden&&n.classList.contains('upload-complete')&&r.top>=h.bottom+7&&r.height>=58&&font>=16&&duration==='4.8s'&&remaining>4000});})()");
+      assertTrue("Upload success floats below the header and expires after 4.8 seconds: " + toastState,
+          new JSONObject(new JSONTokener(toastState).nextValue().toString()).getBoolean("valid"));
+      assertEquals("Expired upload success stays hidden without a new event", "true", evaluate(web,
+          "statusNoticeExpiresAt=performance.now()-1;tick();$('notice').hidden"));
+      snapshot.put("phase","idle");snapshot.remove("latestSavedSession");snapshot.remove("message");
+      bridge.snapshot=snapshot.toString();
       JSONObject unavailable = new JSONObject().put("id", UUID.randomUUID().toString()).put("localAvailable",false)
           .put("status","failed").put("captureInterruptionCode","app_interrupted").put("validationFailed",true);
       JSONArray originalItems = snapshot.getJSONArray("savedVideos");
@@ -306,23 +322,23 @@ public class SavedVideosUiTest {
           + "&&$('saved-player').hidden&&$('saved-save').hidden&&$('saved-retry').hidden"));
       evaluate(web,"handlePlayerBack();true");
       snapshot.remove("updateChecking");snapshot.put("savedVideos",originalItems);bridge.snapshot=snapshot.toString();
-      assertEquals("Four recipients can be reviewed together without saved suggestions", "true", evaluate(web,
+      assertEquals("Four recipients appear on the single start screen", "true", evaluate(web,
           "tick();show('welcome');$('begin').click();clearRecipientDraft();$('player-email').value='one@court.ph,two@court.ph,three@court.ph,four@court.ph';"
-          + "document.querySelector('#email-form .record').click();view==='confirm'&&emails.length===4&&!$('email-history')"));
-      assertEquals("Validation and editing stay in the recipient flow", "true", evaluate(web,
+          + "addEmail();view==='form'&&emails.length===4&&$('email-list').children.length===4&&$('add-email').disabled&&!$('record').disabled&&!$('email-history')"));
+      assertEquals("Validation and editing stay on the single start screen", "true", evaluate(web,
           "(()=>{tick();show('welcome');$('begin').click();clearRecipientDraft();const input=$('player-email');"
-          + "const review=()=>document.querySelector('#email-form .record').click();"
-          + "review();const empty=view==='form'&&$('email-count').textContent.includes('at least one');"
-          + "input.value='not-an-address';review();const invalid=input.getAttribute('aria-invalid')==='true';"
+          + "const empty=$('record').disabled&&$('start-help').textContent.includes('at least 1 email');"
+          + "input.value='not-an-address';addEmail();const invalid=input.getAttribute('aria-invalid')==='true';"
           + "input.value='manual.player@gmail.com';addEmail();input.value='MANUAL.PLAYER@gmail.com';"
           + "const duplicate=!addEmail()&&emails.length===1;"
-          + "input.value='';review();const opt=$('confirmation-recipients').querySelector('input');"
-          + "const reviewed=view==='confirm'&&$('confirmation-recipients').querySelector('span').textContent==='manual.player@gmail.com'&&!opt;"
-
-          + "$('edit').click();const retained=view==='form'&&emails.length===1;review();"
-          + "return empty&&invalid&&duplicate&&reviewed&&retained&&view==='confirm';})()"));
+          + "input.value='';renderEmailFeedback();const listed=view==='form'&&$('email-list').textContent.includes('manual.player@gmail.com')&&!$('record').disabled;"
+          + "$('email-list').querySelector('button:not(.edit-address)').click();const removed=emails.length===0&&$('record').disabled;"
+          + "input.value='manual.player@gmail.com';addEmail();"
+          + "input.value='unadded@gmail.com';$('email-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));"
+          + "const mustAdd=view==='form'&&$('email-error').textContent.includes('Tap ADD EMAIL')&&$('email-count').textContent.includes('1 of 4')&&emails.length===1;"
+          + "input.value='';renderEmailFeedback();return empty&&invalid&&duplicate&&listed&&removed&&mustAdd&&view==='form';})()"));
       long startsBefore=bridge.actions.stream().filter(action->action.startsWith("start:")).count();
-      assertEquals("A pending start must preserve the reviewed group", "true", evaluate(web,
+      assertEquals("A pending start must preserve the listed group", "true", evaluate(web,
           "document.getElementById('record').click();document.getElementById('record').click();emails.length===1&&emails[0]==='manual.player@gmail.com'&&document.getElementById('record').disabled"));
       assertEquals("Repeated taps must not submit another start",startsBefore+1,bridge.actions.stream().filter(action->action.startsWith("start:")).count());
       String startAction = bridge.actions.stream().filter(action -> action.startsWith("start:")).reduce((a,b) -> b).orElseThrow();
@@ -334,7 +350,7 @@ public class SavedVideosUiTest {
       assertEquals("Addresses remain available while connecting", "true",evaluate(web,"tick();view==='session'&&emails.length===1"));
       snapshot.put("phase","error").put("busy",false).put("recoverable",true).put("startHasRecoverableFootage",false).put("error","Controlled start failure")
           .put("session",new JSONObject().put("id",UUID.randomUUID().toString()).put("status","requested"));bridge.snapshot=snapshot.toString();
-      assertEquals("An older failed clip must not block a failed start retry for the next group", "true",evaluate(web,"tick();view==='confirm'&&emails.length===1&&!document.getElementById('record').disabled"));
+      assertEquals("An older failed clip must not block a failed start retry for the next group", "true",evaluate(web,"tick();view==='form'&&emails.length===1&&!document.getElementById('record').disabled"));
       evaluate(web,"document.getElementById('record').click();true");
       snapshot.put("phase","recording").put("busy",true).put("elapsedMs",1000).put("captureAttempt","current-capture");bridge.snapshot=snapshot.toString();
       assertEquals("Recipients clear only once capture has actually started", "true",evaluate(web,"tick();view==='session'&&emails.length===0"));
@@ -503,7 +519,7 @@ public class SavedVideosUiTest {
     instrumentation.getUiAutomation().executeShellCommand(command).close();
     awaitPlayer(web, "document.activeElement===$('player-email')&&recipientKeyboardInset>40");
     assertEquals("Email controls must be above the docked keyboard", "true", evaluate(web,
-        "[$('player-email'),$('add-email'),document.querySelector('#email-form .record')].every(el=>el.getBoundingClientRect().bottom<=innerHeight-recipientKeyboardInset+1)"));
+        "[$('player-email'),$('add-email')].every(el=>el.getBoundingClientRect().bottom<=innerHeight-recipientKeyboardInset+1)&&getComputedStyle($('record')).display==='none'&&getComputedStyle($('notifications')).visibility==='hidden'"));
     assertEquals(before.toString(), new JSONTokener(evaluate(web,
         "JSON.stringify(document.querySelector('.backdrop').getBoundingClientRect().toJSON())")).nextValue().toString());
     instrumentation.getUiAutomation().executeShellCommand("input keyevent KEYCODE_BACK").close();
